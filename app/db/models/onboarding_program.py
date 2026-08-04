@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+import uuid
+from typing import TYPE_CHECKING, Optional
+
+from sqlalchemy import Boolean, ForeignKey, Index, Text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from app.db.base import Base
+from app.db.mixins import TimestampMixin
+
+if TYPE_CHECKING:
+    from app.db.models.assignment import Assignment
+    from app.db.models.company import Company
+    from app.db.models.step import Step
+
+
+class OnboardingProgram(Base, TimestampMixin):
+    __tablename__ = "onboarding_programs"
+    __table_args__ = (
+        Index("ix_onboarding_programs_company_id_is_active", "company_id", "is_active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4,
+    )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    company: Mapped[Company] = relationship(back_populates="onboarding_programs")
+    steps: Mapped[list[Step]] = relationship(
+        back_populates="program",
+        cascade="all, delete-orphan",
+        order_by="Step.position",
+    )
+    assignments: Mapped[list[Assignment]] = relationship(
+        back_populates="program",
+    )
+
+    def __repr__(self) -> str:
+        return f"<OnboardingProgram id={self.id} title={self.title!r}>"

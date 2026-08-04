@@ -1,0 +1,75 @@
+services:
+  api:
+    build: .
+    container_name: onboard-ai-api
+    env_file:
+      - .env
+    environment:
+      # Reach Postgres/Redis over the Compose network (overrides localhost from .env)
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-onboard}:${POSTGRES_PASSWORD:-onboard}@db:5432/${POSTGRES_DB:-onboard_ai}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - .:/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  bot:
+    build: .
+    container_name: onboard-ai-bot
+    env_file:
+      - .env
+    environment:
+      # Reach the API over the Compose network (overrides localhost from .env)
+      API_BASE_URL: http://api:8000
+    ports:
+      - "${BOT_WEBHOOK_PORT:-8081}:8081"
+    volumes:
+      - .:/app
+    command: python -m app.bot
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    profiles:
+      - bot
+
+  db:
+    image: postgres:16-alpine
+    container_name: onboard-ai-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-onboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-onboard}
+      POSTGRES_DB: ${POSTGRES_DB:-onboard_ai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-onboard} -d ${POSTGRES_DB:-onboard_ai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: onboard-ai-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
+  redis_data:
