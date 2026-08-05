@@ -1,5 +1,6 @@
 import { Navigate, Outlet } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
+import { t } from '../i18n'
 
 export function ProtectedRoute() {
   const { isAuthenticated, loading } = useAuth()
@@ -7,7 +8,7 @@ export function ProtectedRoute() {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-[var(--color-muted)]">
-        Loading…
+        {t('common.loading')}
       </div>
     )
   }

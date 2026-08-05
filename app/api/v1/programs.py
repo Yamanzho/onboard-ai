@@ -217,6 +217,39 @@ async def archive_program(
     return ProgramResponse.model_validate(program)
 
 
+@router.get(
+    "/{program_id}/steps",
+    response_model=list[StepResponse],
+    summary="List program steps",
+    description="List steps for a program in the caller's company, ordered by position.",
+    tags=["Steps"],
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+        status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        ],
+    },
+)
+async def list_steps(
+    program_id: UUID,
+    current_user: HRUser,
+    service: StepServiceDep,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 1000,
+) -> list[StepResponse]:
+    steps = await service.list_steps(
+        program_id,
+        company_id=current_user.company_id,
+        offset=offset,
+        limit=limit,
+    )
+    return [StepResponse.model_validate(step) for step in steps]
+
+
 @router.post(
     "/{program_id}/steps",
     response_model=StepResponse,

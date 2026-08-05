@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react'
+import { t } from '../i18n'
 import { canAccessAdminPanel } from '../lib/roles'
 import { clearTokens, getAccessToken, setTokens } from '../lib/storage'
 import { ApiError } from '../services/apiClient'
@@ -47,7 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!canAccessAdminPanel(me.role)) {
         clearTokens()
         setUser(null)
-        setError('Admin panel requires admin or hr role')
+        setError(t('auth.roleRequired'))
       } else {
         setUser(me)
       }
@@ -72,7 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!canAccessAdminPanel(me.role)) {
         clearTokens()
         setUser(null)
-        throw new Error('Admin panel requires admin or hr role')
+        throw new Error(t('auth.roleRequired'))
       }
       setUser(me)
     } catch (err) {
@@ -83,7 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (err instanceof Error) {
         setError(err.message)
       } else {
-        setError('Login failed')
+        setError(t('auth.loginFailed'))
       }
       throw err
     }

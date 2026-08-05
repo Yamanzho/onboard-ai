@@ -13,6 +13,7 @@ import { Button } from '../../components/ui/Button'
 import { useArticle, useArticleMutations } from '../../hooks/useArticles'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
+import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
 export function ArticleEditPage() {
@@ -37,7 +38,9 @@ export function ArticleEditPage() {
         },
       })
     } catch (err) {
-      throw new Error(err instanceof ApiError ? err.message : 'Failed to update article')
+      throw new Error(
+        err instanceof ApiError ? err.message : t('knowledge.articles.updateFailed'),
+      )
     }
   }
 
@@ -45,7 +48,9 @@ export function ArticleEditPage() {
   if (error || !article) {
     return (
       <ErrorAlert
-        message={error instanceof Error ? error.message : 'Article not found'}
+        message={
+          error instanceof Error ? error.message : t('knowledge.articles.notFound')
+        }
       />
     )
   }
@@ -55,11 +60,11 @@ export function ArticleEditPage() {
   return (
     <div>
       <PageHeader
-        title={version?.title ?? 'Edit article'}
-        description={`Status and content. Saving body/title creates a new immutable version.`}
+        title={version?.title ?? t('knowledge.articles.editTitle')}
+        description={t('knowledge.articles.editDescription')}
         action={
           <Link to="/knowledge/articles">
-            <Button variant="secondary">Back to list</Button>
+            <Button variant="secondary">{t('common.back')}</Button>
           </Link>
         }
       />
@@ -67,11 +72,16 @@ export function ArticleEditPage() {
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm">
         <StatusBadge status={article.status} />
         <span className="text-[var(--color-muted)]">
-          Current version: <strong>v{version?.version ?? '—'}</strong>
+          {t('knowledge.articles.currentVersion')}:{' '}
+          <strong>
+            {version?.version != null
+              ? `${t('knowledge.articles.versionPrefix')}${version.version}`
+              : t('common.emDash')}
+          </strong>
         </span>
         {version?.change_summary ? (
           <span className="text-[var(--color-muted)]">
-            Summary: {version.change_summary}
+            {t('knowledge.articles.summary')}: {version.change_summary}
           </span>
         ) : null}
         <div className="ml-auto flex gap-2">
@@ -81,7 +91,7 @@ export function ArticleEditPage() {
               disabled={publish.isPending}
               onClick={() => void publish.mutateAsync(article.id)}
             >
-              Publish
+              {t('common.publish')}
             </Button>
           ) : null}
           {article.status !== 'archived' ? (
@@ -90,7 +100,7 @@ export function ArticleEditPage() {
               disabled={archive.isPending}
               onClick={() => void archive.mutateAsync(article.id)}
             >
-              Archive
+              {t('common.archive')}
             </Button>
           ) : null}
         </div>
@@ -104,12 +114,12 @@ export function ArticleEditPage() {
             body: version?.body ?? '',
             category_id: article.category_id ?? '',
             visibility: (article.visibility as 'company' | 'program') ?? 'company',
-            tag_ids: article.tags.map((t) => t.id),
+            tag_ids: article.tags.map((tag) => tag.id),
             change_summary: '',
           }}
           categories={categories}
           tags={tags}
-          submitLabel="Save changes"
+          submitLabel={t('common.save')}
           pending={update.isPending}
           onSubmit={onSubmit}
         />

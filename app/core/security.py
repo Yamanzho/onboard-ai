@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
-import secrets
 
 import jwt
 
@@ -11,6 +13,8 @@ from app.core.config import get_settings
 from app.core.exceptions import AppError
 
 TokenType = Literal["access", "refresh"]
+
+_PBKDF2_ITERATIONS = 120_000
 
 
 class InvalidTokenError(AppError):
@@ -36,11 +40,60 @@ def verify_bot_service_token(token: str) -> bool:
     return secrets.compare_digest(token, expected)
 
 
+def hash_password(password: str) -> str:
+    """Hash a password with PBKDF2-SHA256 (stdlib; no extra deps)."""
+    salt = secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        _PBKDF2_ITERATIONS,
+    )
+    return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt}${digest.hex()}"
+
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against a hash produced by ``hash_password``."""
+    try:
+        scheme, iterations_s, salt, expected_hex = password_hash.split("$", 3)
+    except ValueError:
+        return False
+    if scheme != "pbkdf2_sha256":
+        return False
+    try:
+        iterations = int(iterations_s)
+    except ValueError:
+        return False
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt.encode("utf-8"),
+        iterations,
+    )
+    return hmac.compare_digest(digest.hex(), expected_hex)
+
+
+def hash_token(token: str) -> str:
+    """Hash an opaque token (invite links) with SHA-256."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def verify_employee_password(*, password: str, password_hash: str | None) -> bool:
+    """Verify employee login password.
+
+    Invited users with a personal hash must use it. Legacy/demo users without
+    a hash continue to use the shared ``AUTH_PASSWORD``.
+    """
+    if password_hash:
+        return verify_password(password, password_hash)
+    return verify_auth_password(password)
+
+
 def create_access_token(
     *,
     subject: UUID,
     role: str,
-    company_id: UUID,
+    company_id: UUID | None = None,
 ) -> str:
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
@@ -48,7 +101,7 @@ def create_access_token(
         {
             "sub": str(subject),
             "role": role,
-            "company_id": str(company_id),
+            "company_id": str(company_id) if company_id is not None else None,
             "type": "access",
             "exp": expire,
             "iat": datetime.now(UTC),
@@ -60,7 +113,7 @@ def create_refresh_token(
     *,
     subject: UUID,
     role: str,
-    company_id: UUID,
+    company_id: UUID | None = None,
 ) -> str:
     settings = get_settings()
     expire = datetime.now(UTC) + timedelta(days=settings.refresh_token_expire_days)
@@ -68,7 +121,7 @@ def create_refresh_token(
         {
             "sub": str(subject),
             "role": role,
-            "company_id": str(company_id),
+            "company_id": str(company_id) if company_id is not None else None,
             "type": "refresh",
             "exp": expire,
             "iat": datetime.now(UTC),

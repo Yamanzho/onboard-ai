@@ -19,6 +19,30 @@ class StepService:
     def __init__(self, uow_factory: Callable[[], UnitOfWork] | None = None) -> None:
         self._uow_factory = uow_factory or UnitOfWork
 
+    async def list_steps(
+        self,
+        program_id: UUID,
+        *,
+        company_id: UUID,
+        offset: int = 0,
+        limit: int = 1000,
+    ) -> list[Step]:
+        """List steps for a program within the caller's tenant, ordered by position."""
+        async with self._uow_factory() as uow:
+            program = await uow.onboarding_programs.get_by_id(program_id)
+            if program is None:
+                raise NotFoundError(f"Onboarding program {program_id} not found")
+            ensure_same_company(
+                resource_company_id=program.company_id,
+                actor_company_id=company_id,
+                not_found_message=f"Onboarding program {program_id} not found",
+            )
+            return await uow.steps.list_by_program_id(
+                program_id,
+                offset=offset,
+                limit=limit,
+            )
+
     async def create_step(
         self,
         *,
@@ -150,8 +174,11 @@ class StepService:
                 )
 
             # Two-phase update avoids unique (program_id, position) conflicts.
+            # Temporary positions must stay >= 0 (ck_steps_position_non_negative).
+            max_position = max((step.position for step in existing), default=-1)
+            temp_base = max_position + 1 + len(existing)
             for index, step_id in enumerate(step_ids):
-                await uow.steps.update(step_id, position=-(index + 1))
+                await uow.steps.update(step_id, position=temp_base + index)
 
             ordered: list[Step] = []
             for index, step_id in enumerate(step_ids):
@@ -195,8 +222,14 @@ class StepService:
                 raise NotFoundError(f"Step {step_id} not found")
 
             remaining = await uow.steps.list_by_program_id(program_id)
+            # Two-phase renumber; keep temporary positions >= 0 for CHECK constraint.
+            max_position = max((step.position for step in remaining), default=-1)
+            temp_base = max_position + 1 + len(remaining)
             for index, remaining_step in enumerate(remaining):
-                await uow.steps.update(remaining_step.id, position=-(index + 1))
+                await uow.steps.update(
+                    remaining_step.id,
+                    position=temp_base + index,
+                )
             for index, remaining_step in enumerate(remaining):
                 await uow.steps.update(remaining_step.id, position=index)
 

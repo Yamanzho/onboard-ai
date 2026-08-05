@@ -7,6 +7,7 @@ from app.services.knowledge.article_service import ArticleService
 from app.services.knowledge.category_service import CategoryService
 from app.services.knowledge.tag_service import TagService
 from app.services.onboarding_program import OnboardingProgramService
+from app.services.platform import PlatformService, SuperAdminAuthService
 from app.services.progress import ProgressService
 from app.services.step import StepService
 
@@ -55,3 +56,13 @@ def get_category_service() -> CategoryService:
 @lru_cache
 def get_tag_service() -> TagService:
     return TagService()
+
+
+@lru_cache
+def get_super_admin_auth_service() -> SuperAdminAuthService:
+    return SuperAdminAuthService()
+
+
+@lru_cache
+def get_platform_service() -> PlatformService:
+    return PlatformService()

@@ -1,4 +1,5 @@
 import { Badge } from '../ui/Badge'
+import { labelArticleStatus } from '../../i18n'
 
 export function StatusBadge({ status }: { status: string }) {
   const tone =
@@ -9,5 +10,5 @@ export function StatusBadge({ status }: { status: string }) {
         : status === 'archived'
           ? 'danger'
           : 'neutral'
-  return <Badge tone={tone}>{status}</Badge>
+  return <Badge tone={tone}>{labelArticleStatus(status)}</Badge>
 }

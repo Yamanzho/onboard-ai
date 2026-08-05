@@ -50,6 +50,8 @@ async def _bind_engine_to_session_loop() -> AsyncIterator[None]:
     api_deps.get_tag_service.cache_clear()
     api_deps.get_employee_service.cache_clear()
     api_deps.get_company_service.cache_clear()
+    api_deps.get_super_admin_auth_service.cache_clear()
+    api_deps.get_platform_service.cache_clear()
 
     try:
         yield

@@ -169,3 +169,42 @@ class AssignmentService:
                 limit=limit,
                 status=status,
             )
+
+    async def list_assignments(
+        self,
+        company_id: UUID,
+        *,
+        actor_company_id: UUID,
+        offset: int = 0,
+        limit: int = 100,
+        status: str | None = None,
+        employee_id: UUID | None = None,
+    ) -> list[Assignment]:
+        if status is not None and status not in {item.value for item in AssignmentStatus}:
+            raise ValidationError(f"Invalid assignment status {status!r}")
+        ensure_same_company(
+            resource_company_id=company_id,
+            actor_company_id=actor_company_id,
+            not_found_message=f"Company {company_id} not found",
+        )
+
+        async with self._uow_factory() as uow:
+            company = await uow.companies.get_by_id(company_id)
+            if company is None:
+                raise NotFoundError(f"Company {company_id} not found")
+            if employee_id is not None:
+                employee = await uow.employees.get_by_id(employee_id)
+                if employee is None:
+                    raise NotFoundError(f"Employee {employee_id} not found")
+                ensure_same_company(
+                    resource_company_id=employee.company_id,
+                    actor_company_id=actor_company_id,
+                    not_found_message=f"Employee {employee_id} not found",
+                )
+            return await uow.assignments.list_by_company_id(
+                company_id,
+                offset=offset,
+                limit=limit,
+                status=status,
+                employee_id=employee_id,
+            )

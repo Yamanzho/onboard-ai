@@ -10,9 +10,11 @@ from app.api.v1.knowledge.tags import router as knowledge_tags_router
 from app.api.v1.programs import router as programs_router
 from app.api.v1.progress import router as progress_router
 from app.api.v1.steps import router as steps_router
+from app.api.v1.super_admin import router as super_admin_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth_router)
+router.include_router(super_admin_router)
 router.include_router(companies_router)
 router.include_router(employees_router)
 router.include_router(programs_router)

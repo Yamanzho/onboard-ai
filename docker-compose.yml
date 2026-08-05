@@ -8,15 +8,39 @@ services:
       # Reach Postgres/Redis over the Compose network (overrides localhost from .env)
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-onboard}:${POSTGRES_PASSWORD:-onboard}@db:5432/${POSTGRES_DB:-onboard_ai}
       REDIS_URL: redis://redis:6379/0
+      SEED_DEMO: ${SEED_DEMO:-true}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:
       - .:/app
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: ["/app/docker/entrypoint-api.sh"]
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: onboard-ai-frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    depends_on:
+      api:
         condition: service_healthy
 
   bot:
@@ -25,20 +49,22 @@ services:
     env_file:
       - .env
     environment:
-      # Reach the API over the Compose network (overrides localhost from .env)
+      # Reach the API / Redis over the Compose network
       API_BASE_URL: http://api:8000
+      REDIS_URL: redis://redis:6379/0
+      # Default to demo seed company when unset
+      BOT_COMPANY_ID: ${BOT_COMPANY_ID:-11111111-1111-4111-8111-111111111111}
     ports:
       - "${BOT_WEBHOOK_PORT:-8081}:8081"
     volumes:
       - .:/app
-    command: python -m app.bot
+    command: ["/app/docker/entrypoint-bot.sh"]
     depends_on:
       redis:
         condition: service_healthy
       api:
-        condition: service_started
-    profiles:
-      - bot
+        condition: service_healthy
+    restart: unless-stopped
 
   db:
     image: postgres:16-alpine

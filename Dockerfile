@@ -12,10 +12,15 @@ RUN apt-get update \
 
 COPY pyproject.toml README.md ./
 COPY app ./app
+COPY alembic ./alembic
+COPY alembic.ini ./
+COPY scripts ./scripts
+COPY docker ./docker
 
 RUN pip install --upgrade pip \
-    && pip install .
+    && pip install . \
+    && chmod +x /app/docker/entrypoint-api.sh /app/docker/entrypoint-bot.sh
 
-EXPOSE 8000
+EXPOSE 8000 8081
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["/app/docker/entrypoint-api.sh"]

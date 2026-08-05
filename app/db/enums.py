@@ -2,9 +2,17 @@ from enum import StrEnum
 
 
 class EmployeeRole(StrEnum):
+    """Company-scoped employee roles. Unchanged for tenant multi-tenancy."""
+
     EMPLOYEE = "employee"
     HR = "hr"
     ADMIN = "admin"
+
+
+class PlatformRole(StrEnum):
+    """Platform-level roles (not tied to any company)."""
+
+    SUPER_ADMIN = "super_admin"
 
 
 class EmployeeStatus(StrEnum):
@@ -59,3 +67,45 @@ class KnowledgeBodyFormat(StrEnum):
 class KnowledgeLinkTargetType(StrEnum):
     PROGRAM = "program"
     STEP = "step"
+
+
+class SubscriptionTier(StrEnum):
+    STARTER = "starter"
+    PROFESSIONAL = "professional"
+    ENTERPRISE = "enterprise"
+
+
+class SubscriptionStatus(StrEnum):
+    TRIAL = "trial"
+    ACTIVE = "active"
+    SUSPENDED = "suspended"
+    EXPIRED = "expired"
+    BLOCKED = "blocked"
+
+
+class PaymentStatus(StrEnum):
+    UNPAID = "unpaid"
+    PAID = "paid"
+    PAST_DUE = "past_due"
+
+
+class SubscriptionHistoryEventType(StrEnum):
+    CREATED = "created"
+    STATUS_CHANGED = "status_changed"
+    TIER_CHANGED = "tier_changed"
+    RENEWED = "renewed"
+    AUTO_RENEW_CHANGED = "auto_renew_changed"
+
+
+class PlatformAuditAction(StrEnum):
+    COMPANY_CREATED = "company.created"
+    COMPANY_UPDATED = "company.updated"
+    COMPANY_ACTIVATED = "company.activated"
+    COMPANY_DEACTIVATED = "company.deactivated"
+    SUBSCRIPTION_CREATED = "subscription.created"
+    SUBSCRIPTION_UPDATED = "subscription.updated"
+    USER_CREATED = "user.created"
+    USER_UPDATED = "user.updated"
+    USER_BLOCKED = "user.blocked"
+    USER_INVITED = "user.invited"
+    SETTINGS_UPDATED = "settings.updated"

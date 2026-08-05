@@ -1,4 +1,5 @@
 import { Outlet } from 'react-router-dom'
+import { t } from '../i18n'
 
 export function AuthLayout() {
   return (
@@ -6,9 +7,9 @@ export function AuthLayout() {
       <div className="w-full max-w-md">
         <div className="mb-6 text-center">
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--color-accent)]">
-            OnboardAI
+            {t('app.brand')}
           </p>
-          <h1 className="mt-2 text-2xl font-semibold">Admin Panel</h1>
+          <h1 className="mt-2 text-2xl font-semibold">{t('app.adminPanel')}</h1>
         </div>
         <Outlet />
       </div>

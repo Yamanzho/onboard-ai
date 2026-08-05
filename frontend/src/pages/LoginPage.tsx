@@ -4,6 +4,7 @@ import { ErrorAlert } from '../components/common/PageHeader'
 import { Button } from '../components/ui/Button'
 import { Input, Label } from '../components/ui/Field'
 import { useAuth } from '../hooks/useAuth'
+import { t } from '../i18n'
 
 export function LoginPage() {
   const { login, isAuthenticated, loading, error, clearError } = useAuth()
@@ -36,22 +37,22 @@ export function LoginPage() {
       className="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm"
     >
       <p className="mb-4 text-sm text-[var(--color-muted)]">
-        Sign in with employee UUID and the shared <code>AUTH_PASSWORD</code>.
+        {t('auth.loginHint')}
       </p>
       {error ? <ErrorAlert message={error} /> : null}
       <div className="mb-3">
-        <Label htmlFor="username">Employee UUID</Label>
+        <Label htmlFor="username">{t('auth.employeeUuid')}</Label>
         <Input
           id="username"
           value={username}
           onChange={(e) => setUsername(e.target.value)}
-          placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+          placeholder={t('auth.employeeUuidPlaceholder')}
           required
           autoComplete="username"
         />
       </div>
       <div className="mb-5">
-        <Label htmlFor="password">Password</Label>
+        <Label htmlFor="password">{t('common.password')}</Label>
         <Input
           id="password"
           type="password"
@@ -62,7 +63,7 @@ export function LoginPage() {
         />
       </div>
       <Button type="submit" className="w-full" disabled={submitting}>
-        {submitting ? 'Signing in…' : 'Sign in'}
+        {submitting ? t('common.signingIn') : t('common.signIn')}
       </Button>
     </form>
   )

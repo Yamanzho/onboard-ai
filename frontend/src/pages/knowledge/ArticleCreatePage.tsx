@@ -7,6 +7,7 @@ import {
 import { useArticleMutations } from '../../hooks/useArticles'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
+import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
 export function ArticleCreatePage() {
@@ -28,20 +29,24 @@ export function ArticleCreatePage() {
       })
       navigate(`/knowledge/articles/${article.id}`)
     } catch (err) {
-      throw new Error(err instanceof ApiError ? err.message : 'Failed to create article')
+      throw new Error(
+        err instanceof ApiError ? err.message : t('knowledge.articles.createFailed'),
+      )
     }
   }
 
   return (
     <div>
       <PageHeader
-        title="Create article"
-        description="New articles start as drafts (version 1)."
+        title={t('knowledge.articles.createTitle')}
+        description={t('knowledge.articles.createDescription')}
       />
       {create.isError ? (
         <ErrorAlert
           message={
-            create.error instanceof Error ? create.error.message : 'Create failed'
+            create.error instanceof Error
+              ? create.error.message
+              : t('knowledge.articles.createFailed')
           }
         />
       ) : null}
@@ -53,11 +58,11 @@ export function ArticleCreatePage() {
             category_id: '',
             visibility: 'company',
             tag_ids: [],
-            change_summary: 'Initial draft',
+            change_summary: t('knowledge.articles.initialDraft'),
           }}
           categories={categories}
           tags={tags}
-          submitLabel="Create draft"
+          submitLabel={t('knowledge.articles.createDraft')}
           pending={create.isPending}
           onSubmit={onSubmit}
         />

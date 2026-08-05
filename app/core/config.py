@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 7
 
+    # Platform Super Admin bootstrap (seeded on API start when set)
+    super_admin_email: str = "superadmin@onboard.local"
+    super_admin_password: str = "change-me-super-admin"
+    super_admin_full_name: str = "Super Admin"
+
     api_host: str = "0.0.0.0"
     api_port: int = 8000
 
@@ -36,6 +41,16 @@ class Settings(BaseSettings):
     bot_login_rate_limit: int = 30
     bot_login_rate_window_seconds: int = 60
     api_base_url: str = "http://localhost:8000"
+
+    # Invites & email
+    invite_ttl_hours: int = 24
+    invite_base_url: str = "http://localhost:3000"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@onboard.local"
+    smtp_use_tls: bool = True
 
     database_url: str = "postgresql+asyncpg://onboard:onboard@localhost:5432/onboard_ai"
     redis_url: str = "redis://localhost:6379/0"

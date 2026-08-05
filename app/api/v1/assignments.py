@@ -29,14 +29,20 @@ _HR_AUTH_RESPONSES = {
 _PROGRESS_AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"},
     status.HTTP_403_FORBIDDEN: {
-        "description": "Employees may view only their own progress; HR/admin may view any within tenant",
+        "description": (
+            "Employees may view only their own progress; "
+            "HR/admin may view any within tenant"
+        ),
     },
 }
 
 _ASSIGNMENT_LIST_AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"},
     status.HTTP_403_FORBIDDEN: {
-        "description": "Employees may list only their own assignments; HR/admin may list any within tenant",
+        "description": (
+            "Employees may list only their own assignments; "
+            "HR/admin may list any within tenant"
+        ),
     },
 }
 
@@ -71,6 +77,80 @@ async def create_assignment(
         company_id=current_user.company_id,
         assigned_by_id=payload.assigned_by_id,
         due_at=payload.due_at,
+    )
+    return AssignmentResponse.model_validate(assignment)
+
+
+@router.get(
+    "/assignments",
+    response_model=list[AssignmentResponse],
+    summary="List company assignments",
+    description="List assignments for the caller's company only.",
+    responses={
+        **_HR_AUTH_RESPONSES,
+        status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+        status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        ],
+    },
+)
+async def list_assignments(
+    current_user: HRUser,
+    service: AssignmentServiceDep,
+    company_id: Annotated[UUID, Query(description="Company tenant ID")],
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    status_filter: Annotated[
+        str | None,
+        Query(
+            alias="status",
+            description="Optional status filter: pending, in_progress, completed, cancelled",
+        ),
+    ] = None,
+    employee_id: Annotated[
+        UUID | None,
+        Query(description="Optional filter by employee"),
+    ] = None,
+) -> list[AssignmentResponse]:
+    assignments = await service.list_assignments(
+        company_id,
+        actor_company_id=current_user.company_id,
+        offset=offset,
+        limit=limit,
+        status=status_filter,
+        employee_id=employee_id,
+    )
+    return [AssignmentResponse.model_validate(item) for item in assignments]
+
+
+@router.get(
+    "/assignments/{assignment_id}",
+    response_model=AssignmentResponse,
+    summary="Get assignment by ID",
+    description="Get an assignment within the caller's company.",
+    responses={
+        **_HR_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+        status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        ],
+    },
+)
+async def get_assignment(
+    assignment_id: UUID,
+    current_user: HRUser,
+    service: AssignmentServiceDep,
+) -> AssignmentResponse:
+    assignment = await service.get_assignment(
+        assignment_id,
+        company_id=current_user.company_id,
     )
     return AssignmentResponse.model_validate(assignment)
 

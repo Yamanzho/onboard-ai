@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from app.db.models.ai_conversation import AIConversation
     from app.db.models.assignment import Assignment
     from app.db.models.company import Company
+    from app.db.models.employee_invite import EmployeeInvite
     from app.db.models.knowledge_article import KnowledgeArticle
     from app.db.models.knowledge_article_version import KnowledgeArticleVersion
 
@@ -67,6 +68,11 @@ class Employee(Base, TimestampMixin):
         default=EmployeeStatus.INVITED.value,
     )
     hired_at: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    password_hash: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
     company: Mapped[Company] = relationship(back_populates="employees")
     assignments: Mapped[list[Assignment]] = relationship(
@@ -85,6 +91,10 @@ class Employee(Base, TimestampMixin):
         back_populates="created_by",
     )
     ai_conversations: Mapped[list[AIConversation]] = relationship(
+        back_populates="employee",
+        cascade="all, delete-orphan",
+    )
+    invites: Mapped[list[EmployeeInvite]] = relationship(
         back_populates="employee",
         cascade="all, delete-orphan",
     )

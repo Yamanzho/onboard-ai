@@ -8,7 +8,7 @@ from fastapi.security import OAuth2PasswordBearer
 from app.api.deps import get_employee_service
 from app.core.exceptions import NotFoundError
 from app.core.security import InvalidTokenError, decode_token
-from app.db.enums import EmployeeRole, EmployeeStatus
+from app.db.enums import EmployeeRole, EmployeeStatus, PlatformRole
 from app.db.models.assignment import Assignment
 from app.db.models.employee import Employee
 from app.services.employee import EmployeeService
@@ -24,9 +24,19 @@ async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     employees: EmployeeServiceDep,
 ) -> Employee:
-    """Resolve the authenticated employee from a Bearer access token."""
+    """Resolve the authenticated employee from a Bearer access token.
+
+    Platform Super Admin tokens are rejected here — they use
+    ``/api/v1/super-admin/*`` endpoints exclusively.
+    """
     try:
         payload = decode_token(token, expected_type="access")
+        if payload.get("role") == PlatformRole.SUPER_ADMIN.value:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
         employee_id = UUID(payload["sub"])
     except (InvalidTokenError, ValueError) as exc:
         raise HTTPException(

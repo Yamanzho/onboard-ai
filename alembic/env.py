@@ -19,8 +19,13 @@ from app.db.models import (  # noqa: F401 — register models on Base.metadata
     KnowledgeCategory,
     KnowledgeTag,
     OnboardingProgram,
+    PlatformAuditLog,
     Progress,
     Step,
+    SubscriptionHistoryEvent,
+    SuperAdmin,
+    CompanySubscription,
+    EmployeeInvite,
 )
 
 config = context.config

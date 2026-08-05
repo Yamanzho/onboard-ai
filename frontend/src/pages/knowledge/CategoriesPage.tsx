@@ -8,6 +8,7 @@ import {
 import { Button } from '../../components/ui/Button'
 import { Input, Label, Select } from '../../components/ui/Field'
 import { useCategories, useCategoryMutations } from '../../hooks/useCategories'
+import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import type { Category } from '../../types/category'
 
@@ -35,7 +36,9 @@ export function CategoriesPage() {
       setSlug('')
       setParentId('')
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Failed to create category')
+      setFormError(
+        err instanceof ApiError ? err.message : t('knowledge.categories.createFailed'),
+      )
     }
   }
 
@@ -55,15 +58,17 @@ export function CategoriesPage() {
       })
       setEditing(null)
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Failed to update category')
+      setFormError(
+        err instanceof ApiError ? err.message : t('knowledge.categories.updateFailed'),
+      )
     }
   }
 
   return (
     <div>
       <PageHeader
-        title="Categories"
-        description="Organize knowledge articles by category."
+        title={t('knowledge.categories.title')}
+        description={t('knowledge.categories.description')}
       />
       {formError ? <ErrorAlert message={formError} /> : null}
       {error ? <ErrorAlert message={(error as Error).message} /> : null}
@@ -73,7 +78,7 @@ export function CategoriesPage() {
         className="mb-6 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-4"
       >
         <div>
-          <Label htmlFor="cat-name">Name</Label>
+          <Label htmlFor="cat-name">{t('common.name')}</Label>
           <Input
             id="cat-name"
             value={name}
@@ -82,22 +87,22 @@ export function CategoriesPage() {
           />
         </div>
         <div>
-          <Label htmlFor="cat-slug">Slug (optional)</Label>
+          <Label htmlFor="cat-slug">{t('knowledge.categories.slugOptional')}</Label>
           <Input
             id="cat-slug"
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
-            placeholder="auto from name"
+            placeholder={t('knowledge.categories.slugPlaceholder')}
           />
         </div>
         <div>
-          <Label htmlFor="cat-parent">Parent</Label>
+          <Label htmlFor="cat-parent">{t('knowledge.categories.parent')}</Label>
           <Select
             id="cat-parent"
             value={parentId}
             onChange={(e) => setParentId(e.target.value)}
           >
-            <option value="">None</option>
+            <option value="">{t('knowledge.categories.none')}</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -107,7 +112,7 @@ export function CategoriesPage() {
         </div>
         <div className="flex items-end">
           <Button type="submit" disabled={create.isPending} className="w-full">
-            {create.isPending ? 'Creating…' : 'Create'}
+            {create.isPending ? t('common.creating') : t('knowledge.categories.create')}
           </Button>
         </div>
       </form>
@@ -115,16 +120,19 @@ export function CategoriesPage() {
       {isLoading ? (
         <LoadingBlock />
       ) : categories.length === 0 ? (
-        <EmptyState title="No categories yet" description="Create HR or Policies to get started." />
+        <EmptyState
+          title={t('knowledge.categories.emptyTitle')}
+          description={t('knowledge.categories.emptyDescription')}
+        />
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-[var(--color-muted)]">
               <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Slug</th>
-                <th className="px-4 py-3">Parent</th>
-                <th className="px-4 py-3">Position</th>
+                <th className="px-4 py-3">{t('knowledge.categories.colName')}</th>
+                <th className="px-4 py-3">{t('knowledge.categories.colSlug')}</th>
+                <th className="px-4 py-3">{t('knowledge.categories.colParent')}</th>
+                <th className="px-4 py-3">{t('knowledge.categories.colPosition')}</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -134,12 +142,12 @@ export function CategoriesPage() {
                   <td className="px-4 py-3 font-medium">{c.name}</td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">{c.slug}</td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">
-                    {categories.find((p) => p.id === c.parent_id)?.name ?? '—'}
+                    {categories.find((p) => p.id === c.parent_id)?.name ?? t('common.emDash')}
                   </td>
                   <td className="px-4 py-3">{c.position}</td>
                   <td className="px-4 py-3 text-right">
                     <Button variant="secondary" onClick={() => setEditing(c)}>
-                      Edit
+                      {t('common.edit')}
                     </Button>
                   </td>
                 </tr>
@@ -155,9 +163,11 @@ export function CategoriesPage() {
             onSubmit={onSaveEdit}
             className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg"
           >
-            <h2 className="mb-4 text-lg font-semibold">Edit category</h2>
+            <h2 className="mb-4 text-lg font-semibold">
+              {t('knowledge.categories.editTitle')}
+            </h2>
             <div className="mb-3">
-              <Label>Name</Label>
+              <Label>{t('common.name')}</Label>
               <Input
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
@@ -165,14 +175,14 @@ export function CategoriesPage() {
               />
             </div>
             <div className="mb-3">
-              <Label>Slug</Label>
+              <Label>{t('common.slug')}</Label>
               <Input
                 value={editing.slug}
                 onChange={(e) => setEditing({ ...editing, slug: e.target.value })}
               />
             </div>
             <div className="mb-3">
-              <Label>Parent</Label>
+              <Label>{t('knowledge.categories.parent')}</Label>
               <Select
                 value={editing.parent_id ?? ''}
                 onChange={(e) =>
@@ -182,7 +192,7 @@ export function CategoriesPage() {
                   })
                 }
               >
-                <option value="">None</option>
+                <option value="">{t('knowledge.categories.none')}</option>
                 {categories
                   .filter((c) => c.id !== editing.id)
                   .map((c) => (
@@ -193,7 +203,7 @@ export function CategoriesPage() {
               </Select>
             </div>
             <div className="mb-4">
-              <Label>Position</Label>
+              <Label>{t('knowledge.categories.colPosition')}</Label>
               <Input
                 type="number"
                 min={0}
@@ -208,10 +218,10 @@ export function CategoriesPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={update.isPending}>
-                Save
+                {t('common.save')}
               </Button>
             </div>
           </form>

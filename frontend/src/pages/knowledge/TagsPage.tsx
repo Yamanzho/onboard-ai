@@ -8,6 +8,7 @@ import {
 import { Button } from '../../components/ui/Button'
 import { Input, Label } from '../../components/ui/Field'
 import { useTagMutations, useTags } from '../../hooks/useTags'
+import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import type { Tag } from '../../types/tag'
 
@@ -32,7 +33,9 @@ export function TagsPage() {
       setName('')
       setSlug('')
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Failed to create tag')
+      setFormError(
+        err instanceof ApiError ? err.message : t('knowledge.tags.createFailed'),
+      )
     }
   }
 
@@ -50,13 +53,18 @@ export function TagsPage() {
       })
       setEditing(null)
     } catch (err) {
-      setFormError(err instanceof ApiError ? err.message : 'Failed to update tag')
+      setFormError(
+        err instanceof ApiError ? err.message : t('knowledge.tags.updateFailed'),
+      )
     }
   }
 
   return (
     <div>
-      <PageHeader title="Tags" description="Label articles for filtering and discovery." />
+      <PageHeader
+        title={t('knowledge.tags.title')}
+        description={t('knowledge.tags.description')}
+      />
       {formError ? <ErrorAlert message={formError} /> : null}
       {error ? <ErrorAlert message={(error as Error).message} /> : null}
 
@@ -65,7 +73,7 @@ export function TagsPage() {
         className="mb-6 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-3"
       >
         <div>
-          <Label htmlFor="tag-name">Name</Label>
+          <Label htmlFor="tag-name">{t('common.name')}</Label>
           <Input
             id="tag-name"
             value={name}
@@ -74,17 +82,17 @@ export function TagsPage() {
           />
         </div>
         <div>
-          <Label htmlFor="tag-slug">Slug (optional)</Label>
+          <Label htmlFor="tag-slug">{t('knowledge.tags.slugOptional')}</Label>
           <Input
             id="tag-slug"
             value={slug}
             onChange={(e) => setSlug(e.target.value)}
-            placeholder="auto from name"
+            placeholder={t('knowledge.tags.slugPlaceholder')}
           />
         </div>
         <div className="flex items-end">
           <Button type="submit" disabled={create.isPending} className="w-full">
-            {create.isPending ? 'Creating…' : 'Create'}
+            {create.isPending ? t('common.creating') : t('knowledge.tags.create')}
           </Button>
         </div>
       </form>
@@ -92,25 +100,28 @@ export function TagsPage() {
       {isLoading ? (
         <LoadingBlock />
       ) : tags.length === 0 ? (
-        <EmptyState title="No tags yet" description="Create tags like vacation or security." />
+        <EmptyState
+          title={t('knowledge.tags.emptyTitle')}
+          description={t('knowledge.tags.emptyDescription')}
+        />
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-[var(--color-muted)]">
               <tr>
-                <th className="px-4 py-3">Name</th>
-                <th className="px-4 py-3">Slug</th>
+                <th className="px-4 py-3">{t('knowledge.tags.colName')}</th>
+                <th className="px-4 py-3">{t('knowledge.tags.colSlug')}</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
-              {tags.map((t) => (
-                <tr key={t.id}>
-                  <td className="px-4 py-3 font-medium">{t.name}</td>
-                  <td className="px-4 py-3 text-[var(--color-muted)]">{t.slug}</td>
+              {tags.map((tag) => (
+                <tr key={tag.id}>
+                  <td className="px-4 py-3 font-medium">{tag.name}</td>
+                  <td className="px-4 py-3 text-[var(--color-muted)]">{tag.slug}</td>
                   <td className="px-4 py-3 text-right">
-                    <Button variant="secondary" onClick={() => setEditing(t)}>
-                      Edit
+                    <Button variant="secondary" onClick={() => setEditing(tag)}>
+                      {t('common.edit')}
                     </Button>
                   </td>
                 </tr>
@@ -126,9 +137,9 @@ export function TagsPage() {
             onSubmit={onSaveEdit}
             className="w-full max-w-md rounded-lg bg-white p-5 shadow-lg"
           >
-            <h2 className="mb-4 text-lg font-semibold">Edit tag</h2>
+            <h2 className="mb-4 text-lg font-semibold">{t('knowledge.tags.editTitle')}</h2>
             <div className="mb-3">
-              <Label>Name</Label>
+              <Label>{t('common.name')}</Label>
               <Input
                 value={editing.name}
                 onChange={(e) => setEditing({ ...editing, name: e.target.value })}
@@ -136,7 +147,7 @@ export function TagsPage() {
               />
             </div>
             <div className="mb-4">
-              <Label>Slug</Label>
+              <Label>{t('common.slug')}</Label>
               <Input
                 value={editing.slug}
                 onChange={(e) => setEditing({ ...editing, slug: e.target.value })}
@@ -144,10 +155,10 @@ export function TagsPage() {
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
-                Cancel
+                {t('common.cancel')}
               </Button>
               <Button type="submit" disabled={update.isPending}>
-                Save
+                {t('common.save')}
               </Button>
             </div>
           </form>

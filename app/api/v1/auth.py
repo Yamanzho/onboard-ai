@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -8,20 +9,22 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.api.auth_deps import CurrentUser, EmployeeServiceDep
+from app.api.deps import get_platform_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.core.config import get_settings
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.core.rate_limit import is_rate_limited
 from app.core.security import (
     InvalidTokenError,
     create_access_token,
     create_refresh_token,
     decode_token,
-    verify_auth_password,
     verify_bot_service_token,
+    verify_employee_password,
 )
 from app.db.enums import EmployeeStatus
 from app.db.models.employee import Employee
+from app.db.uow import UnitOfWork
 from app.schemas.auth import (
     BotTelegramLoginRequest,
     BotTelegramLoginResponse,
@@ -29,10 +32,14 @@ from app.schemas.auth import (
     RefreshRequest,
     TokenResponse,
 )
+from app.schemas.super_admin import InviteAcceptRequest, InvitePreviewResponse
 from app.services.employee import EmployeeService
+from app.services.platform import PlatformService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 logger = logging.getLogger("app.auth.bot_login")
+
+PlatformServiceDep = Annotated[PlatformService, Depends(get_platform_service)]
 
 
 def _issue_tokens(employee: Employee) -> TokenResponse:
@@ -51,9 +58,10 @@ def _issue_tokens(employee: Employee) -> TokenResponse:
     )
 
 
-async def _load_active_employee(
+async def _authenticate_employee_login(
     employees: EmployeeService,
     employee_id: UUID,
+    password: str,
 ) -> Employee:
     try:
         employee = await employees.get_employee(employee_id)
@@ -69,6 +77,22 @@ async def _load_active_employee(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employee is archived",
         )
+    if employee.status == EmployeeStatus.INVITED.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please accept your invite and set a password first",
+        )
+    if not verify_employee_password(password=password, password_hash=employee.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    async with UnitOfWork() as uow:
+        await uow.employees.update(employee_id, last_login_at=datetime.now(UTC))
+        await uow.commit()
+    employee.last_login_at = datetime.now(UTC)
     return employee
 
 
@@ -112,7 +136,8 @@ def _enforce_bot_login_rate_limit(request: Request) -> str:
     description=(
         "Exchange employee credentials for JWT access and refresh tokens.\n\n"
         "**Username** must be the employee UUID.\n"
-        "**Password** is the shared MVP auth password (`AUTH_PASSWORD`).\n\n"
+        "**Password** is the employee password set via invite, "
+        "or the shared MVP auth password (`AUTH_PASSWORD`) for legacy/demo users.\n\n"
         "Use the returned `access_token` with Swagger **Authorize** "
         "(OAuth2 password flow / Bearer)."
     ),
@@ -144,14 +169,11 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    if not verify_auth_password(form_data.password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    employee = await _load_active_employee(employees, employee_id)
+    employee = await _authenticate_employee_login(
+        employees,
+        employee_id,
+        form_data.password,
+    )
     return _issue_tokens(employee)
 
 
@@ -300,8 +322,29 @@ async def refresh_tokens(
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    employee = await _load_active_employee(employees, employee_id)
+    employee = await _load_active_employee_for_refresh(employees, employee_id)
     return _issue_tokens(employee)
+
+
+async def _load_active_employee_for_refresh(
+    employees: EmployeeService,
+    employee_id: UUID,
+) -> Employee:
+    try:
+        employee = await employees.get_employee(employee_id)
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    if employee.status == EmployeeStatus.ARCHIVED.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Employee is archived",
+        )
+    return employee
 
 
 @router.get(
@@ -328,11 +371,45 @@ async def me(current_user: CurrentUser) -> CurrentUserResponse:
     return CurrentUserResponse.model_validate(current_user)
 
 
+@router.get(
+    "/invite/{token}",
+    response_model=InvitePreviewResponse,
+    summary="Preview employee invite",
+)
+async def preview_invite(token: str, platform: PlatformServiceDep) -> InvitePreviewResponse:
+    try:
+        return await platform.preview_invite(token)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@router.post(
+    "/invite/accept",
+    response_model=CurrentUserResponse,
+    summary="Accept invite and set password",
+)
+async def accept_invite(
+    payload: InviteAcceptRequest,
+    platform: PlatformServiceDep,
+) -> CurrentUserResponse:
+    try:
+        employee = await platform.accept_invite(payload)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return CurrentUserResponse.model_validate(employee)
+
+
 # Re-export for importers that expect guards alongside the router.
 __all__ = [
+    "accept_invite",
     "bot_telegram_login",
     "login",
     "me",
+    "preview_invite",
     "refresh_tokens",
     "router",
 ]

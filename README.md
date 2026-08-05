@@ -4,106 +4,132 @@ Telegram-first SaaS for AI-powered onboarding.
 
 ## Stack
 
-- Python 3.13
-- FastAPI
-- aiogram 3
+- Python 3.13 / FastAPI / aiogram 3
 - PostgreSQL + SQLAlchemy + Alembic
 - Redis
-- Docker
+- React (Vite) Admin Panel
+- Docker Compose
 
-## Quick start (all-in-Docker)
+## One-command local start
 
 ```bash
 cp .env.example .env
 docker compose up --build
-docker compose exec api alembic upgrade head
 ```
 
-API health check: `GET http://localhost:8000/health`  
-Swagger UI: http://localhost:8000/docs
+This starts **PostgreSQL**, **Redis**, **API** (migrations + demo seed), **Admin frontend**, and the **Telegram bot** container (idle until `BOT_TOKEN` is set).
 
-## Local development
+| Service   | URL |
+|-----------|-----|
+| Admin UI  | http://localhost:3000 |
+| API       | http://localhost:8000 |
+| Health    | http://localhost:8000/health |
+| Swagger   | http://localhost:8000/docs |
+| Bot webhook port (server mode) | http://localhost:8081/webhook |
 
-Run the API on the host; PostgreSQL and Redis via Docker Compose.
+### Demo login (seeded automatically)
 
-### Prerequisites
+| Role     | Username (employee UUID)              | Password (`AUTH_PASSWORD`) |
+|----------|----------------------------------------|----------------------------|
+| HR       | `33333333-3333-4333-8333-333333333333` | `change-me-auth`           |
+| Admin    | `22222222-2222-4222-8222-222222222222` | `change-me-auth`           |
 
-- Python 3.13+
-- Docker / Docker Compose
-- `pip` (or another Python package installer)
+- Company ID / `BOT_COMPANY_ID`: `11111111-1111-4111-8111-111111111111`
+- Demo employee Telegram id: `100003`
 
-### 1. Environment file
+Disable seed: set `SEED_DEMO=false` in `.env`.
 
-```bash
-cp .env.example .env
-```
-
-Edit secrets if needed (`SECRET_KEY`, `AUTH_PASSWORD`, `BOT_SERVICE_TOKEN`).  
-Keep `DATABASE_URL` and `REDIS_URL` pointing at `localhost` for host-local API.
-
-### 2. Install dependencies
-
-```bash
-python3.13 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-```
-
-### 3. Start PostgreSQL (and Redis)
+Stop:
 
 ```bash
-docker compose up -d db redis
-```
-
-Wait until both are healthy:
-
-```bash
-docker compose ps
-```
-
-### 4. Run migrations
-
-```bash
-alembic upgrade head
-```
-
-### 5. Start FastAPI
-
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 6. Open Swagger UI
-
-- Swagger: http://localhost:8000/docs
-- ReDoc: http://localhost:8000/redoc
-- Health: http://localhost:8000/health
-
-Authenticate via **Auth** → `POST /api/v1/auth/login` (employee UUID + `AUTH_PASSWORD`), then click **Authorize** with the Bearer access token.
-
-### Optional: Telegram bot
-
-Requires `BOT_TOKEN`, `BOT_COMPANY_ID`, and `BOT_SERVICE_TOKEN` in `.env`.
-
-```bash
-# host-local bot (API must already be running on :8000)
-python -m app.bot
-
-# or via Compose (profile)
-docker compose --profile bot up --build bot
-```
-
-### Stop infra
-
-```bash
-docker compose stop db redis
-# or tear down containers (keeps volumes):
 docker compose down
 ```
 
-### Admin Panel (frontend)
+More detail: [DEPLOYMENT.md](DEPLOYMENT.md).
 
-With the API running on port 8000:
+---
+
+## End-to-end happy path (Admin + Bot)
+
+1. Open http://localhost:3000 → sign in as **Demo HR**.
+2. **Employees** → create a new employee (set `telegram_user_id` to your real Telegram user id, status `active`).
+3. **Onboarding** → create a program → add steps → **Publish**.
+4. **Assignments** → assign the program to that employee.
+5. Configure the bot (see below) → in Telegram send `/start` → **Мой онбординг** → complete steps.
+
+---
+
+## Telegram bot
+
+### Required `.env` values
+
+| Variable | Purpose |
+|----------|---------|
+| `BOT_TOKEN` | From [@BotFather](https://t.me/BotFather) |
+| `BOT_COMPANY_ID` | Tenant UUID (demo seed default above) |
+| `BOT_SERVICE_TOKEN` | Shared secret for `POST /api/v1/auth/bot/telegram` (must match API) |
+
+### Local testing (polling — recommended)
+
+Leave `BOT_WEBHOOK_URL` **empty**. The bot uses long polling (no public HTTPS URL).
+
+```bash
+# 1. Put BOT_TOKEN in .env (BOT_COMPANY_ID already defaults to demo)
+# 2. Restart bot (or full stack)
+docker compose up --build -d
+docker compose logs -f bot
+```
+
+Or run the bot on the host (API must be reachable at `API_BASE_URL`):
+
+```bash
+source .venv/bin/activate
+python -m app.bot
+```
+
+### Server testing (webhook)
+
+1. Expose the bot with HTTPS (nginx / Caddy / Cloudflare Tunnel / ngrok).
+2. Set:
+
+```env
+BOT_WEBHOOK_URL=https://your.domain/webhook
+BOT_WEBHOOK_SECRET=some-random-secret
+BOT_WEBHOOK_PATH=/webhook
+BOT_WEBHOOK_PORT=8081
+```
+
+3. Restart the bot container. On startup it calls Telegram `setWebhook`.
+
+Webhook mode is selected automatically when `BOT_WEBHOOK_URL` is non-empty; otherwise polling is used.
+
+### Manual bot checklist
+
+1. Employee exists with your `telegram_user_id` and status `active` in `BOT_COMPANY_ID`.
+2. Published program assigned to that employee.
+3. In Telegram: `/start` → open **Мой онбординг** → complete each step.
+4. In Admin: Dashboard / Assignments show progress / completed.
+
+Without `BOT_TOKEN`, the bot container stays **idle** (`sleep infinity`) so the rest of the stack still runs.
+
+---
+
+## Local development (API on host)
+
+```bash
+cp .env.example .env
+python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+docker compose up -d db redis
+alembic upgrade head
+python -m scripts.seed_demo
+
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Admin panel (Vite, proxies `/api` → `:8000`):
 
 ```bash
 cd frontend
@@ -112,8 +138,10 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 — see [frontend/README.md](frontend/README.md).
+Open http://localhost:5173.
+
+---
 
 ## Project layout
 
-See repository root folders: `app/`, `frontend/`, `alembic/`, `tests/`, `scripts/`, `docker/`.
+`app/` · `frontend/` · `alembic/` · `scripts/` · `docker/` · `tests/`

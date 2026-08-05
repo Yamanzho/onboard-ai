@@ -58,6 +58,14 @@ app = FastAPI(
                 "Company knowledge base: articles (versioned), categories, and tags."
             ),
         },
+        {
+            "name": "Super Admin",
+            "description": (
+                "Platform Super Admin panel: cross-tenant companies, users, "
+                "dashboard stats, and global settings. Separate auth "
+                "(email + password); tokens have no company_id."
+            ),
+        },
     ],
 )
 

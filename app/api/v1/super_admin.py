@@ -1,0 +1,615 @@
+from __future__ import annotations
+
+from typing import Annotated
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.security import OAuth2PasswordRequestForm
+
+from app.api.super_admin_deps import (
+    PlatformServiceDep,
+    SuperAdminAuthServiceDep,
+    SuperAdminUser,
+)
+from app.api.v1.responses import ERROR_RESPONSES
+from app.core.exceptions import NotFoundError, ValidationError
+from app.core.security import (
+    InvalidTokenError,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+)
+from app.db.enums import EmployeeStatus, PlatformRole
+from app.db.models.super_admin import SuperAdmin
+from app.schemas.auth import RefreshRequest, TokenResponse
+from app.schemas.company import CompanyResponse
+from app.schemas.super_admin import (
+    CompanyLimitsResponse,
+    CompanySubscriptionResponse,
+    CompanySubscriptionUpdate,
+    CompanyUserCreate,
+    InviteAcceptRequest,
+    InvitePreviewResponse,
+    PlatformAuditLogResponse,
+    PlatformDashboardStats,
+    PlatformSettingsResponse,
+    PlatformSettingsUpdate,
+    PlatformUserResponse,
+    PlatformUserUpdate,
+    SubscriptionHistoryResponse,
+    SuperAdminCompanyCreate,
+    SuperAdminCompanyDetail,
+    SuperAdminCompanyProfileUpdate,
+    SuperAdminCompanyUpdate,
+    SuperAdminLoginRequest,
+    SuperAdminResponse,
+)
+
+router = APIRouter(prefix="/super-admin", tags=["Super Admin"])
+
+_AUTH_RESPONSES = {
+    status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid Super Admin token"},
+    status.HTTP_403_FORBIDDEN: {"description": "Super Admin role required"},
+}
+
+
+def _issue_tokens(admin: SuperAdmin) -> TokenResponse:
+    return TokenResponse(
+        access_token=create_access_token(
+            subject=admin.id,
+            role=PlatformRole.SUPER_ADMIN.value,
+            company_id=None,
+        ),
+        refresh_token=create_refresh_token(
+            subject=admin.id,
+            role=PlatformRole.SUPER_ADMIN.value,
+            company_id=None,
+        ),
+        token_type="bearer",
+    )
+
+
+def _to_super_admin_response(admin: SuperAdmin) -> SuperAdminResponse:
+    return SuperAdminResponse(
+        id=admin.id,
+        email=admin.email,
+        full_name=admin.full_name,
+        role=PlatformRole.SUPER_ADMIN.value,
+        is_active=admin.is_active,
+        created_at=admin.created_at,
+        updated_at=admin.updated_at,
+    )
+
+
+@router.post(
+    "/auth/login",
+    response_model=TokenResponse,
+    summary="Super Admin login",
+    description=(
+        "Authenticate a platform Super Admin with email + password. "
+        "Tokens have role ``super_admin`` and no ``company_id``. "
+        "They cannot access tenant company APIs."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Invalid credentials"},
+        status.HTTP_403_FORBIDDEN: {"description": "Account disabled"},
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+    },
+)
+async def super_admin_login(
+    payload: SuperAdminLoginRequest,
+    auth: SuperAdminAuthServiceDep,
+) -> TokenResponse:
+    try:
+        admin = await auth.authenticate(email=payload.email, password=payload.password)
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return _issue_tokens(admin)
+
+
+@router.post(
+    "/auth/login/form",
+    response_model=TokenResponse,
+    include_in_schema=False,
+    summary="Super Admin OAuth2 form login",
+)
+async def super_admin_login_form(
+    form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
+    auth: SuperAdminAuthServiceDep,
+) -> TokenResponse:
+    """OAuth2 password form for Swagger Authorize (username = email)."""
+    return await super_admin_login(
+        SuperAdminLoginRequest(email=form_data.username, password=form_data.password),
+        auth,
+    )
+
+
+@router.post(
+    "/auth/refresh",
+    response_model=TokenResponse,
+    summary="Refresh Super Admin tokens",
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Invalid refresh token"},
+        status.HTTP_403_FORBIDDEN: {"description": "Account disabled"},
+    },
+)
+async def super_admin_refresh(
+    payload: RefreshRequest,
+    auth: SuperAdminAuthServiceDep,
+) -> TokenResponse:
+    try:
+        token_payload = decode_token(payload.refresh_token, expected_type="refresh")
+        if token_payload.get("role") != PlatformRole.SUPER_ADMIN.value:
+            raise InvalidTokenError("Not a Super Admin token")
+        admin_id = UUID(token_payload["sub"])
+    except (InvalidTokenError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+    try:
+        admin = await auth.get_by_id(admin_id)
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return _issue_tokens(admin)
+
+
+@router.get(
+    "/auth/me",
+    response_model=SuperAdminResponse,
+    summary="Current Super Admin",
+    responses={**_AUTH_RESPONSES},
+)
+async def super_admin_me(current: SuperAdminUser) -> SuperAdminResponse:
+    return _to_super_admin_response(current)
+
+
+@router.get(
+    "/dashboard",
+    response_model=PlatformDashboardStats,
+    summary="Platform dashboard stats",
+    responses={**_AUTH_RESPONSES},
+)
+async def platform_dashboard(
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> PlatformDashboardStats:
+    return await service.get_dashboard_stats()
+
+
+@router.get(
+    "/companies",
+    response_model=list[CompanyResponse],
+    summary="List all companies",
+    responses={**_AUTH_RESPONSES},
+)
+async def list_all_companies(
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    is_active: Annotated[bool | None, Query()] = None,
+) -> list[CompanyResponse]:
+    companies = await service.list_companies(
+        offset=offset,
+        limit=limit,
+        is_active=is_active,
+    )
+    return [CompanyResponse.model_validate(c) for c in companies]
+
+
+@router.get(
+    "/companies/{company_id}",
+    response_model=SuperAdminCompanyDetail,
+    summary="Get company detail",
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def get_company_detail(
+    company_id: UUID,
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> SuperAdminCompanyDetail:
+    return await service.get_company(company_id)
+
+
+@router.post(
+    "/companies",
+    response_model=SuperAdminCompanyDetail,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create company with first admin",
+    description=(
+        "Create a new company tenant and provision the first "
+        "company administrator (role=admin, status=invited). "
+        "An invite email is sent — the admin sets their own password."
+    ),
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_409_CONFLICT: ERROR_RESPONSES[status.HTTP_409_CONFLICT],
+    },
+)
+async def create_company_with_admin(
+    payload: SuperAdminCompanyCreate,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> SuperAdminCompanyDetail:
+    company, _admin = await service.create_company_with_admin(
+        name=payload.name,
+        slug=payload.slug,
+        timezone=payload.timezone,
+        settings=payload.settings,
+        description=payload.description,
+        logo_url=payload.logo_url,
+        contact_email=payload.contact_email,
+        contact_phone=payload.contact_phone,
+        contact_person=payload.contact_person,
+        admin_full_name=payload.admin_full_name,
+        admin_email=payload.admin_email,
+        admin_telegram_user_id=payload.admin_telegram_user_id,
+        super_admin_id=current.id,
+    )
+    return await service.get_company(company.id)
+
+
+@router.patch(
+    "/companies/{company_id}/profile",
+    response_model=SuperAdminCompanyDetail,
+    summary="Update company profile card",
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def update_company_profile(
+    company_id: UUID,
+    payload: SuperAdminCompanyProfileUpdate,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> SuperAdminCompanyDetail:
+    return await service.update_company_profile(
+        company_id,
+        payload,
+        super_admin_id=current.id,
+    )
+
+
+@router.patch(
+    "/companies/{company_id}",
+    response_model=CompanyResponse,
+    summary="Update company",
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_409_CONFLICT: ERROR_RESPONSES[status.HTTP_409_CONFLICT],
+    },
+)
+async def update_company(
+    company_id: UUID,
+    payload: SuperAdminCompanyUpdate,
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> CompanyResponse:
+    values = payload.model_dump(exclude_unset=True)
+    company = await service.update_company(company_id, **values)
+    return CompanyResponse.model_validate(company)
+
+
+@router.post(
+    "/companies/{company_id}/deactivate",
+    response_model=CompanyResponse,
+    summary="Deactivate (block) company",
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def deactivate_company(
+    company_id: UUID,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> CompanyResponse:
+    company = await service.set_company_active(
+        company_id,
+        is_active=False,
+        super_admin_id=current.id,
+    )
+    return CompanyResponse.model_validate(company)
+
+
+@router.post(
+    "/companies/{company_id}/activate",
+    response_model=CompanyResponse,
+    summary="Activate company",
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def activate_company(
+    company_id: UUID,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> CompanyResponse:
+    company = await service.set_company_active(
+        company_id,
+        is_active=True,
+        super_admin_id=current.id,
+    )
+    return CompanyResponse.model_validate(company)
+
+
+@router.get(
+    "/companies/{company_id}/subscription",
+    response_model=CompanySubscriptionResponse,
+    summary="Get current company subscription",
+    responses={**_AUTH_RESPONSES},
+)
+async def get_company_subscription(
+    company_id: UUID,
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> CompanySubscriptionResponse:
+    return await service.get_subscription(company_id)
+
+
+@router.patch(
+    "/companies/{company_id}/subscription",
+    response_model=CompanySubscriptionResponse,
+    summary="Update company subscription",
+    responses={**_AUTH_RESPONSES},
+)
+async def update_company_subscription(
+    company_id: UUID,
+    payload: CompanySubscriptionUpdate,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> CompanySubscriptionResponse:
+    return await service.update_subscription(
+        company_id,
+        payload,
+        super_admin_id=current.id,
+    )
+
+
+@router.get(
+    "/companies/{company_id}/subscription/history",
+    response_model=list[SubscriptionHistoryResponse],
+    summary="Subscription status history",
+    responses={**_AUTH_RESPONSES},
+)
+async def list_subscription_history(
+    company_id: UUID,
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+) -> list[SubscriptionHistoryResponse]:
+    return await service.list_subscription_history(company_id, offset=offset, limit=limit)
+
+
+@router.get(
+    "/companies/{company_id}/subscriptions",
+    response_model=list[CompanySubscriptionResponse],
+    summary="All subscription records",
+    responses={**_AUTH_RESPONSES},
+)
+async def list_company_subscriptions(
+    company_id: UUID,
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+) -> list[CompanySubscriptionResponse]:
+    return await service.list_subscriptions(company_id, offset=offset, limit=limit)
+
+
+@router.get(
+    "/companies/{company_id}/limits",
+    response_model=CompanyLimitsResponse,
+    summary="Company usage limits",
+    responses={**_AUTH_RESPONSES},
+)
+async def get_company_limits(
+    company_id: UUID,
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> CompanyLimitsResponse:
+    return await service.get_company_limits(company_id)
+
+
+@router.get(
+    "/companies/{company_id}/users",
+    response_model=list[PlatformUserResponse],
+    summary="List company users",
+    responses={**_AUTH_RESPONSES},
+)
+async def list_company_users(
+    company_id: UUID,
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    role: Annotated[str | None, Query()] = None,
+    status_filter: Annotated[str | None, Query(alias="status")] = None,
+) -> list[PlatformUserResponse]:
+    return await service.list_company_users(
+        company_id,
+        offset=offset,
+        limit=limit,
+        role=role,
+        status=status_filter,
+    )
+
+
+@router.post(
+    "/companies/{company_id}/users",
+    response_model=PlatformUserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create company user and send invite",
+    responses={**_AUTH_RESPONSES},
+)
+async def create_company_user(
+    company_id: UUID,
+    payload: CompanyUserCreate,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> PlatformUserResponse:
+    return await service.create_company_user(
+        company_id,
+        payload,
+        super_admin_id=current.id,
+    )
+
+
+@router.post(
+    "/users/{employee_id}/resend-invite",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Resend user invite email",
+    responses={**_AUTH_RESPONSES},
+)
+async def resend_user_invite(
+    employee_id: UUID,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> None:
+    await service.resend_invite(employee_id, super_admin_id=current.id)
+
+
+@router.get(
+    "/users",
+    response_model=list[PlatformUserResponse],
+    summary="List company administrators",
+    description="List company admin and HR users across all tenants.",
+    responses={**_AUTH_RESPONSES},
+)
+async def list_platform_users(
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    company_id: Annotated[UUID | None, Query()] = None,
+    role: Annotated[str | None, Query(description="admin or hr")] = None,
+    status_filter: Annotated[
+        str | None,
+        Query(alias="status", description="invited | active | archived"),
+    ] = None,
+) -> list[PlatformUserResponse]:
+    return await service.list_company_admins(
+        offset=offset,
+        limit=limit,
+        company_id=company_id,
+        role=role,
+        status=status_filter,
+    )
+
+
+@router.patch(
+    "/users/{employee_id}",
+    response_model=PlatformUserResponse,
+    summary="Update company user role/status",
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def update_platform_user(
+    employee_id: UUID,
+    payload: PlatformUserUpdate,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> PlatformUserResponse:
+    values = payload.model_dump(exclude_unset=True)
+    return await service.update_company_user(
+        employee_id,
+        super_admin_id=current.id,
+        **values,
+    )
+
+
+@router.post(
+    "/users/{employee_id}/block",
+    response_model=PlatformUserResponse,
+    summary="Block (archive) company user",
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def block_platform_user(
+    employee_id: UUID,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> PlatformUserResponse:
+    return await service.block_company_user(employee_id, super_admin_id=current.id)
+
+
+@router.get(
+    "/audit-logs",
+    response_model=list[PlatformAuditLogResponse],
+    summary="Platform audit log",
+    responses={**_AUTH_RESPONSES},
+)
+async def list_audit_logs(
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    company_id: Annotated[UUID | None, Query()] = None,
+) -> list[PlatformAuditLogResponse]:
+    return await service.list_audit_logs(
+        offset=offset,
+        limit=limit,
+        company_id=company_id,
+    )
+
+
+@router.get(
+    "/settings",
+    response_model=PlatformSettingsResponse,
+    summary="Global platform settings (stub)",
+    responses={**_AUTH_RESPONSES},
+)
+async def get_platform_settings(
+    _: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> PlatformSettingsResponse:
+    return service.get_settings()
+
+
+@router.patch(
+    "/settings",
+    response_model=PlatformSettingsResponse,
+    summary="Update platform settings (stub)",
+    description="In-memory stub — not persisted across restarts.",
+    responses={**_AUTH_RESPONSES},
+)
+async def update_platform_settings(
+    payload: PlatformSettingsUpdate,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> PlatformSettingsResponse:
+    return service.update_settings(payload, super_admin_id=current.id)

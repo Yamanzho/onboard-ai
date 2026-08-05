@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
+import { t } from '../../i18n'
 
 export function PageHeader({
   title,
@@ -60,10 +61,10 @@ export function ErrorAlert({ message }: { message: string }) {
   )
 }
 
-export function LoadingBlock({ label = 'Loading…' }: { label?: string }) {
+export function LoadingBlock({ label }: { label?: string }) {
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-white px-6 py-10 text-center text-sm text-[var(--color-muted)]">
-      {label}
+      {label ?? t('common.loading')}
     </div>
   )
 }

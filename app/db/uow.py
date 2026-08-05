@@ -15,9 +15,14 @@ from app.repositories.knowledge_article_link import KnowledgeArticleLinkReposito
 from app.repositories.knowledge_article_version import KnowledgeArticleVersionRepository
 from app.repositories.knowledge_category import KnowledgeCategoryRepository
 from app.repositories.knowledge_tag import KnowledgeTagRepository
+from app.repositories.company_subscription import CompanySubscriptionRepository
+from app.repositories.employee_invite import EmployeeInviteRepository
 from app.repositories.onboarding_program import OnboardingProgramRepository
+from app.repositories.platform_audit_log import PlatformAuditLogRepository
 from app.repositories.progress import ProgressRepository
 from app.repositories.step import StepRepository
+from app.repositories.subscription_history import SubscriptionHistoryRepository
+from app.repositories.super_admin import SuperAdminRepository
 
 
 class UnitOfWork:
@@ -43,6 +48,11 @@ class UnitOfWork:
     knowledge_article_versions: KnowledgeArticleVersionRepository
     knowledge_article_links: KnowledgeArticleLinkRepository
     ai_conversations: AIConversationRepository
+    super_admins: SuperAdminRepository
+    company_subscriptions: CompanySubscriptionRepository
+    subscription_history: SubscriptionHistoryRepository
+    employee_invites: EmployeeInviteRepository
+    platform_audit_logs: PlatformAuditLogRepository
 
     def __init__(
         self,
@@ -66,6 +76,11 @@ class UnitOfWork:
         self.knowledge_article_versions = KnowledgeArticleVersionRepository(self._session)
         self.knowledge_article_links = KnowledgeArticleLinkRepository(self._session)
         self.ai_conversations = AIConversationRepository(self._session)
+        self.super_admins = SuperAdminRepository(self._session)
+        self.company_subscriptions = CompanySubscriptionRepository(self._session)
+        self.subscription_history = SubscriptionHistoryRepository(self._session)
+        self.employee_invites = EmployeeInviteRepository(self._session)
+        self.platform_audit_logs = PlatformAuditLogRepository(self._session)
         return self
 
     async def __aexit__(

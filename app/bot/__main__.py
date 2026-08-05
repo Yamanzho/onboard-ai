@@ -1,13 +1,17 @@
-"""Webhook-ready Telegram bot entrypoint.
+"""Telegram bot entrypoint.
 
 Run with: python -m app.bot
 
-Uses aiogram webhook + aiohttp (no polling).
+Modes:
+- polling (default for local): when ``BOT_WEBHOOK_URL`` is empty
+- webhook: when ``BOT_WEBHOOK_URL`` is set (aiohttp server on BOT_WEBHOOK_PORT)
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import sys
 
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
@@ -72,8 +76,24 @@ def create_webhook_app() -> web.Application:
     return app
 
 
-def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+async def run_polling() -> None:
+    """Long-polling mode for local development (no public HTTPS URL required)."""
+    settings = get_settings()
+    api_client = create_api_client(settings)
+    bot = create_bot(settings)
+    dispatcher = create_dispatcher(api_client, settings)
+
+    await api_client.start()
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Starting bot in polling mode (BOT_WEBHOOK_URL is empty)")
+        await dispatcher.start_polling(bot)
+    finally:
+        await api_client.aclose()
+        await bot.session.close()
+
+
+def run_webhook() -> None:
     settings = get_settings()
     app = create_webhook_app()
     web.run_app(
@@ -81,6 +101,27 @@ def main() -> None:
         host=settings.bot_webhook_host,
         port=settings.bot_webhook_port,
     )
+
+
+def main() -> None:
+    logging.basicConfig(level=logging.INFO)
+    settings = get_settings()
+
+    if not settings.bot_token:
+        logger.error("BOT_TOKEN is required")
+        sys.exit(1)
+    if not settings.bot_company_id:
+        logger.error("BOT_COMPANY_ID is required")
+        sys.exit(1)
+    if not settings.bot_service_token:
+        logger.error("BOT_SERVICE_TOKEN is required")
+        sys.exit(1)
+
+    if settings.bot_webhook_url:
+        logger.info("BOT_WEBHOOK_URL set — starting webhook server")
+        run_webhook()
+    else:
+        asyncio.run(run_polling())
 
 
 if __name__ == "__main__":

@@ -12,7 +12,10 @@ import { Select } from '../../components/ui/Field'
 import { useArticleMutations, useArticles } from '../../hooks/useArticles'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
+import { labelArticleStatus, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
+
+const ARTICLE_STATUSES = ['draft', 'published', 'archived'] as const
 
 export function ArticleListPage() {
   const [status, setStatus] = useState('')
@@ -41,7 +44,9 @@ export function ArticleListPage() {
     try {
       await publish.mutateAsync(id)
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Publish failed')
+      setActionError(
+        err instanceof ApiError ? err.message : t('knowledge.articles.publishFailed'),
+      )
     }
   }
 
@@ -50,18 +55,20 @@ export function ArticleListPage() {
     try {
       await archive.mutateAsync(id)
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : 'Archive failed')
+      setActionError(
+        err instanceof ApiError ? err.message : t('knowledge.articles.archiveFailed'),
+      )
     }
   }
 
   return (
     <div>
       <PageHeader
-        title="Knowledge Base"
-        description="Manage company knowledge articles."
+        title={t('knowledge.articles.title')}
+        description={t('knowledge.articles.description')}
         action={
           <Link to="/knowledge/articles/new">
-            <Button>New article</Button>
+            <Button>{t('knowledge.articles.new')}</Button>
           </Link>
         }
       />
@@ -71,13 +78,15 @@ export function ArticleListPage() {
 
       <div className="mb-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-3">
         <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-          <option value="">All statuses</option>
-          <option value="draft">draft</option>
-          <option value="published">published</option>
-          <option value="archived">archived</option>
+          <option value="">{t('common.allStatuses')}</option>
+          {ARTICLE_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {labelArticleStatus(s)}
+            </option>
+          ))}
         </Select>
         <Select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}>
-          <option value="">All categories</option>
+          <option value="">{t('knowledge.articles.allCategories')}</option>
           {(categories ?? []).map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -85,10 +94,10 @@ export function ArticleListPage() {
           ))}
         </Select>
         <Select value={tagId} onChange={(e) => setTagId(e.target.value)}>
-          <option value="">All tags</option>
-          {(tags ?? []).map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
+          <option value="">{t('knowledge.articles.allTags')}</option>
+          {(tags ?? []).map((tag) => (
+            <option key={tag.id} value={tag.id}>
+              {tag.name}
             </option>
           ))}
         </Select>
@@ -98,9 +107,9 @@ export function ArticleListPage() {
         <LoadingBlock />
       ) : items.length === 0 ? (
         <EmptyState
-          title="No articles"
-          description="Create your first knowledge article."
-          actionLabel="Create article"
+          title={t('knowledge.articles.emptyTitle')}
+          description={t('knowledge.articles.emptyDescription')}
+          actionLabel={t('knowledge.articles.create')}
           actionTo="/knowledge/articles/new"
         />
       ) : (
@@ -108,10 +117,10 @@ export function ArticleListPage() {
           <table className="min-w-full text-left text-sm">
             <thead className="bg-slate-50 text-xs uppercase text-[var(--color-muted)]">
               <tr>
-                <th className="px-4 py-3">Title</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Version</th>
-                <th className="px-4 py-3">Tags</th>
+                <th className="px-4 py-3">{t('knowledge.articles.colTitle')}</th>
+                <th className="px-4 py-3">{t('common.status')}</th>
+                <th className="px-4 py-3">{t('knowledge.articles.colVersion')}</th>
+                <th className="px-4 py-3">{t('knowledge.articles.colTags')}</th>
                 <th className="px-4 py-3" />
               </tr>
             </thead>
@@ -123,17 +132,19 @@ export function ArticleListPage() {
                       to={`/knowledge/articles/${article.id}`}
                       className="font-medium hover:text-[var(--color-accent)]"
                     >
-                      {article.current_version?.title ?? 'Untitled'}
+                      {article.current_version?.title ?? t('knowledge.articles.untitled')}
                     </Link>
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={article.status} />
                   </td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">
-                    v{article.current_version?.version ?? '—'}
+                    {article.current_version?.version != null
+                      ? `${t('knowledge.articles.versionPrefix')}${article.current_version.version}`
+                      : t('common.emDash')}
                   </td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">
-                    {article.tags.map((t) => t.name).join(', ') || '—'}
+                    {article.tags.map((tag) => tag.name).join(', ') || t('common.emDash')}
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
@@ -143,7 +154,7 @@ export function ArticleListPage() {
                           onClick={() => void onPublish(article.id)}
                           disabled={publish.isPending}
                         >
-                          Publish
+                          {t('common.publish')}
                         </Button>
                       ) : null}
                       {article.status !== 'archived' ? (
@@ -152,7 +163,7 @@ export function ArticleListPage() {
                           onClick={() => void onArchive(article.id)}
                           disabled={archive.isPending}
                         >
-                          Archive
+                          {t('common.archive')}
                         </Button>
                       ) : null}
                     </div>

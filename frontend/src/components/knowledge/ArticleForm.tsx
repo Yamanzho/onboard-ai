@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { Button } from '../ui/Button'
 import { Input, Label, Select, Textarea } from '../ui/Field'
+import { labelVisibility, t } from '../../i18n'
 import type { Category } from '../../types/category'
 import type { Tag } from '../../types/tag'
 import type { KnowledgeVisibility } from '../../types/article'
@@ -23,6 +24,8 @@ interface ArticleFormProps {
   onSubmit: (values: ArticleFormValues) => Promise<void>
   extraActions?: ReactNode
 }
+
+const VISIBILITY_OPTIONS: KnowledgeVisibility[] = ['company', 'program']
 
 export function ArticleForm({
   initial,
@@ -53,7 +56,7 @@ export function ArticleForm({
     try {
       await onSubmit(values)
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Save failed')
+      setError(err instanceof Error ? err.message : t('common.saveFailed'))
     }
   }
 
@@ -66,7 +69,7 @@ export function ArticleForm({
       ) : null}
 
       <div>
-        <Label htmlFor="title">Title</Label>
+        <Label htmlFor="title">{t('knowledge.articles.colTitle')}</Label>
         <Input
           id="title"
           value={values.title}
@@ -76,7 +79,7 @@ export function ArticleForm({
       </div>
 
       <div>
-        <Label htmlFor="body">Body (markdown)</Label>
+        <Label htmlFor="body">{t('knowledge.articles.body')}</Label>
         <Textarea
           id="body"
           rows={12}
@@ -88,13 +91,13 @@ export function ArticleForm({
 
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <Label htmlFor="category">Category</Label>
+          <Label htmlFor="category">{t('knowledge.articles.category')}</Label>
           <Select
             id="category"
             value={values.category_id}
             onChange={(e) => setValues({ ...values, category_id: e.target.value })}
           >
-            <option value="">None</option>
+            <option value="">{t('knowledge.articles.none')}</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -103,7 +106,7 @@ export function ArticleForm({
           </Select>
         </div>
         <div>
-          <Label htmlFor="visibility">Visibility</Label>
+          <Label htmlFor="visibility">{t('knowledge.articles.visibility')}</Label>
           <Select
             id="visibility"
             value={values.visibility}
@@ -114,32 +117,37 @@ export function ArticleForm({
               })
             }
           >
-            <option value="company">company</option>
-            <option value="program">program</option>
+            {VISIBILITY_OPTIONS.map((v) => (
+              <option key={v} value={v}>
+                {labelVisibility(v)}
+              </option>
+            ))}
           </Select>
         </div>
       </div>
 
       <div>
-        <Label>Tags</Label>
+        <Label>{t('knowledge.articles.tags')}</Label>
         <div className="mt-1 flex flex-wrap gap-2">
           {tags.length === 0 ? (
-            <p className="text-sm text-[var(--color-muted)]">No tags yet.</p>
+            <p className="text-sm text-[var(--color-muted)]">
+              {t('knowledge.articles.noTags')}
+            </p>
           ) : (
-            tags.map((t) => {
-              const on = selected.has(t.id)
+            tags.map((tag) => {
+              const on = selected.has(tag.id)
               return (
                 <button
-                  key={t.id}
+                  key={tag.id}
                   type="button"
-                  onClick={() => toggleTag(t.id)}
+                  onClick={() => toggleTag(tag.id)}
                   className={`rounded-full border px-3 py-1 text-xs font-medium ${
                     on
                       ? 'border-[var(--color-accent)] bg-teal-50 text-[var(--color-accent)]'
                       : 'border-[var(--color-border)] bg-white text-[var(--color-muted)]'
                   }`}
                 >
-                  {t.name}
+                  {tag.name}
                 </button>
               )
             })
@@ -148,18 +156,18 @@ export function ArticleForm({
       </div>
 
       <div>
-        <Label htmlFor="summary">Change summary</Label>
+        <Label htmlFor="summary">{t('knowledge.articles.summary')}</Label>
         <Input
           id="summary"
           value={values.change_summary}
           onChange={(e) => setValues({ ...values, change_summary: e.target.value })}
-          placeholder="What changed?"
+          placeholder={t('knowledge.articles.changeSummaryPlaceholder')}
         />
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button type="submit" disabled={pending}>
-          {pending ? 'Saving…' : submitLabel}
+          {pending ? t('common.saving') : submitLabel}
         </Button>
         {extraActions}
       </div>

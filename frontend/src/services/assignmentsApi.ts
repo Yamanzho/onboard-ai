@@ -1,0 +1,60 @@
+import type {
+  Assignment,
+  AssignmentCreate,
+  AssignmentListParams,
+  AssignmentProgress,
+} from '../types/assignment'
+import { apiRequest } from './apiClient'
+
+export async function listAssignments(
+  params: AssignmentListParams,
+): Promise<Assignment[]> {
+  const search = new URLSearchParams()
+  search.set('company_id', params.company_id)
+  if (params.status) search.set('status', params.status)
+  if (params.employee_id) search.set('employee_id', params.employee_id)
+  if (params.offset !== undefined) search.set('offset', String(params.offset))
+  if (params.limit !== undefined) search.set('limit', String(params.limit))
+  return apiRequest<Assignment[]>(`/api/v1/assignments?${search}`)
+}
+
+export async function listEmployeeAssignments(
+  employeeId: string,
+  params: { status?: string; offset?: number; limit?: number } = {},
+): Promise<Assignment[]> {
+  const search = new URLSearchParams()
+  if (params.status) search.set('status', params.status)
+  if (params.offset !== undefined) search.set('offset', String(params.offset))
+  if (params.limit !== undefined) search.set('limit', String(params.limit))
+  const qs = search.toString()
+  return apiRequest<Assignment[]>(
+    `/api/v1/employees/${employeeId}/assignments${qs ? `?${qs}` : ''}`,
+  )
+}
+
+export async function getAssignment(assignmentId: string): Promise<Assignment> {
+  return apiRequest<Assignment>(`/api/v1/assignments/${assignmentId}`)
+}
+
+export async function createAssignment(
+  payload: AssignmentCreate,
+): Promise<Assignment> {
+  return apiRequest<Assignment>('/api/v1/assignments', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function cancelAssignment(assignmentId: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/assignments/${assignmentId}`, {
+    method: 'DELETE',
+  })
+}
+
+export async function getAssignmentProgress(
+  assignmentId: string,
+): Promise<AssignmentProgress> {
+  return apiRequest<AssignmentProgress>(
+    `/api/v1/assignments/${assignmentId}/progress`,
+  )
+}
