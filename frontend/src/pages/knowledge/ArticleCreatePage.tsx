@@ -5,6 +5,7 @@ import {
   type ArticleFormValues,
 } from '../../components/knowledge/ArticleForm'
 import { useArticleMutations } from '../../hooks/useArticles'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
 import { t } from '../../i18n'
@@ -12,6 +13,7 @@ import { ApiError } from '../../services/apiClient'
 
 export function ArticleCreatePage() {
   const navigate = useNavigate()
+  const paths = useWorkspacePaths()
   const { data: categories = [] } = useCategories()
   const { data: tags = [] } = useTags()
   const { create } = useArticleMutations()
@@ -27,7 +29,7 @@ export function ArticleCreatePage() {
         tag_ids: values.tag_ids,
         change_summary: values.change_summary.trim() || null,
       })
-      navigate(`/knowledge/articles/${article.id}`)
+      navigate(paths.article(article.id))
     } catch (err) {
       throw new Error(
         err instanceof ApiError ? err.message : t('knowledge.articles.createFailed'),

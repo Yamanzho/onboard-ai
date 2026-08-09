@@ -4,11 +4,13 @@ import { ErrorAlert, PageHeader } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/Button'
 import { Input, Label } from '../../components/ui/Field'
 import { usePlatformCompanyMutations } from '../../hooks/useSuperAdmin'
+import { usePlatformPaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
 export function SuperAdminCompanyCreatePage() {
   const navigate = useNavigate()
+  const paths = usePlatformPaths()
   const { create } = usePlatformCompanyMutations()
   const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState('')
@@ -49,7 +51,7 @@ export function SuperAdminCompanyCreatePage() {
         admin_email: adminEmail.trim(),
         admin_telegram_user_id: telegramId,
       })
-      navigate(`/super-admin/companies/${company.id}`, { replace: true })
+      navigate(paths.company(company.id), { replace: true })
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t('common.createFailed'))
     }
@@ -61,7 +63,7 @@ export function SuperAdminCompanyCreatePage() {
         title={t('superAdmin.companies.createTitle')}
         description={t('superAdmin.companies.createDescription')}
         action={
-          <Link to="/super-admin/companies">
+          <Link to={paths.companies}>
             <Button variant="secondary">{t('common.back')}</Button>
           </Link>
         }

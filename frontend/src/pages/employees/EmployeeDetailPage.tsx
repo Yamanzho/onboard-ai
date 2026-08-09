@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useState } from 'react'
 import {
   ErrorAlert,
@@ -12,6 +12,7 @@ import {
 } from '../../components/employees/EmployeeBadges'
 import { Button } from '../../components/ui/Button'
 import { useEmployee, useEmployeeMutations } from '../../hooks/useEmployees'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as employeesApi from '../../services/employeesApi'
@@ -35,6 +36,12 @@ type Tab = 'profile' | 'assignments'
 export function EmployeeDetailPage() {
   const { employeeId } = useParams<{ employeeId: string }>()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const paths = useWorkspacePaths()
+  const inHrMgmt = /\/hr(\/|$)/.test(pathname) && !pathname.includes('/employees')
+  const listPath = inHrMgmt ? paths.hr : paths.employees
+  const editPath = (id: string) =>
+    inHrMgmt ? paths.path(`/hr/${id}/edit`) : paths.employeeEdit(id)
   const { data: employee, isLoading, error, refetch } = useEmployee(employeeId)
   const { remove } = useEmployeeMutations()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -59,7 +66,7 @@ export function EmployeeDetailPage() {
     setActionSuccess(null)
     try {
       await remove.mutateAsync(employee.id)
-      navigate('/employees')
+      navigate(listPath)
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : t('common.deleteFailed'))
     }
@@ -184,10 +191,10 @@ export function EmployeeDetailPage() {
         description={t('employees.profileDescription')}
         action={
           <div className="flex flex-wrap gap-2">
-            <Link to="/employees">
+            <Link to={listPath}>
               <Button variant="secondary">{t('employees.backToList')}</Button>
             </Link>
-            <Link to={`/employees/${employee.id}/edit`}>
+            <Link to={editPath(employee.id)}>
               <Button>{t('common.edit')}</Button>
             </Link>
             {canReset ? (

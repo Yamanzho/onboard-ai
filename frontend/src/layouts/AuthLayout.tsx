@@ -9,7 +9,7 @@ export function AuthLayout() {
           <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--color-accent)]">
             {t('app.brand')}
           </p>
-          <h1 className="mt-2 text-2xl font-semibold">{t('app.adminPanel')}</h1>
+          <h1 className="mt-2 text-2xl font-semibold">{t('app.brand')}</h1>
         </div>
         <Outlet />
       </div>

@@ -21,6 +21,7 @@ import {
   usePlatformCompanyMutations,
   useSubscriptionHistory,
 } from '../../hooks/useSuperAdmin'
+import { usePlatformPaths } from '../../hooks/useWorkspacePaths'
 import {
   labelCompanyActive,
   labelEmployeeRole,
@@ -60,6 +61,7 @@ const USER_ROLES = ['admin', 'hr', 'employee'] as const
 
 export function SuperAdminCompanyDetailPage() {
   const { companyId } = useParams<{ companyId: string }>()
+  const paths = usePlatformPaths()
   const [tab, setTab] = useState<Tab>('profile')
   const { data, isLoading, error } = usePlatformCompany(companyId)
   const { activate, deactivate } = usePlatformCompanyMutations()
@@ -94,12 +96,12 @@ export function SuperAdminCompanyDetailPage() {
         }
         action={
           <div className="flex flex-wrap gap-2">
-            <Link to="/super-admin/companies">
+            <Link to={paths.companies}>
               <Button variant="secondary">{t('common.back')}</Button>
             </Link>
             {data ? (
               <>
-                <Link to={`/super-admin/companies/${data.id}/edit`}>
+                <Link to={paths.companyEdit(data.id)}>
                   <Button variant="secondary">{t('common.edit')}</Button>
                 </Link>
                 <Button

@@ -4,9 +4,11 @@ import { ErrorAlert } from '../../components/common/PageHeader'
 import { Button } from '../../components/ui/Button'
 import { Input, Label } from '../../components/ui/Field'
 import { useSuperAdminAuth } from '../../hooks/useSuperAdminAuth'
+import { usePlatformPaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 
 export function SuperAdminLoginPage() {
+  const paths = usePlatformPaths()
   const { login, isAuthenticated, loading, error, clearError } =
     useSuperAdminAuth()
   const navigate = useNavigate()
@@ -15,7 +17,7 @@ export function SuperAdminLoginPage() {
   const [submitting, setSubmitting] = useState(false)
 
   if (!loading && isAuthenticated) {
-    return <Navigate to="/super-admin/dashboard" replace />
+    return <Navigate to={paths.dashboard} replace />
   }
 
   async function onSubmit(e: FormEvent) {
@@ -24,7 +26,7 @@ export function SuperAdminLoginPage() {
     setSubmitting(true)
     try {
       await login(email, password)
-      navigate('/super-admin/dashboard', { replace: true })
+      navigate(paths.dashboard, { replace: true })
     } catch {
       // error via context
     } finally {

@@ -5,11 +5,13 @@ import {
   LoadingBlock,
   PageHeader,
 } from '../../components/common/PageHeader'
+import { usePlatformPaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import * as superAdminApi from '../../services/superAdminApi'
 import type { PlatformCompany } from '../../types/superAdmin'
 
 export function SuperAdminSubscriptionsPage() {
+  const paths = usePlatformPaths()
   const {
     data: companies = [],
     isLoading,
@@ -54,7 +56,7 @@ export function SuperAdminSubscriptionsPage() {
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Link
-                    to={`/super-admin/companies/${c.id}`}
+                    to={paths.company(c.id)}
                     className="text-[var(--color-accent)] hover:underline"
                   >
                     {t('superAdmin.openSubscription')}

@@ -5,11 +5,13 @@ import {
   type ProgramFormValues,
 } from '../../components/onboarding/ProgramForm'
 import { useProgramMutations } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
 export function ProgramCreatePage() {
   const navigate = useNavigate()
+  const paths = useWorkspacePaths()
   const { create } = useProgramMutations()
 
   async function onSubmit(values: ProgramFormValues) {
@@ -18,7 +20,7 @@ export function ProgramCreatePage() {
         title: values.title,
         description: values.description || null,
       })
-      navigate(`/onboarding/${program.id}/edit`)
+      navigate(paths.programEdit(program.id))
     } catch (err) {
       throw new Error(
         err instanceof ApiError ? err.message : t('programs.createFailed'),

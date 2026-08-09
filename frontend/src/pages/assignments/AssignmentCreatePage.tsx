@@ -6,11 +6,13 @@ import { Input, Label, Select } from '../../components/ui/Field'
 import { useAssignmentMutations } from '../../hooks/useAssignments'
 import { useEmployees } from '../../hooks/useEmployees'
 import { usePrograms } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
 export function AssignmentCreatePage() {
   const navigate = useNavigate()
+  const paths = useWorkspacePaths()
   const { data: employees = [], isLoading: employeesLoading } = useEmployees()
   const { data: programs = [], isLoading: programsLoading } = usePrograms({
     is_active: true,
@@ -46,7 +48,7 @@ export function AssignmentCreatePage() {
         program_id: programId,
         due_at: dueAt ? new Date(dueAt).toISOString() : null,
       })
-      navigate('/assignments')
+      navigate(paths.assignments)
     } catch (err) {
       setError(
         err instanceof ApiError ? err.message : t('assignments.createFailed'),
@@ -60,7 +62,7 @@ export function AssignmentCreatePage() {
         title={t('assignments.createTitle')}
         description={t('assignments.createDescription')}
         action={
-          <Link to="/assignments">
+          <Link to={paths.assignments}>
             <Button variant="secondary">{t('assignments.backToList')}</Button>
           </Link>
         }

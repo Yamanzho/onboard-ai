@@ -11,12 +11,14 @@ import {
   usePlatformCompany,
   usePlatformCompanyMutations,
 } from '../../hooks/useSuperAdmin'
+import { usePlatformPaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
 export function SuperAdminCompanyEditPage() {
   const { companyId } = useParams<{ companyId: string }>()
   const navigate = useNavigate()
+  const paths = usePlatformPaths()
   const { data, isLoading, error } = usePlatformCompany(companyId)
   const { update } = usePlatformCompanyMutations()
   const [formError, setFormError] = useState<string | null>(null)
@@ -44,7 +46,7 @@ export function SuperAdminCompanyEditPage() {
           timezone: timezone.trim() || 'UTC',
         },
       })
-      navigate(`/super-admin/companies/${companyId}`, { replace: true })
+      navigate(paths.company(companyId), { replace: true })
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : t('common.updateFailed'))
     }
@@ -56,7 +58,7 @@ export function SuperAdminCompanyEditPage() {
         title={t('superAdmin.companies.edit.title')}
         description={data?.name}
         action={
-          <Link to={`/super-admin/companies/${companyId}`}>
+          <Link to={paths.company(companyId!)}>
             <Button variant="secondary">{t('common.cancel')}</Button>
           </Link>
         }

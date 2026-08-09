@@ -1,4 +1,4 @@
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import {
   ErrorAlert,
   LoadingBlock,
@@ -15,6 +15,7 @@ import {
 import { Button } from '../../components/ui/Button'
 import { useAuth } from '../../hooks/useAuth'
 import { useEmployee, useEmployeeMutations } from '../../hooks/useEmployees'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import type { EmployeeRole, EmployeeStatus, EmployeeUpdate } from '../../types/employee'
@@ -22,10 +23,15 @@ import type { EmployeeRole, EmployeeStatus, EmployeeUpdate } from '../../types/e
 export function EmployeeEditPage() {
   const { employeeId } = useParams<{ employeeId: string }>()
   const navigate = useNavigate()
+  const { pathname } = useLocation()
+  const paths = useWorkspacePaths()
   const { user } = useAuth()
   const { data: employee, isLoading, error } = useEmployee(employeeId)
   const { update } = useEmployeeMutations()
   const isAdmin = user?.role === 'admin'
+  const inHrMgmt = /\/hr(\/|$)/.test(pathname) && !pathname.includes('/employees')
+  const detailPath = (id: string) =>
+    inHrMgmt ? paths.hrDetail(id) : paths.employee(id)
 
   async function onSubmit(values: EmployeeFormValues) {
     if (!employeeId) return
@@ -45,7 +51,7 @@ export function EmployeeEditPage() {
         id: employeeId,
         payload,
       })
-      navigate(`/employees/${employeeId}`)
+      navigate(detailPath(employeeId))
     } catch (err) {
       throw new Error(
         err instanceof ApiError ? err.message : t('employees.updateFailed'),
@@ -64,13 +70,19 @@ export function EmployeeEditPage() {
     )
   }
 
+  const roleOptions: EmployeeRole[] = inHrMgmt
+    ? ['hr']
+    : isAdmin
+      ? ['employee', 'hr']
+      : [employee.role as EmployeeRole]
+
   return (
     <div>
       <PageHeader
         title={t('employees.editTitle', { name: employee.full_name })}
         description={t('employees.editDescription')}
         action={
-          <Link to={`/employees/${employee.id}`}>
+          <Link to={detailPath(employee.id)}>
             <Button variant="secondary">{t('employees.backToDetails')}</Button>
           </Link>
         }
@@ -99,8 +111,9 @@ export function EmployeeEditPage() {
           }}
           submitLabel={t('employees.saveChanges')}
           pending={update.isPending}
-          roleEditable={isAdmin}
+          roleEditable={isAdmin && !inHrMgmt}
           statusEditable={isAdmin}
+          allowedRoles={roleOptions}
           onSubmit={onSubmit}
         />
       </div>

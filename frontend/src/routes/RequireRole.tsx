@@ -5,12 +5,12 @@ import { homePathForRole, roleAllowed, type AppRole } from '../lib/navigation'
 
 interface RequireRoleProps {
   allowed: readonly AppRole[]
-  /** When true, render children via Outlet; otherwise redirect home. */
+  /** Override redirect target when role does not match. */
   redirectTo?: string
 }
 
 /**
- * Route guard: authenticated user must have one of `allowed` roles.
+ * Route guard: authenticated tenant user must have one of `allowed` roles.
  * UI-only — backend authorization remains authoritative.
  */
 export function RequireRole({ allowed, redirectTo }: RequireRoleProps) {
@@ -30,10 +30,7 @@ export function RequireRole({ allowed, redirectTo }: RequireRoleProps) {
 
   if (!roleAllowed(user.role, allowed)) {
     return (
-      <Navigate
-        to={redirectTo ?? homePathForRole(user.role)}
-        replace
-      />
+      <Navigate to={redirectTo ?? homePathForRole(user.role)} replace />
     )
   }
 

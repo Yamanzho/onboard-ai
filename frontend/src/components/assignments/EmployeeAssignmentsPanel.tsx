@@ -8,6 +8,7 @@ import { AssignmentStatusBadge } from './AssignmentStatusBadge'
 import { Button } from '../ui/Button'
 import { useEmployeeAssignments } from '../../hooks/useAssignments'
 import { usePrograms } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useQueries } from '@tanstack/react-query'
 import { t } from '../../i18n'
 import * as assignmentsApi from '../../services/assignmentsApi'
@@ -26,6 +27,7 @@ export function EmployeeAssignmentsPanel({
 }: {
   employeeId: string
 }) {
+  const paths = useWorkspacePaths()
   const { data, isLoading, error } = useEmployeeAssignments(employeeId)
   const { data: programs = [] } = usePrograms()
   const assignments = data ?? []
@@ -51,7 +53,7 @@ export function EmployeeAssignmentsPanel({
         title={t('assignments.panel.emptyTitle')}
         description={t('assignments.panel.emptyDescription')}
         actionLabel={t('assignments.create')}
-        actionTo="/assignments/new"
+        actionTo={paths.assignmentNew}
       />
     )
   }
@@ -90,7 +92,7 @@ export function EmployeeAssignmentsPanel({
                   {formatDate(assignment.due_at)}
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Link to={`/assignments/${assignment.id}`}>
+                  <Link to={paths.assignment(assignment.id)}>
                     <Button variant="secondary">{t('common.view')}</Button>
                   </Link>
                 </td>

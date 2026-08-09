@@ -13,11 +13,13 @@ import {
   usePlatformCompanies,
   usePlatformCompanyMutations,
 } from '../../hooks/useSuperAdmin'
+import { usePlatformPaths } from '../../hooks/useWorkspacePaths'
 import { labelCompanyActive, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import type { PlatformCompany } from '../../types/superAdmin'
 
 export function SuperAdminCompanyListPage() {
+  const paths = usePlatformPaths()
   const [search, setSearch] = useState('')
   const [activeFilter, setActiveFilter] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
@@ -66,7 +68,7 @@ export function SuperAdminCompanyListPage() {
         title={t('superAdmin.companies.title')}
         description={t('superAdmin.companies.description')}
         action={
-          <Link to="/super-admin/companies/new">
+          <Link to={paths.companyNew}>
             <Button>{t('superAdmin.companies.create')}</Button>
           </Link>
         }
@@ -100,7 +102,7 @@ export function SuperAdminCompanyListPage() {
           title={t('superAdmin.companies.emptyTitle')}
           description={t('superAdmin.companies.emptyDescription')}
           actionLabel={t('superAdmin.companies.create')}
-          actionTo="/super-admin/companies/new"
+          actionTo={paths.companyNew}
         />
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[var(--color-border)] bg-white">
@@ -119,7 +121,7 @@ export function SuperAdminCompanyListPage() {
                 <tr key={company.id}>
                   <td className="px-4 py-3 font-medium">
                     <Link
-                      to={`/super-admin/companies/${company.id}`}
+                      to={paths.company(company.id)}
                       className="hover:text-[var(--color-accent)]"
                     >
                       {company.name}
@@ -138,10 +140,10 @@ export function SuperAdminCompanyListPage() {
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex flex-wrap justify-end gap-2">
-                      <Link to={`/super-admin/companies/${company.id}`}>
+                      <Link to={paths.company(company.id)}>
                         <Button variant="secondary">{t('common.view')}</Button>
                       </Link>
-                      <Link to={`/super-admin/companies/${company.id}/edit`}>
+                      <Link to={paths.companyEdit(company.id)}>
                         <Button variant="secondary">{t('common.edit')}</Button>
                       </Link>
                       <Button

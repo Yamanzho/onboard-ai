@@ -4,6 +4,7 @@ import { ErrorAlert } from '../components/common/PageHeader'
 import { Button } from '../components/ui/Button'
 import { Input, Label } from '../components/ui/Field'
 import { useAuth } from '../hooks/useAuth'
+import { homePathForRole } from '../lib/navigation'
 import { t } from '../i18n'
 import * as authApi from '../services/authApi'
 import { ApiError } from '../services/apiClient'
@@ -33,7 +34,7 @@ function inviteHeadline(preview: InvitePreview): string {
 export function InviteAcceptPage() {
   const { token: pathToken } = useParams<{ token: string }>()
   const navigate = useNavigate()
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, user } = useAuth()
   const [token, setToken] = useState<string | null>(() => readInviteToken(pathToken))
   const [preview, setPreview] = useState<InvitePreview | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -90,7 +91,7 @@ export function InviteAcceptPage() {
   }
 
   if (isAuthenticated) {
-    navigate('/dashboard', { replace: true })
+    navigate(homePathForRole(user?.role), { replace: true })
     return null
   }
 

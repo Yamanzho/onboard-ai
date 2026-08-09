@@ -1,5 +1,6 @@
 import type { EmployeeRole } from '../types/auth'
 import type { AppRole } from './navigation'
+import { displayRoleLabelKey } from './workspace'
 
 /** Roles that may use the tenant web app (Admin / HR / Employee panels). */
 const PANEL_ROLES = new Set<string>(['admin', 'hr', 'employee'])
@@ -22,16 +23,5 @@ export function isHrOrAdmin(role: EmployeeRole | string): boolean {
 }
 
 export function panelLabelKey(role: AppRole | string | null | undefined): string {
-  switch (role) {
-    case 'super_admin':
-      return 'app.superAdmin'
-    case 'admin':
-      return 'app.adminPanel'
-    case 'hr':
-      return 'app.hrPanel'
-    case 'employee':
-      return 'app.employeePanel'
-    default:
-      return 'app.admin'
-  }
+  return displayRoleLabelKey(role)
 }

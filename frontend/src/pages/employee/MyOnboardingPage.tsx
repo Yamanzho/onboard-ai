@@ -8,6 +8,7 @@ import {
 import { Button } from '../../components/ui/Button'
 import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { isActiveAssignment } from '../../lib/progressUtils'
 import { t } from '../../i18n'
 import * as assignmentsApi from '../../services/assignmentsApi'
@@ -18,6 +19,7 @@ import type { ProgressItem } from '../../types/assignment'
 
 export function MyOnboardingPage() {
   const { user } = useAuth()
+  const paths = useWorkspacePaths()
   const {
     data: assignments = [],
     isLoading,
@@ -111,7 +113,7 @@ export function MyOnboardingPage() {
             {t('employeePortal.programComplete')}
           </p>
         )}
-        <Link to="/my/active">
+        <Link to={paths.path('/active')}>
           <Button variant="secondary">{t('employeePortal.viewActive')}</Button>
         </Link>
       </div>

@@ -11,6 +11,7 @@ import {
 import { StatusBadge } from '../../components/knowledge/StatusBadge'
 import { Button } from '../../components/ui/Button'
 import { useArticle, useArticleMutations } from '../../hooks/useArticles'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
 import { t } from '../../i18n'
@@ -18,6 +19,7 @@ import { ApiError } from '../../services/apiClient'
 
 export function ArticleEditPage() {
   const { articleId } = useParams<{ articleId: string }>()
+  const paths = useWorkspacePaths()
   const { data: article, isLoading, error } = useArticle(articleId)
   const { data: categories = [] } = useCategories()
   const { data: tags = [] } = useTags()
@@ -63,7 +65,7 @@ export function ArticleEditPage() {
         title={version?.title ?? t('knowledge.articles.editTitle')}
         description={t('knowledge.articles.editDescription')}
         action={
-          <Link to="/knowledge/articles">
+          <Link to={paths.knowledge}>
             <Button variant="secondary">{t('common.back')}</Button>
           </Link>
         }

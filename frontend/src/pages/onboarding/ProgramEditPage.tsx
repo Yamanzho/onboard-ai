@@ -16,11 +16,13 @@ import {
   useProgram,
   useProgramMutations,
 } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
 export function ProgramEditPage() {
   const { programId } = useParams<{ programId: string }>()
+  const paths = useWorkspacePaths()
   const { data: program, isLoading, error } = useProgram(programId)
   const { update, publish, archive } = useProgramMutations()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -91,7 +93,7 @@ export function ProgramEditPage() {
         title={t('programs.editTitle', { title: program.title })}
         description={t('programs.editDescription')}
         action={
-          <Link to={`/onboarding/${program.id}`}>
+          <Link to={paths.program(program.id)}>
             <Button variant="secondary">{t('employees.backToDetails')}</Button>
           </Link>
         }

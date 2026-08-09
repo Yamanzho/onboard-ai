@@ -6,7 +6,6 @@ import {
   type EmployeeFormValues,
 } from '../../components/employees/EmployeeForm'
 import { Button } from '../../components/ui/Button'
-import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeMutations } from '../../hooks/useEmployees'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
@@ -17,11 +16,10 @@ async function copyText(value: string): Promise<void> {
   await navigator.clipboard.writeText(value)
 }
 
-export function EmployeeCreatePage() {
+/** Company Admin only — create HR via existing Invite/Employee API. */
+export function HrCreatePage() {
   const navigate = useNavigate()
   const paths = useWorkspacePaths()
-  const { user } = useAuth()
-  const isAdmin = user?.role === 'admin'
   const { create } = useEmployeeMutations()
   const [created, setCreated] = useState<Employee | null>(null)
   const [copyHint, setCopyHint] = useState<string | null>(null)
@@ -33,8 +31,7 @@ export function EmployeeCreatePage() {
         full_name: values.full_name,
         email: values.email || null,
         telegram_user_id: telegramRaw ? Number(telegramRaw) : undefined,
-        // HR may only create employees; ADMIN may choose employee|hr in the form.
-        role: isAdmin ? values.role : 'employee',
+        role: 'hr',
         status: values.status,
       })
       setCreated(result)
@@ -57,8 +54,8 @@ export function EmployeeCreatePage() {
   return (
     <div>
       <PageHeader
-        title={t('employees.createTitle')}
-        description={t('employees.createDescription')}
+        title={t('hrManagement.createTitle')}
+        description={t('hrManagement.createDescription')}
       />
       {create.isError ? (
         <ErrorAlert
@@ -84,16 +81,10 @@ export function EmployeeCreatePage() {
                 : t('employees.inviteEmailSent')}
             </p>
           ) : (
-            <p>
-              {created.invite_detail &&
-              created.invite_detail.toLowerCase().includes('not configured')
-                ? t('employees.inviteSmtpOff')
-                : t('employees.inviteSendFailed')}
-            </p>
+            <p>{t('employees.inviteSendFailed')}</p>
           )}
           {created.invite_url ? (
             <div className="space-y-2">
-              <p className="font-medium">{t('employees.inviteWebUrl')}</p>
               <code className="block break-all rounded bg-[var(--color-bg)] p-2 text-xs">
                 {created.invite_url}
               </code>
@@ -105,44 +96,8 @@ export function EmployeeCreatePage() {
               </Button>
             </div>
           ) : null}
-          {created.telegram_invite_url ? (
-            <div className="space-y-2">
-              <p className="font-medium">{t('employees.inviteTelegramUrl')}</p>
-              <p className="text-[var(--color-muted)]">
-                {t('employees.inviteTelegramCreated')}
-              </p>
-              <code className="block break-all rounded bg-[var(--color-bg)] p-2 text-xs">
-                {created.telegram_invite_url}
-              </code>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  onClick={() =>
-                    void onCopy(
-                      t('employees.inviteTelegramUrl'),
-                      created.telegram_invite_url!,
-                    )
-                  }
-                >
-                  {t('employees.copyTelegramUrl')}
-                </Button>
-                <a
-                  className="inline-flex items-center text-[var(--color-accent)]"
-                  href={created.telegram_invite_url}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {t('employees.openTelegram')}
-                </a>
-              </div>
-            </div>
-          ) : created.role === 'employee' ? (
-            <p className="text-[var(--color-muted)]">
-              {t('employees.inviteTelegramMissing')}
-            </p>
-          ) : null}
           {copyHint ? <p className="text-[var(--color-muted)]">{copyHint}</p> : null}
-          <Button type="button" onClick={() => navigate(paths.employees)}>
+          <Button type="button" onClick={() => navigate(paths.hr)}>
             {t('common.back')}
           </Button>
         </div>
@@ -153,13 +108,13 @@ export function EmployeeCreatePage() {
               full_name: '',
               email: '',
               telegram_user_id: '',
-              role: 'employee',
+              role: 'hr',
               status: 'invited',
             }}
-            submitLabel={t('employees.create')}
+            submitLabel={t('hrManagement.new')}
             pending={create.isPending}
-            roleEditable={isAdmin}
-            allowedRoles={isAdmin ? ['employee', 'hr'] : ['employee']}
+            roleEditable={false}
+            allowedRoles={['hr']}
             onSubmit={onSubmit}
           />
         </div>

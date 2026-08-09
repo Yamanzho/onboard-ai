@@ -10,6 +10,7 @@ import { StatusBadge } from '../../components/knowledge/StatusBadge'
 import { Button } from '../../components/ui/Button'
 import { Select } from '../../components/ui/Field'
 import { useArticleMutations, useArticles } from '../../hooks/useArticles'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
 import { labelArticleStatus, t } from '../../i18n'
@@ -18,6 +19,7 @@ import { ApiError } from '../../services/apiClient'
 const ARTICLE_STATUSES = ['draft', 'published', 'archived'] as const
 
 export function ArticleListPage() {
+  const paths = useWorkspacePaths()
   const [status, setStatus] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [tagId, setTagId] = useState('')
@@ -67,7 +69,7 @@ export function ArticleListPage() {
         title={t('knowledge.articles.title')}
         description={t('knowledge.articles.description')}
         action={
-          <Link to="/knowledge/articles/new">
+          <Link to={paths.knowledgeNew}>
             <Button>{t('knowledge.articles.new')}</Button>
           </Link>
         }
@@ -110,7 +112,7 @@ export function ArticleListPage() {
           title={t('knowledge.articles.emptyTitle')}
           description={t('knowledge.articles.emptyDescription')}
           actionLabel={t('knowledge.articles.create')}
-          actionTo="/knowledge/articles/new"
+          actionTo={paths.knowledgeNew}
         />
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
@@ -129,7 +131,7 @@ export function ArticleListPage() {
                 <tr key={article.id}>
                   <td className="px-4 py-3">
                     <Link
-                      to={`/knowledge/articles/${article.id}`}
+                      to={paths.article(article.id)}
                       className="font-medium hover:text-[var(--color-accent)]"
                     >
                       {article.current_version?.title ?? t('knowledge.articles.untitled')}

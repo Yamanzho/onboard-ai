@@ -12,6 +12,7 @@ import {
   useProgram,
   useProgramMutations,
 } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
@@ -25,6 +26,7 @@ function formatDate(value: string) {
 
 export function ProgramDetailPage() {
   const { programId } = useParams<{ programId: string }>()
+  const paths = useWorkspacePaths()
   const { data: program, isLoading, error } = useProgram(programId)
   const { publish, archive } = useProgramMutations()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -91,10 +93,10 @@ export function ProgramDetailPage() {
         description={t('programs.detailDescription')}
         action={
           <div className="flex flex-wrap gap-2">
-            <Link to="/onboarding">
+            <Link to={paths.onboarding}>
               <Button variant="secondary">{t('assignments.backToList')}</Button>
             </Link>
-            <Link to={`/onboarding/${program.id}/edit`}>
+            <Link to={paths.programEdit(program.id)}>
               <Button>{t('common.edit')}</Button>
             </Link>
             {!program.is_active ? (

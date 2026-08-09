@@ -14,6 +14,7 @@ import {
   useProgramMutations,
   usePrograms,
 } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as programsApi from '../../services/programsApi'
@@ -55,6 +56,7 @@ function formatDate(value: string) {
 }
 
 export function ProgramListPage() {
+  const paths = useWorkspacePaths()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('created_at')
@@ -149,7 +151,7 @@ export function ProgramListPage() {
         title={t('programs.title')}
         description={t('programs.description')}
         action={
-          <Link to="/onboarding/new">
+          <Link to={paths.onboardingNew}>
             <Button>{t('programs.new')}</Button>
           </Link>
         }
@@ -193,7 +195,7 @@ export function ProgramListPage() {
               : t('programs.emptyDescriptionFilter')
           }
           actionLabel={(data?.length ?? 0) === 0 ? t('programs.create') : undefined}
-          actionTo={(data?.length ?? 0) === 0 ? '/onboarding/new' : undefined}
+          actionTo={(data?.length ?? 0) === 0 ? paths.onboardingNew : undefined}
         />
       ) : (
         <>
@@ -240,7 +242,7 @@ export function ProgramListPage() {
                     <tr key={program.id}>
                       <td className="px-4 py-3">
                         <Link
-                          to={`/onboarding/${program.id}`}
+                          to={paths.program(program.id)}
                           className="font-medium hover:text-[var(--color-accent)]"
                         >
                           {program.title}
@@ -264,10 +266,10 @@ export function ProgramListPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-wrap justify-end gap-2">
-                          <Link to={`/onboarding/${program.id}`}>
+                          <Link to={paths.program(program.id)}>
                             <Button variant="ghost">{t('common.view')}</Button>
                           </Link>
-                          <Link to={`/onboarding/${program.id}/edit`}>
+                          <Link to={paths.programEdit(program.id)}>
                             <Button variant="secondary">{t('common.edit')}</Button>
                           </Link>
                           {!program.is_active ? (

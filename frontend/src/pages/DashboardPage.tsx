@@ -17,6 +17,7 @@ import {
 import { useAuth } from '../hooks/useAuth'
 import { useEmployees } from '../hooks/useEmployees'
 import { usePrograms } from '../hooks/usePrograms'
+import { useWorkspacePaths } from '../hooks/useWorkspacePaths'
 import { labelAssignmentStatus, t } from '../i18n'
 import {
   averageProgress,
@@ -56,6 +57,7 @@ function formatDate(value: string | null | undefined) {
 
 export function DashboardPage() {
   const { user } = useAuth()
+  const paths = useWorkspacePaths()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [programId, setProgramId] = useState('')
@@ -268,7 +270,7 @@ export function DashboardPage() {
           name: user?.full_name ?? t('dashboard.defaultUser'),
         })}
         action={
-          <Link to="/assignments/new">
+          <Link to={paths.assignmentNew}>
             <Button>{t('dashboard.newAssignment')}</Button>
           </Link>
         }
@@ -371,7 +373,7 @@ export function DashboardPage() {
               actionLabel={
                 assignments.length === 0 ? t('dashboard.createAssignment') : undefined
               }
-              actionTo={assignments.length === 0 ? '/assignments/new' : undefined}
+              actionTo={assignments.length === 0 ? paths.assignmentNew : undefined}
             />
           ) : (
             <>
@@ -443,7 +445,7 @@ export function DashboardPage() {
                         >
                           <td className="px-4 py-3">
                             <Link
-                              to={`/employees/${assignment.employee_id}`}
+                              to={paths.employee(assignment.employee_id)}
                               className="font-medium hover:text-[var(--color-accent)]"
                             >
                               {employeeName(assignment.employee_id)}
@@ -451,7 +453,7 @@ export function DashboardPage() {
                           </td>
                           <td className="px-4 py-3">
                             <Link
-                              to={`/onboarding/${assignment.program_id}`}
+                              to={paths.program(assignment.program_id)}
                               className="hover:text-[var(--color-accent)]"
                             >
                               {programTitle(assignment.program_id)}
@@ -485,7 +487,7 @@ export function DashboardPage() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap justify-end gap-2">
-                              <Link to={`/assignments/${assignment.id}`}>
+                              <Link to={paths.assignment(assignment.id)}>
                                 <Button variant="secondary">{t('dashboard.progress')}</Button>
                               </Link>
                               {canCancel ? (

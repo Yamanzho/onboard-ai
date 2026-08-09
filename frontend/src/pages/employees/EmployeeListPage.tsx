@@ -16,6 +16,7 @@ import {
   useEmployeeMutations,
   useEmployees,
 } from '../../hooks/useEmployees'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import {
   labelEmployeeRole,
   labelEmployeeStatus,
@@ -33,6 +34,19 @@ type SortKey = 'full_name' | 'email' | 'role' | 'status' | 'created_at'
 type SortDir = 'asc' | 'desc'
 
 const PAGE_SIZE = 10
+
+interface EmployeeListPageProps {
+  /** If set, only show employees with these roles */
+  includeRoles?: readonly string[]
+  /** If set, hide employees with these roles */
+  excludeRoles?: readonly string[]
+  title?: string
+  description?: string
+  createPath?: string
+  createLabel?: string
+  /** When 'hr', links go to HR workspace paths */
+  detailBase?: 'employees' | 'hr'
+}
 
 function matchesSearch(employee: Employee, query: string): boolean {
   if (!query) return true
@@ -56,9 +70,19 @@ function compareEmployees(a: Employee, b: Employee, key: SortKey, dir: SortDir) 
   return String(av).localeCompare(String(bv)) * mul
 }
 
-export function EmployeeListPage() {
+export function EmployeeListPage({
+  includeRoles,
+  excludeRoles,
+  title,
+  description,
+  createPath,
+  createLabel,
+  detailBase = 'employees',
+}: EmployeeListPageProps = {}) {
+  const paths = useWorkspacePaths()
+  const isHrList = detailBase === 'hr'
   const [search, setSearch] = useState('')
-  const [role, setRole] = useState('')
+  const [role, setRole] = useState(isHrList ? 'hr' : '')
   const [status, setStatus] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('created_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
@@ -80,9 +104,17 @@ export function EmployeeListPage() {
     const source = data ?? []
     return source
       .filter((e) => matchesSearch(e, search.trim()))
+      .filter((e) => (includeRoles ? includeRoles.includes(e.role) : true))
+      .filter((e) => (excludeRoles ? !excludeRoles.includes(e.role) : true))
       .filter((e) => (role ? e.role === role : true))
       .sort((a, b) => compareEmployees(a, b, sortKey, sortDir))
-  }, [data, search, role, sortKey, sortDir])
+  }, [data, search, role, sortKey, sortDir, includeRoles, excludeRoles])
+
+  const newPath = createPath ?? (isHrList ? paths.hrNew : paths.employeeNew)
+  const detailPath = (id: string) =>
+    isHrList ? paths.hrDetail(id) : paths.employee(id)
+  const editPath = (id: string) =>
+    isHrList ? paths.path(`/hr/${id}/edit`) : paths.employeeEdit(id)
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
@@ -124,11 +156,11 @@ export function EmployeeListPage() {
   return (
     <div>
       <PageHeader
-        title={t('employees.title')}
-        description={t('employees.description')}
+        title={title ?? t('employees.title')}
+        description={description ?? t('employees.description')}
         action={
-          <Link to="/employees/new">
-            <Button>{t('employees.new')}</Button>
+          <Link to={newPath}>
+            <Button>{createLabel ?? t('employees.new')}</Button>
           </Link>
         }
       />
@@ -146,21 +178,25 @@ export function EmployeeListPage() {
           placeholder={t('employees.searchPlaceholder')}
           aria-label={t('employees.searchAria')}
         />
-        <Select
-          value={role}
-          onChange={(e) => {
-            setRole(e.target.value)
-            setPage(1)
-          }}
-          aria-label={t('employees.filterRole')}
-        >
-          <option value="">{t('common.allRoles')}</option>
-          {EMPLOYEE_ROLES.map((r) => (
-            <option key={r} value={r}>
-              {labelEmployeeRole(r)}
-            </option>
-          ))}
-        </Select>
+        {!isHrList ? (
+          <Select
+            value={role}
+            onChange={(e) => {
+              setRole(e.target.value)
+              setPage(1)
+            }}
+            aria-label={t('employees.filterRole')}
+          >
+            <option value="">{t('common.allRoles')}</option>
+            {EMPLOYEE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {labelEmployeeRole(r)}
+              </option>
+            ))}
+          </Select>
+        ) : (
+          <div aria-hidden className="hidden md:block" />
+        )}
         <Select
           value={status}
           onChange={(e) => {
@@ -189,7 +225,7 @@ export function EmployeeListPage() {
               : t('employees.emptyDescriptionFilter')
           }
           actionLabel={(data?.length ?? 0) === 0 ? t('employees.create') : undefined}
-          actionTo={(data?.length ?? 0) === 0 ? '/employees/new' : undefined}
+          actionTo={(data?.length ?? 0) === 0 ? newPath : undefined}
         />
       ) : (
         <>
@@ -242,7 +278,7 @@ export function EmployeeListPage() {
                   <tr key={employee.id}>
                     <td className="px-4 py-3">
                       <Link
-                        to={`/employees/${employee.id}`}
+                        to={detailPath(employee.id)}
                         className="font-medium hover:text-[var(--color-accent)]"
                       >
                         {employee.full_name}
@@ -265,7 +301,7 @@ export function EmployeeListPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end gap-2">
-                        <Link to={`/employees/${employee.id}/edit`}>
+                        <Link to={editPath(employee.id)}>
                           <Button variant="secondary">{t('common.edit')}</Button>
                         </Link>
                         <Button

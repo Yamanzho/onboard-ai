@@ -16,6 +16,7 @@ import {
 } from '../../hooks/useAssignments'
 import { useEmployee } from '../../hooks/useEmployees'
 import { useProgram, useProgramSteps } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { labelProgressStatus, labelStepType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
@@ -37,6 +38,7 @@ function progressTone(status: string) {
 
 export function AssignmentDetailPage() {
   const { assignmentId } = useParams<{ assignmentId: string }>()
+  const paths = useWorkspacePaths()
   const { data: assignment, isLoading, error } = useAssignment(assignmentId)
   const { data: progress, isLoading: progressLoading } =
     useAssignmentProgress(assignmentId)
@@ -82,7 +84,7 @@ export function AssignmentDetailPage() {
       label: t('assignments.employee'),
       value: (
         <Link
-          to={`/employees/${assignment.employee_id}`}
+          to={paths.employee(assignment.employee_id)}
           className="text-[var(--color-accent)] hover:underline"
         >
           {employee?.full_name ?? assignment.employee_id}
@@ -93,7 +95,7 @@ export function AssignmentDetailPage() {
       label: t('assignments.program'),
       value: (
         <Link
-          to={`/onboarding/${assignment.program_id}`}
+          to={paths.program(assignment.program_id)}
           className="text-[var(--color-accent)] hover:underline"
         >
           {program?.title ?? assignment.program_id}
@@ -129,7 +131,7 @@ export function AssignmentDetailPage() {
         description={t('assignments.detailDescription')}
         action={
           <div className="flex flex-wrap gap-2">
-            <Link to="/assignments">
+            <Link to={paths.assignments}>
               <Button variant="secondary">{t('assignments.backToList')}</Button>
             </Link>
             {canCancel ? (

@@ -16,6 +16,7 @@ import {
 } from '../../hooks/useAssignments'
 import { useEmployees } from '../../hooks/useEmployees'
 import { usePrograms } from '../../hooks/usePrograms'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { labelAssignmentStatus, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as assignmentsApi from '../../services/assignmentsApi'
@@ -46,6 +47,7 @@ function formatDate(value: string | null | undefined) {
 }
 
 export function AssignmentListPage() {
+  const paths = useWorkspacePaths()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('created_at')
@@ -166,7 +168,7 @@ export function AssignmentListPage() {
         title={t('assignments.title')}
         description={t('assignments.description')}
         action={
-          <Link to="/assignments/new">
+          <Link to={paths.assignmentNew}>
             <Button>{t('assignments.new')}</Button>
           </Link>
         }
@@ -215,7 +217,7 @@ export function AssignmentListPage() {
           actionLabel={
             (data?.length ?? 0) === 0 ? t('assignments.create') : undefined
           }
-          actionTo={(data?.length ?? 0) === 0 ? '/assignments/new' : undefined}
+          actionTo={(data?.length ?? 0) === 0 ? paths.assignmentNew : undefined}
         />
       ) : (
         <>
@@ -272,7 +274,7 @@ export function AssignmentListPage() {
                     <tr key={assignment.id}>
                       <td className="px-4 py-3">
                         <Link
-                          to={`/employees/${assignment.employee_id}`}
+                          to={paths.employee(assignment.employee_id)}
                           className="font-medium hover:text-[var(--color-accent)]"
                         >
                           {employeeName(assignment.employee_id)}
@@ -280,7 +282,7 @@ export function AssignmentListPage() {
                       </td>
                       <td className="px-4 py-3">
                         <Link
-                          to={`/onboarding/${assignment.program_id}`}
+                          to={paths.program(assignment.program_id)}
                           className="hover:text-[var(--color-accent)]"
                         >
                           {programTitle(assignment.program_id)}
@@ -307,7 +309,7 @@ export function AssignmentListPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-2">
-                          <Link to={`/assignments/${assignment.id}`}>
+                          <Link to={paths.assignment(assignment.id)}>
                             <Button variant="secondary">{t('common.view')}</Button>
                           </Link>
                           {canCancel ? (
