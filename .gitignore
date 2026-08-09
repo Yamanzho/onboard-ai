@@ -2,6 +2,8 @@
 .env
 .env.local
 .env.*.local
+.env.production
+.env.prod
 
 # Virtual environments
 .venv/
@@ -46,3 +48,4 @@ redis_data/
 
 # Logs
 *.log
+backups/
