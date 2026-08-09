@@ -388,11 +388,23 @@ function UsersTab({ companyId }: { companyId: string }) {
       })
       setFullName('')
       setEmail('')
-      if (created.invite_delivery === 'manual_url' && created.invite_url) {
+      if (created.invite_delivery === 'email') {
         setActionError(
-          t('superAdmin.companies.detail.inviteManualUrl', {
-            url: created.invite_url,
+          t('superAdmin.companies.detail.inviteEmailSent', {
+            email: created.email ?? email.trim(),
           }),
+        )
+      } else if (created.invite_delivery === 'manual_url' && created.invite_url) {
+        const smtpOff = (created.invite_detail ?? '')
+          .toLowerCase()
+          .includes('not configured')
+        setActionError(
+          t(
+            smtpOff
+              ? 'superAdmin.companies.detail.inviteManualUrl'
+              : 'superAdmin.companies.detail.inviteSendFailed',
+            { url: created.invite_url },
+          ),
         )
       }
     } catch (err) {
@@ -419,11 +431,23 @@ function UsersTab({ companyId }: { companyId: string }) {
     setBusyId(user.id)
     try {
       const delivery = await resendInvite.mutateAsync(user.id)
-      if (delivery.delivery === 'manual_url' && delivery.invite_url) {
+      if (delivery.delivery === 'email') {
         setActionError(
-          t('superAdmin.companies.detail.inviteManualUrl', {
-            url: delivery.invite_url,
+          t('superAdmin.companies.detail.inviteEmailSent', {
+            email: user.email ?? '',
           }),
+        )
+      } else if (delivery.delivery === 'manual_url' && delivery.invite_url) {
+        const smtpOff = (delivery.detail ?? '')
+          .toLowerCase()
+          .includes('not configured')
+        setActionError(
+          t(
+            smtpOff
+              ? 'superAdmin.companies.detail.inviteManualUrl'
+              : 'superAdmin.companies.detail.inviteSendFailed',
+            { url: delivery.invite_url },
+          ),
         )
       }
     } catch (err) {

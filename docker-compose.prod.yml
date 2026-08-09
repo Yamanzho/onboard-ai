@@ -33,6 +33,10 @@
 # - Sprint 1.1: Do NOT use docker-compose.ip.yml in production. That override
 #           publishes 0.0.0.0:3000 and AUTH_COOKIE_SECURE=false (HTTP-only hack).
 #           Host TLS config: deploy/nginx/onboardai.aoe.kz.conf
+# - Invite SMTP: api uses env_file=.env from docker-compose.yml. Set SMTP_HOST,
+#           SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, SMTP_USE_TLS there.
+#           `docker compose --env-file .env` alone does not inject vars into the
+#           container unless they are in env_file or `environment:`.
 #
 # Public edge contract (required for public production):
 #   Internet → TLS terminator (host nginx) → 127.0.0.1:frontend → api (internal)

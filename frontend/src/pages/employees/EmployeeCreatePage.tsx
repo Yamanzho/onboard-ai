@@ -72,9 +72,18 @@ export function EmployeeCreatePage() {
             {t('common.role')}: <strong>{created.role}</strong>
           </p>
           {created.invite_email_sent ? (
-            <p>{t('employees.inviteEmailSent')}</p>
+            <p>
+              {created.email
+                ? t('employees.inviteEmailSentTo', { email: created.email })
+                : t('employees.inviteEmailSent')}
+            </p>
           ) : (
-            <p>{t('employees.inviteSmtpOff')}</p>
+            <p>
+              {created.invite_detail &&
+              created.invite_detail.toLowerCase().includes('not configured')
+                ? t('employees.inviteSmtpOff')
+                : t('employees.inviteSendFailed')}
+            </p>
           )}
           {created.invite_url ? (
             <div className="space-y-2">

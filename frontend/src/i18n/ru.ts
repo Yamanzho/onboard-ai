@@ -245,7 +245,10 @@ export const ru = {
       'SMTP не настроен — отправьте ссылку вручную: {url}',
     inviteCreatedTitle: 'Сотрудник создан',
     inviteEmailSent: 'Письмо с приглашением отправлено.',
+    inviteEmailSentTo: 'Письмо с приглашением отправлено на {email}.',
     inviteSmtpOff: 'SMTP не настроен — отправьте приглашение вручную.',
+    inviteSendFailed:
+      'Не удалось отправить письмо — отправьте приглашение вручную.',
     inviteWebUrl: 'Ссылка для web (HR/пароль)',
     inviteTelegramUrl: 'Ссылка для Telegram',
     copyInviteUrl: 'Скопировать invite URL',
@@ -572,8 +575,11 @@ export const ru = {
         resendInvite: 'Повторить приглашение',
         blockConfirm: 'Заблокировать {name}?',
         resendFailed: 'Не удалось отправить приглашение',
+        inviteEmailSent: 'Письмо с приглашением отправлено на {email}.',
         inviteManualUrl:
           'SMTP не настроен — отправьте ссылку вручную: {url}',
+        inviteSendFailed:
+          'Не удалось отправить письмо — отправьте ссылку вручную: {url}',
         noHistory: 'Нет истории',
         noHistoryHint: 'События подписки появятся здесь.',
         colWhen: 'Когда',
@@ -606,8 +612,11 @@ export const ru = {
       blockConfirm:
         'Заблокировать {name}? Пользователь будет архивирован и не сможет войти.',
       resendFailed: 'Не удалось отправить приглашение',
+      inviteEmailSent: 'Письмо с приглашением отправлено на {email}.',
       inviteManualUrl:
         'SMTP не настроен — отправьте ссылку вручную: {url}',
+      inviteSendFailed:
+        'Не удалось отправить письмо — отправьте ссылку вручную: {url}',
     },
     audit: {
       title: 'Журнал действий',

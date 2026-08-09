@@ -79,9 +79,21 @@ export function SuperAdminUsersPage() {
     setBusyId(user.id)
     try {
       const delivery = await resendInvite.mutateAsync(user.id)
-      if (delivery.delivery === 'manual_url' && delivery.invite_url) {
+      if (delivery.delivery === 'email') {
         setActionError(
-          t('superAdmin.users.inviteManualUrl', { url: delivery.invite_url }),
+          t('superAdmin.users.inviteEmailSent', { email: user.email ?? '' }),
+        )
+      } else if (delivery.delivery === 'manual_url' && delivery.invite_url) {
+        const smtpOff = (delivery.detail ?? '')
+          .toLowerCase()
+          .includes('not configured')
+        setActionError(
+          t(
+            smtpOff
+              ? 'superAdmin.users.inviteManualUrl'
+              : 'superAdmin.users.inviteSendFailed',
+            { url: delivery.invite_url },
+          ),
         )
       }
     } catch (err) {

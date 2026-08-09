@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -198,6 +199,88 @@ async def test_employee_invite_email_copy_and_telegram_url(
     )
     assert hr.telegram_invite_url is None
 
+    get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_resend_invite_sends_email_when_smtp_configured(
+    api_client: AsyncClient,
+    company_a,
+    admin_a: Employee,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Super Admin resend reports email_sent only after mocked SMTP success."""
+    from app.core.config import get_settings
+    from app.core.security import create_access_token, hash_password
+    from app.db.enums import PlatformRole
+    from app.db.models.super_admin import SuperAdmin
+    from app.db.uow import UnitOfWork
+
+    monkeypatch.setenv("SMTP_HOST", "")
+    monkeypatch.setenv("INVITE_BASE_URL", "https://example.test")
+    get_settings.cache_clear()
+
+    create = await api_client.post(
+        "/api/v1/employees",
+        headers=auth_header(admin_a),
+        json={
+            "company_id": str(company_a.id),
+            "telegram_user_id": uuid4().int % 1_000_000_000 + 5400,
+            "full_name": "Resend Target",
+            "email": f"resend-{uuid4().hex[:8]}@example.com",
+            "role": "employee",
+            "status": "invited",
+        },
+    )
+    assert create.status_code == 201, create.text
+    employee_id = create.json()["id"]
+
+    async with UnitOfWork() as uow:
+        await uow.enter_platform()
+        sa = await uow.super_admins.create(
+            SuperAdmin(
+                email=f"sa-resend-{uuid4().hex[:8]}@test.local",
+                full_name="SA Resend",
+                password_hash=hash_password("super-secret"),
+                is_active=True,
+            ),
+        )
+        await uow.commit()
+
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_PORT", "587")
+    monkeypatch.setenv("SMTP_USER", "user")
+    monkeypatch.setenv("SMTP_PASSWORD", "pass")
+    monkeypatch.setenv("SMTP_FROM", "noreply@example.test")
+    monkeypatch.setenv("SMTP_USE_TLS", "true")
+    get_settings.cache_clear()
+
+    smtp_instance = MagicMock()
+    smtp_instance.__enter__.return_value = smtp_instance
+    smtp_instance.__exit__.return_value = False
+    headers = {
+        "Authorization": (
+            "Bearer "
+            + create_access_token(
+                subject=sa.id,
+                role=PlatformRole.SUPER_ADMIN.value,
+                company_id=None,
+            )
+        )
+    }
+
+    with patch("app.services.email.smtplib.SMTP", return_value=smtp_instance):
+        resend = await api_client.post(
+            f"/api/v1/super-admin/users/{employee_id}/resend-invite",
+            headers=headers,
+        )
+
+    assert resend.status_code == 200, resend.text
+    body = resend.json()
+    assert body["email_sent"] is True
+    assert body["delivery"] == "email"
+    assert body.get("invite_url") in (None, "")
+    smtp_instance.send_message.assert_called_once()
     get_settings.cache_clear()
 
 
