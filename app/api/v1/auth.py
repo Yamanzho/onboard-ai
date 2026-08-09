@@ -27,10 +27,12 @@ from app.core.exceptions import (
 )
 from app.core.rate_limit import is_rate_limited
 from app.core.security import (
+    dummy_password_hash,
     hash_password,
     password_hash_needs_upgrade,
     verify_bot_service_token,
     verify_employee_password,
+    verify_password,
 )
 from app.db.enums import EmployeeStatus
 from app.db.models.employee import Employee
@@ -42,6 +44,11 @@ from app.schemas.auth import (
     BrowserSessionResponse,
     CurrentUserResponse,
     PasswordChangeRequest,
+    PasswordResetConfirmRequest,
+    PasswordResetInitiateResponse,
+    PasswordResetPreviewRequest,
+    PasswordResetPreviewResponse,
+    ProfileUpdateRequest,
     RefreshRequest,
     TokenResponse,
 )
@@ -171,11 +178,45 @@ async def _authenticate_employee_login(
     try:
         employee = await employees.get_employee(employee_id)
     except NotFoundError as exc:
+        # Timing parity with email path — never reveal whether the UUID exists.
+        verify_password(password, dummy_password_hash())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    return await _finalize_employee_login(employees, employee, password)
+
+
+async def _authenticate_employee_login_by_email(
+    employees: EmployeeService,
+    email: str,
+    password: str,
+) -> Employee:
+    employee = await employees.get_by_email(email)
+    if employee is None:
+        verify_password(password, dummy_password_hash())
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await _finalize_employee_login(employees, employee, password)
+
+
+async def _finalize_employee_login(
+    employees: EmployeeService,
+    employee: Employee,
+    password: str,
+) -> Employee:
+    # Password first so invited/archived do not leak via status before auth.
+    if not verify_employee_password(password=password, password_hash=employee.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if employee.status == EmployeeStatus.ARCHIVED.value:
         raise HTTPException(
@@ -194,12 +235,6 @@ async def _authenticate_employee_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=exc.message,
         ) from exc
-    if not verify_employee_password(password=password, password_hash=employee.password_hash):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
 
     # Transparent upgrade: legacy PBKDF2 (or stale Argon2 params) → current Argon2id.
     upgrade_hash: str | None = None
@@ -211,7 +246,7 @@ async def _authenticate_employee_login(
         updates: dict = {"last_login_at": datetime.now(UTC)}
         if upgrade_hash is not None:
             updates["password_hash"] = upgrade_hash
-        await uow.employees.update(employee_id, **updates)
+        await uow.employees.update(employee.id, **updates)
         await uow.commit()
     employee.last_login_at = datetime.now(UTC)
     if upgrade_hash is not None:
@@ -225,7 +260,8 @@ async def _authenticate_employee_login(
     summary="Login",
     description=(
         "Exchange employee credentials for an httpOnly cookie session.\n\n"
-        "**Username** must be the employee UUID.\n"
+        "**Username** should be the employee **email** (preferred for web login). "
+        "Legacy employee UUID is still accepted for backward compatibility.\n"
         "**Password** is the employee password set via invite, "
         "or the shared MVP auth password (`AUTH_PASSWORD`) for legacy/demo users "
         "when `ALLOW_SHARED_AUTH_PASSWORD` is enabled (disabled in production).\n\n"
@@ -235,10 +271,10 @@ async def _authenticate_employee_login(
     ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {
-            "description": "Invalid username or password",
+            "description": "Invalid email/username or password",
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Employee is archived or company deactivated",
+            "description": "Employee is archived, invited, or company deactivated",
         },
         status.HTTP_429_TOO_MANY_REQUESTS: {
             "description": "Login rate limit exceeded",
@@ -258,20 +294,32 @@ async def login(
     employees: EmployeeServiceDep,
 ) -> BrowserSessionResponse:
     _enforce_login_rate_limit(request, bucket="employee_login")
-    try:
-        employee_id = UUID(form_data.username)
-    except ValueError as exc:
+    username = (form_data.username or "").strip()
+    if not username:
+        verify_password(form_data.password, dummy_password_hash())
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid credentials",
             headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        )
 
-    employee = await _authenticate_employee_login(
-        employees,
-        employee_id,
-        form_data.password,
-    )
+    # Prefer UUID when the identifier is a valid UUID (legacy clients / tests).
+    # Otherwise treat username as email (normalized lower/strip inside lookup).
+    try:
+        employee_id = UUID(username)
+    except ValueError:
+        employee = await _authenticate_employee_login_by_email(
+            employees,
+            username,
+            form_data.password,
+        )
+    else:
+        employee = await _authenticate_employee_login(
+            employees,
+            employee_id,
+            form_data.password,
+        )
+
     tokens = await _issue_tokens(employee)
     set_auth_cookies(response, tokens, kind="tenant")
     return BrowserSessionResponse()
@@ -741,6 +789,22 @@ async def change_password(
     clear_auth_cookies(response, kind="tenant")
 
 
+def _current_user_response(
+    employee: Employee,
+    *,
+    company_name: str | None = None,
+) -> CurrentUserResponse:
+    base = CurrentUserResponse.model_validate(employee)
+    return base.model_copy(
+        update={
+            "telegram_connected": bool(
+                employee.telegram_username or employee.telegram_chat_id
+            ),
+            "company_name": company_name,
+        }
+    )
+
+
 async def _load_active_employee_for_refresh(
     employees: EmployeeService,
     employee_id: UUID,
@@ -794,8 +858,121 @@ async def _load_active_employee_for_refresh(
         ],
     },
 )
-async def me(current_user: CurrentUser) -> CurrentUserResponse:
-    return CurrentUserResponse.model_validate(current_user)
+async def me(
+    current_user: CurrentUser,
+    employees: EmployeeServiceDep,
+) -> CurrentUserResponse:
+    company_name = await employees.get_company_name(current_user.company_id)
+    return _current_user_response(current_user, company_name=company_name)
+
+
+@router.patch(
+    "/me",
+    response_model=CurrentUserResponse,
+    summary="Update current user profile",
+    description=(
+        "Update allowed personal fields for the authenticated employee "
+        "(full_name, email). Role, company, status, and telegram binding "
+        "cannot be changed here."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Missing or invalid access token",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Employee is archived, invited, or company deactivated",
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+    },
+)
+async def update_me(
+    payload: ProfileUpdateRequest,
+    current_user: CurrentUser,
+    employees: EmployeeServiceDep,
+) -> CurrentUserResponse:
+    try:
+        employee = await employees.update_own_profile(
+            employee_id=current_user.id,
+            company_id=current_user.company_id,
+            **payload.model_dump(exclude_unset=True),
+        )
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=exc.message,
+        ) from exc
+    company_name = await employees.get_company_name(employee.company_id)
+    return _current_user_response(employee, company_name=company_name)
+
+
+@router.post(
+    "/password/reset/preview",
+    response_model=PasswordResetPreviewResponse,
+    summary="Preview password reset token",
+    description=(
+        "Preview a password-reset token from the JSON body "
+        "(not the URL path) so access logs do not capture the credential."
+    ),
+    responses={
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": "Invite preview rate limit exceeded",
+        },
+    },
+)
+async def preview_password_reset(
+    request: Request,
+    payload: PasswordResetPreviewRequest,
+    employees: EmployeeServiceDep,
+) -> PasswordResetPreviewResponse:
+    _enforce_invite_rate_limit(request, bucket="invite_preview")
+    try:
+        data = await employees.preview_password_reset(payload.token)
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return PasswordResetPreviewResponse.model_validate(data)
+
+
+@router.post(
+    "/password/reset/confirm",
+    response_model=CurrentUserResponse,
+    summary="Confirm password reset",
+    description=(
+        "Set a new password using a one-time reset token. "
+        "Revokes all refresh sessions for the employee."
+    ),
+    responses={
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": "Invite accept rate limit exceeded",
+        },
+    },
+)
+async def confirm_password_reset(
+    request: Request,
+    payload: PasswordResetConfirmRequest,
+    employees: EmployeeServiceDep,
+) -> CurrentUserResponse:
+    _enforce_invite_rate_limit(request, bucket="invite_accept")
+    try:
+        employee = await employees.confirm_password_reset(
+            token=payload.token,
+            new_password=payload.new_password,
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    company_name = await employees.get_company_name(employee.company_id)
+    return _current_user_response(employee, company_name=company_name)
 
 
 @router.post(
@@ -857,11 +1034,14 @@ __all__ = [
     "bot_accept_invite",
     "bot_telegram_login",
     "change_password",
+    "confirm_password_reset",
     "login",
     "logout",
     "logout_all",
     "me",
     "preview_invite",
+    "preview_password_reset",
     "refresh_tokens",
     "router",
+    "update_me",
 ]

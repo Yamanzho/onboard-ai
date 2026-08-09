@@ -10,16 +10,18 @@ class EmployeeRole(StrEnum):
 
 
 class InvitePurpose(StrEnum):
-    """Server-side invitation purpose — mirrors EmployeeRole, snapshotted on invite.
+    """Server-side invitation / reset purpose, snapshotted on the invite row.
 
-    Accept flows must derive role/company from the invite row (token lookup),
-    never from client input. Purpose prevents accepting an invite as a different
-    role than the one that was invited.
+    Onboarding values (employee/hr/admin) mirror EmployeeRole. Accept flows must
+    derive role/company from the invite row (token lookup), never from client
+    input. ``password_reset`` is a separate lifecycle for ACTIVE employees and
+    must never be treated as a role assignment.
     """
 
     EMPLOYEE = "employee"
     HR = "hr"
     ADMIN = "admin"
+    PASSWORD_RESET = "password_reset"
 
 
 class PlatformRole(StrEnum):

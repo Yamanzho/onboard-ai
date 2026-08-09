@@ -1,10 +1,18 @@
-import type { BrowserSessionResponse, CurrentUser } from '../types/auth'
+import type {
+  BrowserSessionResponse,
+  CurrentUser,
+  PasswordChangePayload,
+  PasswordResetConfirmPayload,
+  PasswordResetPreview,
+  ProfileUpdatePayload,
+} from '../types/auth'
 import type { InviteAcceptPayload, InvitePreview } from '../types/superAdmin'
 import { apiRequest } from './apiClient'
 
-export async function login(username: string, password: string): Promise<BrowserSessionResponse> {
+export async function login(email: string, password: string): Promise<BrowserSessionResponse> {
   const body = new URLSearchParams()
-  body.set('username', username)
+  // OAuth2 password form field remains "username"; value is email (or legacy UUID).
+  body.set('username', email)
   body.set('password', password)
 
   return apiRequest<BrowserSessionResponse>('/api/v1/auth/login', {
@@ -18,6 +26,38 @@ export async function login(username: string, password: string): Promise<Browser
 
 export async function fetchMe(): Promise<CurrentUser> {
   return apiRequest<CurrentUser>('/api/v1/auth/me')
+}
+
+export async function updateMe(payload: ProfileUpdatePayload): Promise<CurrentUser> {
+  return apiRequest<CurrentUser>('/api/v1/auth/me', {
+    method: 'PATCH',
+    body: payload,
+  })
+}
+
+export async function changePassword(payload: PasswordChangePayload): Promise<void> {
+  await apiRequest<void>('/api/v1/auth/password', {
+    method: 'POST',
+    body: payload,
+  })
+}
+
+export async function previewPasswordReset(token: string): Promise<PasswordResetPreview> {
+  return apiRequest<PasswordResetPreview>('/api/v1/auth/password/reset/preview', {
+    method: 'POST',
+    auth: false,
+    body: { token },
+  })
+}
+
+export async function confirmPasswordReset(
+  payload: PasswordResetConfirmPayload,
+): Promise<CurrentUser> {
+  return apiRequest<CurrentUser>('/api/v1/auth/password/reset/confirm', {
+    method: 'POST',
+    auth: false,
+    body: payload,
+  })
 }
 
 export async function refresh(): Promise<BrowserSessionResponse> {

@@ -25,6 +25,10 @@ interface EmployeeFormProps {
   initial: EmployeeFormValues
   submitLabel: string
   pending?: boolean
+  /** When false, role select is read-only (UI hint; backend remains authoritative). */
+  roleEditable?: boolean
+  /** When false, status select is read-only. */
+  statusEditable?: boolean
   onSubmit: (values: EmployeeFormValues) => Promise<void>
 }
 
@@ -69,6 +73,8 @@ export function EmployeeForm({
   initial,
   submitLabel,
   pending,
+  roleEditable = true,
+  statusEditable = true,
   onSubmit,
 }: EmployeeFormProps) {
   const [values, setValues] = useState(initial)
@@ -147,6 +153,7 @@ export function EmployeeForm({
           <Select
             id="role"
             value={values.role}
+            disabled={!roleEditable}
             onChange={(e) =>
               setValues({ ...values, role: e.target.value as EmployeeRole })
             }
@@ -163,6 +170,7 @@ export function EmployeeForm({
           <Select
             id="status"
             value={values.status}
+            disabled={!statusEditable}
             onChange={(e) =>
               setValues({
                 ...values,

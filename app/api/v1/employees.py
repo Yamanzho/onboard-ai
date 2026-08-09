@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from app.api.auth_deps import HRUser
 from app.api.deps import get_employee_service
 from app.api.v1.responses import ERROR_RESPONSES
+from app.schemas.auth import PasswordResetInitiateResponse
 from app.schemas.employee import EmployeeCreate, EmployeeResponse, EmployeeUpdate
 from app.services.employee import EmployeeService
 
@@ -174,11 +175,51 @@ async def update_employee(
     return EmployeeResponse.model_validate(employee)
 
 
+@router.post(
+    "/{employee_id}/password/reset",
+    response_model=PasswordResetInitiateResponse,
+    summary="Initiate employee password reset",
+    description=(
+        "Admin/HR initiates a one-time password reset for an ACTIVE employee. "
+        "Never returns or reveals the current password. Existing refresh sessions "
+        "are revoked. Reset URL is returned only when email delivery falls back "
+        "to manual_url mode (same pattern as invites)."
+    ),
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+    },
+)
+async def initiate_password_reset(
+    employee_id: UUID,
+    current_user: HRUser,
+    service: ServiceDep,
+) -> PasswordResetInitiateResponse:
+    delivery = await service.initiate_password_reset(
+        employee_id=employee_id,
+        company_id=current_user.company_id,
+        actor_role=current_user.role,
+    )
+    return PasswordResetInitiateResponse(
+        email_sent=delivery.email_sent,
+        delivery=delivery.delivery,
+        reset_url=delivery.invite_url,
+        detail=delivery.detail,
+    )
+
+
 @router.delete(
     "/{employee_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete employee",
-    description="Delete an employee in the caller's company.",
+    summary="Archive employee",
+    description=(
+        "Soft-delete an employee by setting status=archived. "
+        "Preserves assignments and history. Revokes the employee's refresh sessions."
+    ),
     responses={
         **_AUTH_RESPONSES,
         status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],

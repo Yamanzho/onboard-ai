@@ -39,6 +39,15 @@ TIER_LIMITS: dict[str, dict[str, int]] = {
 
 _TRIAL_DAYS = 14
 
+# Onboarding invite purposes that map 1:1 to EmployeeRole (never password_reset).
+_ONBOARDING_PURPOSES = frozenset(
+    {
+        InvitePurpose.EMPLOYEE.value,
+        InvitePurpose.HR.value,
+        InvitePurpose.ADMIN.value,
+    }
+)
+
 
 def tier_limits(tier: str) -> dict[str, int]:
     return TIER_LIMITS.get(tier, TIER_LIMITS[SubscriptionTier.STARTER.value])
@@ -81,8 +90,7 @@ class InviteService(PlatformAuditMixin):
 
     @staticmethod
     def purpose_from_role(role: str) -> str:
-        allowed = {item.value for item in InvitePurpose}
-        if role not in allowed:
+        if role not in _ONBOARDING_PURPOSES:
             raise ValidationError(f"Unsupported invite purpose for role: {role}")
         return role
 
@@ -221,8 +229,9 @@ class InviteService(PlatformAuditMixin):
 
             # Role and company come only from the invite/employee rows — never
             # from client input. Purpose snapshot locks the invited role.
+            # password_reset must use accept_password_reset, never this path.
             purpose = invite.purpose
-            if purpose not in {item.value for item in InvitePurpose}:
+            if purpose not in _ONBOARDING_PURPOSES:
                 raise ValidationError("Invite has invalid purpose")
 
             updated = await uow.employees.update(
@@ -320,6 +329,153 @@ class InviteService(PlatformAuditMixin):
             await uow.commit()
             if updated is None:
                 raise NotFoundError(invalid_msg)
+            return updated
+
+    async def create_password_reset(
+        self,
+        *,
+        employee: Employee,
+        company_name: str,
+        use_platform_rls: bool = False,
+    ) -> InviteEmailResult:
+        """Issue a one-time password-reset token for an ACTIVE employee.
+
+        Revokes existing refresh sessions. Does not change role/status.
+        Reuses EmployeeInvite storage with purpose=password_reset — never
+        treated as an onboarding invite.
+        """
+        if employee.status != EmployeeStatus.ACTIVE.value:
+            raise ValidationError("Password reset is only available for active employees")
+        if not employee.email or not employee.email.strip():
+            raise ValidationError("Employee email is required for password reset")
+
+        settings = get_settings()
+        token = secrets.token_urlsafe(32)
+        expires_at = datetime.now(UTC) + timedelta(hours=settings.invite_ttl_hours)
+        normalized_email = employee.email.strip().lower()
+
+        async with self._uow_factory() as uow:
+            if use_platform_rls:
+                await uow.enter_platform()
+            else:
+                await uow.enter_tenant(employee.company_id)
+            # Invalidate prior unused reset tokens only (leave onboarding alone).
+            await uow.employee_invites.invalidate_unused_for_employee(
+                employee.id,
+                purpose=InvitePurpose.PASSWORD_RESET.value,
+            )
+            await uow.employee_invites.create(
+                EmployeeInvite(
+                    company_id=employee.company_id,
+                    employee_id=employee.id,
+                    token_hash=hash_token(token),
+                    expires_at=expires_at,
+                    invited_email=normalized_email,
+                    purpose=InvitePurpose.PASSWORD_RESET.value,
+                    created_by_super_admin_id=None,
+                ),
+            )
+            await uow.enter_session_bootstrap()
+            await uow.refresh_sessions.revoke_all_for_subject(
+                subject_type=SUBJECT_EMPLOYEE,
+                subject_id=employee.id,
+            )
+            await uow.commit()
+
+        # Fragment secret — same log/Referer hygiene as onboarding invites.
+        reset_url = f"{settings.invite_base_url.rstrip('/')}/reset-password#{token}"
+        result = await self._email.send_password_reset_email(
+            to_email=normalized_email,
+            full_name=employee.full_name,
+            reset_url=reset_url,
+            company_name=company_name,
+            ttl_hours=settings.invite_ttl_hours,
+        )
+        # Map invite_url field to reset semantics for API consumers.
+        return InviteEmailResult(
+            email_sent=result.email_sent,
+            delivery=result.delivery,
+            invite_url=result.invite_url,
+            detail=(
+                result.detail.replace("Invite", "Password reset").replace(
+                    "invite", "password reset"
+                )
+            ),
+            telegram_invite_url=None,
+        )
+
+    async def get_password_reset_preview(self, token: str) -> dict[str, Any]:
+        token_hash = hash_token(token)
+        async with self._uow_factory() as uow:
+            await uow.enter_auth_bootstrap(invite_token_hash=token_hash)
+            invite = await uow.employee_invites.get_by_token_hash(token_hash)
+            if invite is None:
+                raise NotFoundError("Reset token not found")
+            if invite.purpose != InvitePurpose.PASSWORD_RESET.value:
+                raise ValidationError("Invalid reset token")
+            if invite.used_at is not None:
+                raise ValidationError("Reset token already used")
+            if invite.expires_at < datetime.now(UTC):
+                raise ValidationError("Reset token expired")
+
+            await uow.enter_auth_bootstrap(employee_id=invite.employee_id)
+            employee = await uow.employees.get_by_id(invite.employee_id)
+            if employee is None:
+                raise NotFoundError("Employee not found")
+            if employee.status != EmployeeStatus.ACTIVE.value:
+                raise ValidationError("Reset token is only valid for active employees")
+
+            await uow.enter_tenant(employee.company_id)
+            company = await uow.companies.get_by_id(employee.company_id)
+            return {
+                "full_name": employee.full_name,
+                "email": invite.invited_email,
+                "company_name": company.name if company else None,
+                "expires_at": invite.expires_at,
+                "purpose": InvitePurpose.PASSWORD_RESET.value,
+            }
+
+    async def accept_password_reset(self, *, token: str, new_password: str) -> Employee:
+        if len(new_password) < 8:
+            raise ValidationError("Password must be at least 8 characters")
+
+        token_hash = hash_token(token)
+        async with self._uow_factory() as uow:
+            await uow.enter_auth_bootstrap(invite_token_hash=token_hash)
+            invite = await uow.employee_invites.get_by_token_hash_for_update(token_hash)
+            if invite is None:
+                raise NotFoundError("Reset token not found")
+            if invite.purpose != InvitePurpose.PASSWORD_RESET.value:
+                raise ValidationError("Invalid reset token")
+            if invite.used_at is not None:
+                raise ValidationError("Reset token already used")
+            if invite.expires_at < datetime.now(UTC):
+                raise ValidationError("Reset token expired")
+
+            await uow.enter_auth_bootstrap(employee_id=invite.employee_id)
+            employee = await uow.employees.get_by_id(invite.employee_id)
+            if employee is None:
+                raise NotFoundError("Employee not found")
+            if employee.status != EmployeeStatus.ACTIVE.value:
+                raise ValidationError("Reset token is only valid for active employees")
+
+            # Password only — never mutate role/status/company via reset.
+            updated = await uow.employees.update(
+                employee.id,
+                password_hash=hash_password(new_password),
+            )
+            await uow.employee_invites.invalidate_unused_for_employee(
+                employee.id,
+                purpose=InvitePurpose.PASSWORD_RESET.value,
+            )
+            await uow.enter_session_bootstrap()
+            await uow.refresh_sessions.revoke_all_for_subject(
+                subject_type=SUBJECT_EMPLOYEE,
+                subject_id=employee.id,
+            )
+            await uow.commit()
+            if updated is None:
+                raise NotFoundError("Employee not found")
             return updated
 
 

@@ -21,7 +21,8 @@ import { ProgramCreatePage } from '../pages/onboarding/ProgramCreatePage'
 import { ProgramDetailPage } from '../pages/onboarding/ProgramDetailPage'
 import { ProgramEditPage } from '../pages/onboarding/ProgramEditPage'
 import { ProgramListPage } from '../pages/onboarding/ProgramListPage'
-import { SettingsPage } from '../pages/stubs/SettingsPage'
+import { SettingsPage } from '../pages/SettingsPage'
+import { ResetPasswordPage } from '../pages/ResetPasswordPage'
 import { SuperAdminCompanyCreatePage } from '../pages/super-admin/SuperAdminCompanyCreatePage'
 import { SuperAdminCompanyDetailPage } from '../pages/super-admin/SuperAdminCompanyDetailPage'
 import { SuperAdminCompanyEditPage } from '../pages/super-admin/SuperAdminCompanyEditPage'
@@ -47,6 +48,8 @@ export function AppRoutes() {
         {/* Legacy path links from older emails; prefer /invite#<token>.
             Keep until INVITE_TTL_HOURS (default 24h) after last path-link send. */}
         <Route path="/invite/:token" element={<InviteAcceptPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
 
         <Route element={<SuperAdminAuthLayout />}>
           <Route path="/super-admin/login" element={<SuperAdminLoginPage />} />

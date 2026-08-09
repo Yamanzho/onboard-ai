@@ -56,6 +56,17 @@ def hash_password(password: str) -> str:
     return _ARGON2.hash(password)
 
 
+_DUMMY_PASSWORD_HASH: str | None = None
+
+
+def dummy_password_hash() -> str:
+    """Argon2id hash used only to keep login timing similar on unknown users."""
+    global _DUMMY_PASSWORD_HASH
+    if _DUMMY_PASSWORD_HASH is None:
+        _DUMMY_PASSWORD_HASH = hash_password("dummy-timing-parity-unused")
+    return _DUMMY_PASSWORD_HASH
+
+
 def password_hash_needs_upgrade(password_hash: str | None) -> bool:
     """True when the stored hash should be replaced with current Argon2id params."""
     if not password_hash:

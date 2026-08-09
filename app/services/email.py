@@ -169,6 +169,47 @@ class EmailService:
             telegram_invite_url=telegram_invite_url,
         )
 
+    async def send_password_reset_email(
+        self,
+        *,
+        to_email: str,
+        full_name: str,
+        reset_url: str,
+        company_name: str,
+        ttl_hours: int,
+    ) -> InviteEmailResult:
+        """Send a password-reset link. Never logs the URL/token."""
+        safe_name = escape(full_name)
+        safe_company = escape(company_name)
+        cta = _cta_html("Reset password", reset_url)
+        subject = f"Reset your OnboardAI password — {company_name}"
+        text_body = (
+            f"Hello {full_name},\n\n"
+            f"A password reset was requested for your OnboardAI account "
+            f"at {company_name}.\n\n"
+            f"Open this link to set a new password:\n{reset_url}\n\n"
+            f"This link expires in {ttl_hours} hours. "
+            f"If you did not request this, you can ignore this email.\n\n"
+            f"— OnboardAI"
+        )
+        html_body = (
+            f"<p>Hello {safe_name},</p>"
+            f"<p>A password reset was requested for your OnboardAI account "
+            f"at <strong>{safe_company}</strong>.</p>"
+            f"{cta}"
+            f"<p>This link expires in {ttl_hours} hours. "
+            f"If you did not request this, you can ignore this email.</p>"
+            f"<p>— OnboardAI</p>"
+        )
+        return await self._send(
+            to_email=to_email,
+            subject=subject,
+            text_body=text_body,
+            html_body=html_body,
+            invite_url=reset_url,
+            telegram_invite_url=None,
+        )
+
     async def _send(
         self,
         *,

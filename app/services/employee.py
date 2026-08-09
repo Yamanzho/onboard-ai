@@ -1,7 +1,9 @@
 from collections.abc import Callable
 from datetime import date
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
+import logging
 
 from sqlalchemy.exc import IntegrityError
 
@@ -12,7 +14,7 @@ from app.core.exceptions import (
     UnauthorizedError,
     ValidationError,
 )
-from app.core.security import hash_password, verify_employee_password
+from app.core.security import hash_password, verify_employee_password, verify_password
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
@@ -28,6 +30,7 @@ from app.services.tenancy import ensure_company_is_active, ensure_same_company
 _ALLOWED_ROLES = {item.value for item in EmployeeRole}
 _ALLOWED_STATUSES = {item.value for item in EmployeeStatus}
 _PRIVILEGED_ROLES = frozenset({EmployeeRole.ADMIN.value, EmployeeRole.HR.value})
+_logger = logging.getLogger("app.employee")
 
 
 class EmployeeService:
@@ -108,7 +111,7 @@ class EmployeeService:
             except IntegrityError as exc:
                 await uow.rollback()
                 raise ConflictError(
-                    "Employee with this telegram_user_id already exists in the company"
+                    "Employee with this telegram_user_id or email already exists"
                 ) from exc
 
         delivery: InviteEmailResult | None = None
@@ -222,6 +225,62 @@ class EmployeeService:
             ensure_company_is_active(company, company_id=company_id)
             await ensure_subscription_allows_access(uow, company_id)
 
+    async def update_own_profile(
+        self,
+        *,
+        employee_id: UUID,
+        company_id: UUID,
+        full_name: str | None = None,
+        email: str | None = None,
+    ) -> Employee:
+        """Self-service update of allowed personal fields only."""
+        values: dict[str, Any] = {}
+        if full_name is not None:
+            trimmed = full_name.strip()
+            if not trimmed:
+                raise ValidationError("full_name must not be empty")
+            values["full_name"] = trimmed
+        if email is not None:
+            values["email"] = email.strip().lower() if email.strip() else None
+        if not values:
+            raise ValidationError("At least one field must be provided for update")
+
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            employee = await uow.employees.get_by_id(employee_id)
+            if employee is None:
+                raise NotFoundError(f"Employee {employee_id} not found")
+            ensure_same_company(
+                resource_company_id=employee.company_id,
+                actor_company_id=company_id,
+                not_found_message=f"Employee {employee_id} not found",
+            )
+            if employee.status != EmployeeStatus.ACTIVE.value:
+                raise ForbiddenError("Only active employees can update their profile")
+            try:
+                updated = await uow.employees.update(employee_id, **values)
+                if updated is None:
+                    raise NotFoundError(f"Employee {employee_id} not found")
+                await uow.commit()
+            except IntegrityError as exc:
+                await uow.rollback()
+                raise ConflictError(
+                    "Employee with this telegram_user_id or email already exists"
+                ) from exc
+            _logger.info(
+                "profile_changed employee_id=%s company_id=%s fields=%s",
+                employee_id,
+                company_id,
+                sorted(values.keys()),
+            )
+            return updated
+
+    async def get_company_name(self, company_id: UUID) -> str | None:
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            company = await uow.companies.get_by_id(company_id)
+            return company.name if company else None
+
     async def update_employee(
         self,
         employee_id: UUID,
@@ -277,12 +336,31 @@ class EmployeeService:
                         subject_id=employee_id,
                     )
                 await uow.commit()
+                if values.get("status") == EmployeeStatus.ARCHIVED.value:
+                    _logger.info(
+                        "employee_archived employee_id=%s company_id=%s actor_role=%s",
+                        employee_id,
+                        company_id,
+                        actor_role,
+                    )
             except IntegrityError as exc:
                 await uow.rollback()
                 raise ConflictError(
-                    "Employee with this telegram_user_id already exists in the company"
+                    "Employee with this telegram_user_id or email already exists"
                 ) from exc
             return updated
+
+    async def get_by_email(self, email: str) -> Employee | None:
+        """Platform lookup for email login — returns None when not found."""
+        normalized = email.strip().lower()
+        if not normalized:
+            return None
+        async with self._uow_factory() as uow:
+            # Login has no company_id yet; resolve identity under platform SELECT
+            # (same class of auth bootstrap as invite row writes). RLS policies
+            # unchanged — no tenant dump beyond the equality filter.
+            await uow.enter_platform()
+            return await uow.employees.get_by_email(normalized)
 
     async def change_password(
         self,
@@ -313,6 +391,11 @@ class EmployeeService:
                 password_hash=employee.password_hash,
             ):
                 raise UnauthorizedError("Current password is incorrect")
+            if employee.password_hash and verify_password(
+                new_password,
+                employee.password_hash,
+            ):
+                raise ValidationError("New password must be different from the current password")
 
             updated = await uow.employees.update(
                 employee_id,
@@ -326,6 +409,70 @@ class EmployeeService:
                 subject_id=employee_id,
             )
             await uow.commit()
+            _logger.info(
+                "password_changed employee_id=%s company_id=%s",
+                employee_id,
+                company_id,
+            )
+
+    async def initiate_password_reset(
+        self,
+        *,
+        employee_id: UUID,
+        company_id: UUID,
+        actor_role: str,
+    ) -> InviteEmailResult:
+        """Admin/HR initiates password reset for a manageable ACTIVE employee."""
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            employee = await uow.employees.get_by_id(employee_id)
+            if employee is None:
+                raise NotFoundError(f"Employee {employee_id} not found")
+            ensure_same_company(
+                resource_company_id=employee.company_id,
+                actor_company_id=company_id,
+                not_found_message=f"Employee {employee_id} not found",
+            )
+            self._assert_can_manage_target(
+                actor_role=actor_role,
+                target_role=employee.role,
+            )
+            company = await uow.companies.get_by_id(company_id)
+            if company is None:
+                raise NotFoundError(f"Company {company_id} not found")
+            company_name = company.name
+            snapshot = SimpleNamespace(
+                id=employee.id,
+                company_id=employee.company_id,
+                full_name=employee.full_name,
+                email=employee.email,
+                status=employee.status,
+            )
+
+        delivery = await self._invites.create_password_reset(
+            employee=snapshot,  # type: ignore[arg-type]
+            company_name=company_name,
+            # Same as onboarding invites: invite rows are written under platform RLS.
+            use_platform_rls=True,
+        )
+        _logger.info(
+            "password_reset_initiated employee_id=%s company_id=%s actor_role=%s "
+            "delivery=%s",
+            employee_id,
+            company_id,
+            actor_role,
+            delivery.delivery,
+        )
+        return delivery
+
+    async def preview_password_reset(self, token: str) -> dict:
+        return await self._invites.get_password_reset_preview(token)
+
+    async def confirm_password_reset(self, *, token: str, new_password: str) -> Employee:
+        return await self._invites.accept_password_reset(
+            token=token,
+            new_password=new_password,
+        )
 
     async def delete_employee(
         self,
@@ -334,6 +481,7 @@ class EmployeeService:
         company_id: UUID,
         actor_role: str,
     ) -> None:
+        """Archive (soft-delete) an employee — preserve assignments/history."""
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
             employee = await uow.employees.get_by_id(employee_id)
@@ -353,19 +501,36 @@ class EmployeeService:
                 and actor_role != EmployeeRole.ADMIN.value
             ):
                 raise ForbiddenError(
-                    "Only company admin can delete admin or hr accounts"
+                    "Only company admin can archive admin or hr accounts"
                 )
-            # Hard-delete hygiene: revoke this subject's refresh sessions only.
+            if employee.status == EmployeeStatus.ARCHIVED.value:
+                await uow.enter_session_bootstrap()
+                await uow.refresh_sessions.revoke_all_for_subject(
+                    subject_type=SUBJECT_EMPLOYEE,
+                    subject_id=employee_id,
+                )
+                await uow.commit()
+                return
+
+            updated = await uow.employees.update(
+                employee_id,
+                status=EmployeeStatus.ARCHIVED.value,
+            )
+            if updated is None:
+                raise NotFoundError(f"Employee {employee_id} not found")
             await uow.enter_session_bootstrap()
             await uow.refresh_sessions.revoke_all_for_subject(
                 subject_type=SUBJECT_EMPLOYEE,
                 subject_id=employee_id,
             )
-            await uow.enter_tenant(company_id)
-            deleted = await uow.employees.delete(employee_id)
-            if not deleted:
-                raise NotFoundError(f"Employee {employee_id} not found")
             await uow.commit()
+            _logger.info(
+                "employee_archived employee_id=%s company_id=%s actor_role=%s "
+                "via=delete",
+                employee_id,
+                company_id,
+                actor_role,
+            )
 
     @staticmethod
     def _validate_role(role: str) -> None:

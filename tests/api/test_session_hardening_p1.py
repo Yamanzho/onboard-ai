@@ -225,7 +225,11 @@ async def test_password_change_verifies_revokes_and_updates_hash(
     wrong = await api_client.post(
         "/api/v1/auth/password",
         headers={"Authorization": f"Bearer {tokens['access_token']}"},
-        json={"current_password": "WrongPass1!", "new_password": _NEW_PASSWORD},
+        json={
+            "current_password": "WrongPass1!",
+            "new_password": _NEW_PASSWORD,
+            "confirm_password": _NEW_PASSWORD,
+        },
     )
     assert wrong.status_code == 401
     assert await _count_active_sessions(employee.id) >= 2
@@ -233,7 +237,11 @@ async def test_password_change_verifies_revokes_and_updates_hash(
     ok = await api_client.post(
         "/api/v1/auth/password",
         headers={"Authorization": f"Bearer {tokens['access_token']}"},
-        json={"current_password": _PASSWORD, "new_password": _NEW_PASSWORD},
+        json={
+            "current_password": _PASSWORD,
+            "new_password": _NEW_PASSWORD,
+            "confirm_password": _NEW_PASSWORD,
+        },
     )
     assert ok.status_code == 204, ok.text
     assert await _count_active_sessions(employee.id) == 0
@@ -401,11 +409,11 @@ async def test_logout_all_does_not_revoke_other_tenant_sessions(
 
 
 # ---------------------------------------------------------------------------
-# L1. Hard-delete revokes refresh sessions
+# L1. Soft-delete (archive via DELETE) revokes refresh sessions
 # ---------------------------------------------------------------------------
 
 
-async def test_hard_delete_revokes_sessions_and_rejects_refresh(
+async def test_soft_delete_archives_revokes_sessions_and_rejects_refresh(
     api_client: AsyncClient,
     company_a,
     company_b,
@@ -432,6 +440,12 @@ async def test_hard_delete_revokes_sessions_and_rejects_refresh(
     )
     assert deleted.status_code == 204, deleted.text
     assert await _count_active_sessions(target.id) == 0
+
+    async with _uow_factory() as uow:
+        await uow.enter_platform()
+        archived = await uow.employees.get_by_id(target.id)
+        assert archived is not None
+        assert archived.status == EmployeeStatus.ARCHIVED.value
 
     for raw in (target_tokens["refresh_token"], second.tokens.refresh_token):
         replay = await api_client.post(

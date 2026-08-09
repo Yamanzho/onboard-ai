@@ -18,8 +18,9 @@ export interface AuthContextValue {
   loading: boolean
   error: string | null
   isAuthenticated: boolean
-  login: (username: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<void>
   logout: () => void
+  refreshUser: () => Promise<void>
   clearError: () => void
 }
 
@@ -56,10 +57,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void loadMe()
   }, [loadMe])
 
-  const login = useCallback(async (username: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     setError(null)
     try {
-      await authApi.login(username.trim(), password)
+      await authApi.login(email.trim(), password)
       const me = await authApi.fetchMe()
       if (!canAccessAdminPanel(me.role)) {
         await authApi.logout().catch(() => undefined)
@@ -88,9 +89,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isAuthenticated: Boolean(user),
       login,
       logout,
+      refreshUser: async () => {
+        await loadMe()
+      },
       clearError: () => setError(null),
     }),
-    [user, loading, error, login, logout],
+    [user, loading, error, login, logout, loadMe],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

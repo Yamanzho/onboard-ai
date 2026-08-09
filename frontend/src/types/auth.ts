@@ -21,6 +21,40 @@ export interface CurrentUser {
   status: string
   telegram_user_id: number
   telegram_username: string | null
+  telegram_connected?: boolean
+  company_name?: string | null
   created_at: string
   updated_at: string
+}
+
+export interface ProfileUpdatePayload {
+  full_name?: string
+  email?: string | null
+}
+
+export interface PasswordChangePayload {
+  current_password: string
+  new_password: string
+  confirm_password: string
+}
+
+export interface PasswordResetPreview {
+  full_name: string
+  email: string
+  company_name: string | null
+  expires_at: string
+  purpose: 'password_reset'
+}
+
+export interface PasswordResetConfirmPayload {
+  token: string
+  new_password: string
+  confirm_password: string
+}
+
+export interface PasswordResetInitiateResult {
+  email_sent: boolean
+  delivery: 'email' | 'manual_url'
+  reset_url: string | null
+  detail: string
 }

@@ -1,7 +1,8 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class TokenResponse(BaseModel):
@@ -62,8 +63,25 @@ class CurrentUserResponse(BaseModel):
     status: str
     telegram_user_id: int
     telegram_username: str | None
+    telegram_connected: bool = False
+    company_name: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Self-service profile update — only personal fields allowed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    full_name: str | None = Field(default=None, min_length=1, max_length=255)
+    email: str | None = Field(default=None, max_length=320)
+
+    @model_validator(mode="after")
+    def require_at_least_one_field(self) -> "ProfileUpdateRequest":
+        if not self.model_dump(exclude_unset=True):
+            raise ValueError("At least one field must be provided for update")
+        return self
 
 
 class BotTelegramLoginRequest(BaseModel):
@@ -109,5 +127,51 @@ class BotTelegramLoginResponse(TokenResponse):
 class PasswordChangeRequest(BaseModel):
     """Authenticated employee password change."""
 
+    model_config = ConfigDict(extra="forbid")
+
     current_password: str = Field(..., min_length=1, max_length=256)
     new_password: str = Field(..., min_length=8, max_length=256)
+    confirm_password: str = Field(..., min_length=8, max_length=256)
+
+    @model_validator(mode="after")
+    def passwords_must_match(self) -> "PasswordChangeRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
+class PasswordResetPreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(..., min_length=10, max_length=256)
+
+
+class PasswordResetPreviewResponse(BaseModel):
+    full_name: str
+    email: str
+    company_name: str | None
+    expires_at: datetime
+    purpose: Literal["password_reset"] = "password_reset"
+
+
+class PasswordResetConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(..., min_length=10, max_length=256)
+    new_password: str = Field(..., min_length=8, max_length=256)
+    confirm_password: str = Field(..., min_length=8, max_length=256)
+
+    @model_validator(mode="after")
+    def passwords_must_match(self) -> "PasswordResetConfirmRequest":
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
+class PasswordResetInitiateResponse(BaseModel):
+    """Admin/HR-initiated password reset delivery status."""
+
+    email_sent: bool
+    delivery: Literal["email", "manual_url"]
+    reset_url: str | None = None
+    detail: str

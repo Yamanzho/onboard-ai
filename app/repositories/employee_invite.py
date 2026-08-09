@@ -29,15 +29,26 @@ class EmployeeInviteRepository(BaseRepository[EmployeeInvite]):
         result = await self._session.scalars(stmt)
         return result.first()
 
-    async def invalidate_unused_for_employee(self, employee_id: UUID) -> int:
-        """Mark all unused invites for an employee as used (resend / accept)."""
+    async def invalidate_unused_for_employee(
+        self,
+        employee_id: UUID,
+        *,
+        purpose: str | None = None,
+    ) -> int:
+        """Mark unused invites for an employee as used (resend / accept / reset).
+
+        When ``purpose`` is set, only invites with that purpose are invalidated.
+        """
         self._ensure_rls_context()
+        conditions = [
+            EmployeeInvite.employee_id == employee_id,
+            EmployeeInvite.used_at.is_(None),
+        ]
+        if purpose is not None:
+            conditions.append(EmployeeInvite.purpose == purpose)
         stmt = (
             update(EmployeeInvite)
-            .where(
-                EmployeeInvite.employee_id == employee_id,
-                EmployeeInvite.used_at.is_(None),
-            )
+            .where(*conditions)
             .values(used_at=datetime.now(UTC))
         )
         result = await self._session.execute(stmt)

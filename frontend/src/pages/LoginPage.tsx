@@ -9,7 +9,7 @@ import { t } from '../i18n'
 export function LoginPage() {
   const { login, isAuthenticated, loading, error, clearError } = useAuth()
   const navigate = useNavigate()
-  const [username, setUsername] = useState('')
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
@@ -22,7 +22,7 @@ export function LoginPage() {
     clearError()
     setSubmitting(true)
     try {
-      await login(username, password)
+      await login(email.trim(), password)
       navigate('/dashboard', { replace: true })
     } catch {
       // error shown via context
@@ -41,12 +41,13 @@ export function LoginPage() {
       </p>
       {error ? <ErrorAlert message={error} /> : null}
       <div className="mb-3">
-        <Label htmlFor="username">{t('auth.employeeUuid')}</Label>
+        <Label htmlFor="email">{t('common.email')}</Label>
         <Input
-          id="username"
-          value={username}
-          onChange={(e) => setUsername(e.target.value)}
-          placeholder={t('auth.employeeUuidPlaceholder')}
+          id="email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          placeholder={t('auth.emailPlaceholder')}
           required
           autoComplete="username"
         />

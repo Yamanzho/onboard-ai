@@ -114,7 +114,11 @@ async def test_password_change_stores_argon2id(
     res = await api_client.post(
         "/api/v1/auth/password",
         headers=auth_header(employee_a),
-        json={"current_password": password, "new_password": new_password},
+        json={
+            "current_password": password,
+            "new_password": new_password,
+            "confirm_password": new_password,
+        },
     )
     assert res.status_code == 204, res.text
 

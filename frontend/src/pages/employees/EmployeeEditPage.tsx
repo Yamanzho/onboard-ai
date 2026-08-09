@@ -13,29 +13,37 @@ import {
   EmployeeStatusBadge,
 } from '../../components/employees/EmployeeBadges'
 import { Button } from '../../components/ui/Button'
+import { useAuth } from '../../hooks/useAuth'
 import { useEmployee, useEmployeeMutations } from '../../hooks/useEmployees'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
-import type { EmployeeRole, EmployeeStatus } from '../../types/employee'
+import type { EmployeeRole, EmployeeStatus, EmployeeUpdate } from '../../types/employee'
 
 export function EmployeeEditPage() {
   const { employeeId } = useParams<{ employeeId: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const { data: employee, isLoading, error } = useEmployee(employeeId)
   const { update } = useEmployeeMutations()
+  const isAdmin = user?.role === 'admin'
 
   async function onSubmit(values: EmployeeFormValues) {
     if (!employeeId) return
     try {
+      const payload: EmployeeUpdate = {
+        full_name: values.full_name,
+        email: values.email || null,
+      }
+      if (values.telegram_user_id) {
+        payload.telegram_user_id = Number(values.telegram_user_id)
+      }
+      if (isAdmin) {
+        payload.role = values.role
+        payload.status = values.status
+      }
       await update.mutateAsync({
         id: employeeId,
-        payload: {
-          full_name: values.full_name,
-          email: values.email || null,
-          telegram_user_id: Number(values.telegram_user_id),
-          role: values.role,
-          status: values.status,
-        },
+        payload,
       })
       navigate(`/employees/${employeeId}`)
     } catch (err) {
@@ -82,12 +90,17 @@ export function EmployeeEditPage() {
           initial={{
             full_name: employee.full_name,
             email: employee.email ?? '',
-            telegram_user_id: String(employee.telegram_user_id),
+            telegram_user_id:
+              employee.telegram_user_id > 0
+                ? String(employee.telegram_user_id)
+                : '',
             role: employee.role as EmployeeRole,
             status: employee.status as EmployeeStatus,
           }}
           submitLabel={t('employees.saveChanges')}
           pending={update.isPending}
+          roleEditable={isAdmin}
+          statusEditable={isAdmin}
           onSubmit={onSubmit}
         />
       </div>

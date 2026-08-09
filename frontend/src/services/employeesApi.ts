@@ -62,3 +62,12 @@ export async function deleteEmployee(employeeId: string): Promise<void> {
     method: 'DELETE',
   })
 }
+
+export async function initiatePasswordReset(
+  employeeId: string,
+): Promise<import('../types/auth').PasswordResetInitiateResult> {
+  return apiRequest(`/api/v1/employees/${employeeId}/password/reset`, {
+    method: 'POST',
+    body: {},
+  })
+}

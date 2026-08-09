@@ -18,8 +18,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title=settings.app_name,
         description=(
             "OnboardAI — Telegram-first SaaS for AI-powered employee onboarding.\n\n"
-            "Authenticate via **Auth** (`/api/v1/auth/login`) using employee UUID + "
-            "`AUTH_PASSWORD`, then click **Authorize** in Swagger.\n\n"
+            "Authenticate via **Auth** (`/api/v1/auth/login`) using employee **email** + "
+            "password (legacy employee UUID still accepted), "
+            "then click **Authorize** in Swagger.\n\n"
             "The Telegram bot uses `POST /api/v1/auth/bot/telegram` with "
             "`X-Bot-Service-Token` to exchange a Telegram user id for a normal "
             "employee JWT (no `AUTH_PASSWORD`).\n\n"

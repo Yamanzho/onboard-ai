@@ -242,7 +242,9 @@ async def test_admin_can_manage_hr(
 
     async with _uow_factory() as uow:
         await uow.enter_platform()
-        assert await uow.employees.get_by_id(peer.id) is None
+        archived = await uow.employees.get_by_id(peer.id)
+        assert archived is not None
+        assert archived.status == EmployeeStatus.ARCHIVED.value
 
 
 async def test_hr_can_manage_employee(

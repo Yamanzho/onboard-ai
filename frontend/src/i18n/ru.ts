@@ -141,8 +141,7 @@ export const ru = {
   },
 
   auth: {
-    loginHint:
-      'Войдите с UUID сотрудника и общим паролем AUTH_PASSWORD.',
+    loginHint: 'Войдите с email и паролем, заданным при принятии приглашения.',
     employeeUuid: 'UUID сотрудника',
     employeeUuidPlaceholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
     loginFailed: 'Не удалось войти',
@@ -152,7 +151,8 @@ export const ru = {
     superAdminLoginHint:
       'Войдите с email и паролем Super Admin (SUPER_ADMIN_EMAIL).',
     superAdminRoleRequired: 'Требуется роль super_admin',
-    emailPlaceholder: 'superadmin@onboard.local',
+    emailPlaceholder: 'you@company.com',
+    superAdminEmailPlaceholder: 'superadmin@onboard.local',
   },
 
   invite: {
@@ -216,10 +216,41 @@ export const ru = {
 
   settings: {
     title: 'Настройки',
-    description: 'Профиль текущего пользователя (только просмотр).',
+    description: 'Профиль и безопасность учётной записи.',
     name: 'Имя',
     employeeId: 'ID сотрудника',
     companyId: 'ID компании',
+    company: 'Компания',
+    telegram: 'Telegram',
+    telegramConnected: 'Подключён',
+    telegramNotConnected: 'Не подключён',
+    profileSection: 'Профиль',
+    securitySection: 'Безопасность',
+    saveChanges: 'Сохранить изменения',
+    profileSaved: 'Профиль обновлён.',
+    profileSaveFailed: 'Не удалось сохранить профиль',
+    profileNameRequired: 'Укажите имя.',
+    currentPassword: 'Текущий пароль',
+    newPassword: 'Новый пароль',
+    confirmPassword: 'Подтвердите новый пароль',
+    changePassword: 'Сменить пароль',
+    changingPassword: 'Смена пароля…',
+    passwordChanged: 'Пароль изменён. Войдите снова.',
+    passwordChangeFailed: 'Не удалось сменить пароль',
+    currentPasswordIncorrect: 'Неверный текущий пароль',
+    passwordMinLength: 'Пароль должен содержать не менее 8 символов',
+    passwordsMismatch: 'Пароли не совпадают',
+  },
+
+  resetPassword: {
+    title: 'Сброс пароля',
+    forUser: '{name} · {company}',
+    submit: 'Установить новый пароль',
+    invalidLink: 'Ссылка для сброса пароля недействительна.',
+    notFound: 'Токен сброса не найден или истёк.',
+    failed: 'Не удалось сбросить пароль',
+    passwordMinLength: 'Пароль должен содержать не менее 8 символов',
+    passwordsMismatch: 'Пароли не совпадают',
   },
 
   employees: {
@@ -237,7 +268,8 @@ export const ru = {
     colName: 'Имя',
     colEmail: 'Email',
     colTelegram: 'Telegram',
-    deleteConfirm: 'Удалить сотрудника «{name}»? Это действие необратимо.',
+    deleteConfirm:
+      'Архивировать сотрудника «{name}»? Учётная запись будет отключена, история сохранится.',
     createTitle: 'Создание сотрудника',
     createDescription: 'Добавление нового сотрудника в компанию.',
     createFailed: 'Не удалось создать сотрудника',
@@ -274,6 +306,15 @@ export const ru = {
     telegramUsername: 'Telegram username',
     telegramChatId: 'Telegram chat ID',
     hiredAt: 'Дата найма',
+    resetPassword: 'Сбросить пароль',
+    resetPasswordConfirm:
+      'Инициировать сброс пароля для «{name}»? Текущие сессии будут отозваны.',
+    resetPasswordFailed: 'Не удалось инициировать сброс пароля',
+    resetPasswordEmailSent: 'Письмо со ссылкой для сброса отправлено.',
+    resetPasswordManualUrl:
+      'SMTP не настроен — отправьте ссылку вручную: {url}',
+    archive: 'В архив',
+    archiving: 'Архивация…',
     validation: {
       fullNameRequired: 'Укажите полное имя.',
       fullNameMax: 'Имя не более 255 символов.',

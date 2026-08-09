@@ -24,6 +24,19 @@ class EmployeeRepository(BaseRepository[Employee]):
         result = await self._session.scalars(stmt)
         return result.first()
 
+    async def get_by_email(self, email: str) -> Employee | None:
+        """Resolve one employee by normalized email (platform / auth login).
+
+        Emails are unique when non-null (``uq_employees_email_lower``).
+        """
+        self._ensure_rls_context()
+        normalized = email.strip().lower()
+        if not normalized:
+            return None
+        stmt = select(Employee).where(func.lower(func.btrim(Employee.email)) == normalized)
+        result = await self._session.scalars(stmt)
+        return result.first()
+
     async def count_by_company_id(self, company_id: UUID) -> int:
         self._ensure_rls_context()
         stmt = select(func.count()).select_from(Employee).where(Employee.company_id == company_id)

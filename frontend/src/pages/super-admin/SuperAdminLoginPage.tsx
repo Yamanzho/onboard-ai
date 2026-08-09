@@ -48,7 +48,7 @@ export function SuperAdminLoginPage() {
           type="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder={t('auth.emailPlaceholder')}
+          placeholder={t('auth.superAdminEmailPlaceholder')}
           required
           autoComplete="username"
         />
