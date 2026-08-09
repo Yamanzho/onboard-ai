@@ -34,6 +34,9 @@ function validate(values: EmployeeFormValues): string | null {
   if (name.length > 255) return t('employees.validation.fullNameMax')
 
   const email = values.email.trim()
+  if (values.status === 'invited' && !email) {
+    return t('employees.validation.emailRequired')
+  }
   if (email) {
     if (email.length > 320) return t('employees.validation.emailMax')
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -42,13 +45,14 @@ function validate(values: EmployeeFormValues): string | null {
   }
 
   const telegramRaw = values.telegram_user_id.trim()
-  if (!telegramRaw) return t('employees.validation.telegramRequired')
-  if (!/^\d+$/.test(telegramRaw)) {
-    return t('employees.validation.telegramPositive')
-  }
-  const telegramId = Number(telegramRaw)
-  if (!Number.isSafeInteger(telegramId) || telegramId <= 0) {
-    return t('employees.validation.telegramPositive')
+  if (telegramRaw) {
+    if (!/^\d+$/.test(telegramRaw)) {
+      return t('employees.validation.telegramPositive')
+    }
+    const telegramId = Number(telegramRaw)
+    if (!Number.isSafeInteger(telegramId) || telegramId <= 0) {
+      return t('employees.validation.telegramPositive')
+    }
   }
 
   if (!EMPLOYEE_ROLES.includes(values.role)) {
@@ -119,7 +123,7 @@ export function EmployeeForm({
           onChange={(e) => setValues({ ...values, email: e.target.value })}
           maxLength={320}
           autoComplete="email"
-          placeholder={t('common.optional')}
+          required={values.status === 'invited'}
         />
       </div>
 
@@ -128,13 +132,12 @@ export function EmployeeForm({
         <Input
           id="telegram_user_id"
           inputMode="numeric"
-          pattern="[0-9]+"
+          pattern="[0-9]*"
           value={values.telegram_user_id}
           onChange={(e) =>
             setValues({ ...values, telegram_user_id: e.target.value })
           }
-          required
-          placeholder={t('employees.telegramPlaceholder')}
+          placeholder={t('employees.telegramOptionalHint')}
         />
       </div>
 

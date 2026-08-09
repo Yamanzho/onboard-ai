@@ -29,7 +29,14 @@ class EmployeeCreate(BaseModel):
     )
 
     company_id: UUID = Field(description="Company tenant the employee belongs to.")
-    telegram_user_id: int = Field(..., gt=0, description="Telegram user id (unique per company).")
+    telegram_user_id: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Telegram user id (unique per company). Optional for invited employees — "
+            "a placeholder is assigned and overwritten when they open the Telegram invite."
+        ),
+    )
     telegram_chat_id: int | None = Field(default=None, description="Optional Telegram chat id.")
     telegram_username: str | None = Field(default=None, max_length=255)
     full_name: str = Field(..., min_length=1, max_length=255)

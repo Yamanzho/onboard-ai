@@ -124,7 +124,7 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
     if assignment is None:
         await state.clear()
         await message.answer(
-            "У вас нет активного онбординга.\n"
+            "Telegram подключён, но онбординг ещё не назначен.\n"
             "Когда HR назначит программу — она появится здесь."
         )
         return

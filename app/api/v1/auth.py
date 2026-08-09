@@ -18,7 +18,13 @@ from app.core.auth_cookies import (
 )
 from app.core.client_ip import client_ip
 from app.core.config import get_settings
-from app.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError, ValidationError
+from app.core.exceptions import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    UnauthorizedError,
+    ValidationError,
+)
 from app.core.rate_limit import is_rate_limited
 from app.core.security import (
     hash_password,
@@ -30,6 +36,7 @@ from app.db.enums import EmployeeStatus
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
 from app.schemas.auth import (
+    BotInviteAcceptRequest,
     BotTelegramLoginRequest,
     BotTelegramLoginResponse,
     BrowserSessionResponse,
@@ -442,6 +449,129 @@ async def bot_telegram_login(
 
 
 @router.post(
+    "/bot/invite/accept",
+    response_model=BotTelegramLoginResponse,
+    summary="Accept EMPLOYEE invite via Telegram",
+    description=(
+        "Bot-only: bind Telegram identity to an invited EMPLOYEE using the "
+        "invite token from deep link `/start <token>`. "
+        "HR/ADMIN invites are rejected. Issues a normal employee JWT pair."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Invalid or missing bot service token",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Company mismatch or Telegram already linked",
+        },
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": "Bot login rate limit exceeded",
+        },
+    },
+)
+async def bot_accept_invite(
+    request: Request,
+    payload: BotInviteAcceptRequest,
+    platform: PlatformServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(
+            alias="X-Bot-Service-Token",
+            description="Shared bot→API service token (`BOT_SERVICE_TOKEN`).",
+        ),
+    ] = None,
+) -> BotTelegramLoginResponse:
+    ip = _enforce_login_rate_limit(request, bucket="bot_login")
+
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        logger.warning(
+            "bot_invite_accept failed reason=invalid_service_token ip=%s "
+            "telegram_user_id=%s",
+            ip,
+            payload.telegram_user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid bot service token",
+        )
+
+    settings = get_settings()
+    if not settings.bot_company_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Bot company binding is not configured",
+        )
+    try:
+        allowed_company = UUID(settings.bot_company_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Bot company id is misconfigured",
+        ) from None
+    if payload.company_id != allowed_company:
+        logger.warning(
+            "bot_invite_accept failed reason=company_mismatch ip=%s "
+            "telegram_user_id=%s",
+            ip,
+            payload.telegram_user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bot is not authorized for this company",
+        )
+
+    try:
+        employee = await platform.accept_invite_via_telegram(
+            token=payload.token,
+            telegram_user_id=payload.telegram_user_id,
+            telegram_username=payload.telegram_username,
+            telegram_chat_id=payload.telegram_chat_id,
+            expected_company_id=allowed_company,
+        )
+    except NotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+
+    try:
+        await EmployeeService().assert_company_active(employee.company_id)
+    except ForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=exc.message,
+        ) from exc
+
+    tokens = await _issue_tokens(employee)
+    # Never log the invite token — only ids.
+    logger.info(
+        "bot_invite_accept success ip=%s company_id=%s telegram_user_id=%s "
+        "employee_id=%s",
+        ip,
+        employee.company_id,
+        payload.telegram_user_id,
+        employee.id,
+    )
+    return BotTelegramLoginResponse(
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+        token_type=tokens.token_type,
+        employee=CurrentUserResponse.model_validate(employee),
+    )
+
+
+@router.post(
     "/refresh",
     response_model=None,
     summary="Refresh tokens",
@@ -724,6 +854,7 @@ async def accept_invite(
 # Re-export for importers that expect guards alongside the router.
 __all__ = [
     "accept_invite",
+    "bot_accept_invite",
     "bot_telegram_login",
     "change_password",
     "login",

@@ -243,6 +243,19 @@ export const ru = {
     createFailed: 'Не удалось создать сотрудника',
     inviteManualUrl:
       'SMTP не настроен — отправьте ссылку вручную: {url}',
+    inviteCreatedTitle: 'Сотрудник создан',
+    inviteEmailSent: 'Письмо с приглашением отправлено.',
+    inviteSmtpOff: 'SMTP не настроен — отправьте приглашение вручную.',
+    inviteWebUrl: 'Ссылка для web (HR/пароль)',
+    inviteTelegramUrl: 'Ссылка для Telegram',
+    copyInviteUrl: 'Скопировать invite URL',
+    copyTelegramUrl: 'Скопировать Telegram ссылку',
+    openTelegram: 'Открыть Telegram',
+    inviteTelegramMissing:
+      'Telegram-ссылка недоступна: задайте TELEGRAM_BOT_USERNAME на сервере.',
+    inviteCopied: 'Скопировано: {label}',
+    inviteCopyFailed: 'Не удалось скопировать',
+    telegramOptionalHint: 'необязательно — bind через Telegram-ссылку',
     profileDescription: 'Профиль сотрудника.',
     backToList: 'К списку',
     backToDetails: 'К карточке',
@@ -261,6 +274,7 @@ export const ru = {
     validation: {
       fullNameRequired: 'Укажите полное имя.',
       fullNameMax: 'Имя не более 255 символов.',
+      emailRequired: 'Email обязателен для приглашения.',
       emailMax: 'Email не более 320 символов.',
       emailInvalid: 'Введите корректный email.',
       telegramRequired: 'Укажите Telegram User ID.',

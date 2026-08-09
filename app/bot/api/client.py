@@ -123,6 +123,39 @@ class OnboardApiClient:
         )
         return EmployeeDTO.model_validate(payload["employee"])
 
+    async def accept_invite_via_telegram(
+        self,
+        *,
+        token: str,
+        telegram_user_id: int,
+        telegram_username: str | None = None,
+        telegram_chat_id: int | None = None,
+    ) -> EmployeeDTO:
+        """Bind Telegram to an invited EMPLOYEE using deep-link invite token."""
+        client = self._ensure_client()
+        body: dict[str, object] = {
+            "token": token,
+            "telegram_user_id": telegram_user_id,
+            "company_id": str(self._company_id),
+        }
+        if telegram_username is not None:
+            body["telegram_username"] = telegram_username
+        if telegram_chat_id is not None:
+            body["telegram_chat_id"] = telegram_chat_id
+        response = await client.post(
+            "/api/v1/auth/bot/invite/accept",
+            headers={"X-Bot-Service-Token": self._service_token},
+            json=body,
+        )
+        payload = self._parse(response)
+        assert isinstance(payload, dict)
+        self._store_tokens(
+            telegram_user_id,
+            access_token=str(payload["access_token"]),
+            refresh_token=str(payload["refresh_token"]),
+        )
+        return EmployeeDTO.model_validate(payload["employee"])
+
     async def ensure_session(self, telegram_user_id: int) -> bool:
         """Bind cached tokens, or re-exchange if the process has no session yet."""
         if self.bind_telegram_token(telegram_user_id):

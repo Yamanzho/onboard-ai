@@ -23,7 +23,7 @@ export interface Employee {
 
 export interface EmployeeCreate {
   company_id: string
-  telegram_user_id: number
+  telegram_user_id?: number
   full_name: string
   email?: string | null
   telegram_chat_id?: number | null

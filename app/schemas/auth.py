@@ -77,7 +77,8 @@ class BotTelegramLoginRequest(BaseModel):
                     "telegram_user_id": 123456789,
                 }
             ]
-        }
+        },
+        extra="forbid",
     )
 
     company_id: UUID = Field(description="Tenant company ID (must match BOT_COMPANY_ID).")
@@ -85,6 +86,18 @@ class BotTelegramLoginRequest(BaseModel):
         gt=0,
         description="Telegram user id of the employee to authenticate.",
     )
+
+
+class BotInviteAcceptRequest(BaseModel):
+    """Accept an EMPLOYEE invite by binding Telegram identity (bot only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(..., min_length=10, max_length=256)
+    telegram_user_id: int = Field(..., gt=0)
+    telegram_username: str | None = Field(default=None, max_length=255)
+    telegram_chat_id: int | None = None
+    company_id: UUID = Field(description="Must match BOT_COMPANY_ID.")
 
 
 class BotTelegramLoginResponse(TokenResponse):

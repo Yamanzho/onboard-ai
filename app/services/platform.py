@@ -809,6 +809,23 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             password=payload.password,
         )
 
+    async def accept_invite_via_telegram(
+        self,
+        *,
+        token: str,
+        telegram_user_id: int,
+        telegram_username: str | None = None,
+        telegram_chat_id: int | None = None,
+        expected_company_id: UUID | None = None,
+    ) -> Employee:
+        return await self._invites.accept_invite_via_telegram(
+            token=token,
+            telegram_user_id=telegram_user_id,
+            telegram_username=telegram_username,
+            telegram_chat_id=telegram_chat_id,
+            expected_company_id=expected_company_id,
+        )
+
     def get_settings(self) -> PlatformSettingsResponse:
         return _PLATFORM_SETTINGS.model_copy()
 

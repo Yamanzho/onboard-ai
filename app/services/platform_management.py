@@ -87,13 +87,15 @@ class InviteService(PlatformAuditMixin):
         return role
 
     @staticmethod
-    def build_telegram_invite_url(*, purpose: str) -> str | None:
+    def build_telegram_invite_url(*, purpose: str, token: str) -> str | None:
+        """Deep link for EMPLOYEE invites only: /start <token> (≤64 chars for TG)."""
         if purpose != InvitePurpose.EMPLOYEE.value:
             return None
         username = get_settings().telegram_bot_username.strip().lstrip("@")
         if not username:
             return None
-        return f"https://t.me/{username}"
+        # token_urlsafe(32) ≈ 43 chars — fits Telegram start_param limit (64).
+        return f"https://t.me/{username}?start={token}"
 
     async def create_and_send_invite(
         self,
@@ -142,7 +144,10 @@ class InviteService(PlatformAuditMixin):
         # Fragment carries the secret so browsers/proxies do not put it in path
         # access logs or Referer (SPA reads location.hash; preview uses POST body).
         invite_url = f"{settings.invite_base_url.rstrip('/')}/invite#{token}"
-        telegram_invite_url = self.build_telegram_invite_url(purpose=purpose)
+        telegram_invite_url = self.build_telegram_invite_url(
+            purpose=purpose,
+            token=token,
+        )
         return await self._email.send_invite_email(
             to_email=normalized_email,
             full_name=employee.full_name,
@@ -239,6 +244,82 @@ class InviteService(PlatformAuditMixin):
             await uow.commit()
             if updated is None:
                 raise NotFoundError("Employee not found")
+            return updated
+
+    async def accept_invite_via_telegram(
+        self,
+        *,
+        token: str,
+        telegram_user_id: int,
+        telegram_username: str | None = None,
+        telegram_chat_id: int | None = None,
+        expected_company_id: UUID | None = None,
+    ) -> Employee:
+        """Activate EMPLOYEE invite by binding Telegram identity (no password).
+
+        Role/company/employee come only from the invite row. HR/ADMIN invites
+        are rejected. Concurrent accepts serialize on invite FOR UPDATE.
+        """
+        if telegram_user_id <= 0:
+            raise ValidationError("Invalid Telegram user")
+
+        token_hash = hash_token(token)
+        # Generic failures — do not leak invite/tenant details to Telegram users.
+        invalid_msg = "Invite is invalid or expired"
+
+        async with self._uow_factory() as uow:
+            await uow.enter_auth_bootstrap(invite_token_hash=token_hash)
+            invite = await uow.employee_invites.get_by_token_hash_for_update(token_hash)
+            if invite is None:
+                raise NotFoundError(invalid_msg)
+            if invite.used_at is not None:
+                raise ValidationError(invalid_msg)
+            if invite.expires_at < datetime.now(UTC):
+                raise ValidationError(invalid_msg)
+            if invite.purpose != InvitePurpose.EMPLOYEE.value:
+                # HR/Admin must use web password accept — never Telegram.
+                raise ValidationError(invalid_msg)
+
+            await uow.enter_auth_bootstrap(employee_id=invite.employee_id)
+            employee = await uow.employees.get_by_id(invite.employee_id)
+            if employee is None:
+                raise NotFoundError(invalid_msg)
+            if employee.status != EmployeeStatus.INVITED.value:
+                raise ValidationError(invalid_msg)
+            if (
+                expected_company_id is not None
+                and employee.company_id != expected_company_id
+            ):
+                raise ValidationError(invalid_msg)
+
+            # Uniqueness: another employee in this company already owns this TG.
+            await uow.enter_tenant(employee.company_id)
+            existing = await uow.employees.get_by_telegram_user_id(
+                employee.company_id,
+                telegram_user_id,
+            )
+            if existing is not None and existing.id != employee.id:
+                raise ConflictError("Telegram account is already linked")
+
+            # Update + consume invite under employee pin (same as password accept).
+            await uow.enter_auth_bootstrap(employee_id=employee.id)
+            updated = await uow.employees.update(
+                employee.id,
+                telegram_user_id=telegram_user_id,
+                telegram_username=telegram_username,
+                telegram_chat_id=telegram_chat_id,
+                status=EmployeeStatus.ACTIVE.value,
+                role=InvitePurpose.EMPLOYEE.value,
+            )
+            await uow.employee_invites.invalidate_unused_for_employee(employee.id)
+            await uow.enter_session_bootstrap()
+            await uow.refresh_sessions.revoke_all_for_subject(
+                subject_type=SUBJECT_EMPLOYEE,
+                subject_id=employee.id,
+            )
+            await uow.commit()
+            if updated is None:
+                raise NotFoundError(invalid_msg)
             return updated
 
 

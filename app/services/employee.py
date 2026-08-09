@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from datetime import date
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy.exc import IntegrityError
 
@@ -47,8 +47,8 @@ class EmployeeService:
         company_id: UUID,
         actor_company_id: UUID,
         actor_role: str,
-        telegram_user_id: int,
         full_name: str,
+        telegram_user_id: int | None = None,
         telegram_chat_id: int | None = None,
         telegram_username: str | None = None,
         email: str | None = None,
@@ -63,7 +63,13 @@ class EmployeeService:
             raise ValidationError(
                 "Cannot create active employees via tenant API; use invite accept"
             )
-        if telegram_user_id <= 0:
+        # Placeholder until Telegram deep-link bind overwrites it.
+        resolved_telegram_id = telegram_user_id
+        if resolved_telegram_id is None:
+            if status != EmployeeStatus.INVITED.value:
+                raise ValidationError("telegram_user_id is required")
+            resolved_telegram_id = uuid4().int % 1_000_000_000 + 10_000
+        if resolved_telegram_id <= 0:
             raise ValidationError("telegram_user_id must be a positive integer")
         ensure_same_company(
             resource_company_id=company_id,
@@ -88,7 +94,7 @@ class EmployeeService:
                 employee = await uow.employees.create(
                     Employee(
                         company_id=company_id,
-                        telegram_user_id=telegram_user_id,
+                        telegram_user_id=resolved_telegram_id,
                         telegram_chat_id=telegram_chat_id,
                         telegram_username=telegram_username,
                         full_name=full_name,
