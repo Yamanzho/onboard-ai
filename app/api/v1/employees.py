@@ -26,7 +26,10 @@ _AUTH_RESPONSES = {
     summary="Create employee",
     description=(
         "Create an employee in the caller's company. "
-        "`company_id` in the body must match the authenticated tenant."
+        "`company_id` in the body must match the authenticated tenant. "
+        "When status=invited (default), requires email and creates a secure "
+        "invitation (purpose=employee|hr|admin from server-side role) via the "
+        "shared InviteService; response includes truthful invite delivery fields."
     ),
     responses={
         **_AUTH_RESPONSES,
@@ -46,7 +49,7 @@ async def create_employee(
     current_user: HRUser,
     service: ServiceDep,
 ) -> EmployeeResponse:
-    employee = await service.create_employee(
+    employee, delivery = await service.create_employee(
         company_id=payload.company_id,
         actor_company_id=current_user.company_id,
         actor_role=current_user.role,
@@ -59,7 +62,18 @@ async def create_employee(
         status=payload.status,
         hired_at=payload.hired_at,
     )
-    return EmployeeResponse.model_validate(employee)
+    response = EmployeeResponse.model_validate(employee)
+    if delivery is not None:
+        response = response.model_copy(
+            update={
+                "invite_email_sent": delivery.email_sent,
+                "invite_delivery": delivery.delivery,
+                "invite_url": delivery.invite_url,
+                "invite_detail": delivery.detail,
+                "telegram_invite_url": delivery.telegram_invite_url,
+            }
+        )
+    return response
 
 
 @router.get(

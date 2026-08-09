@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 EmployeeRoleLiteral = Literal["employee", "hr", "admin"]
 EmployeeStatusLiteral = Literal["invited", "active", "archived"]
+InviteDeliveryLiteral = Literal["email", "manual_url"]
 
 
 class EmployeeCreate(BaseModel):
@@ -32,10 +33,17 @@ class EmployeeCreate(BaseModel):
     telegram_chat_id: int | None = Field(default=None, description="Optional Telegram chat id.")
     telegram_username: str | None = Field(default=None, max_length=255)
     full_name: str = Field(..., min_length=1, max_length=255)
-    email: str | None = Field(default=None, max_length=320, description="Optional contact email.")
+    email: str | None = Field(default=None, max_length=320, description="Required when status=invited.")
     role: EmployeeRoleLiteral = Field(default="employee")
     status: EmployeeStatusLiteral = Field(default="invited")
     hired_at: date | None = Field(default=None, description="Optional hire date.")
+
+    @model_validator(mode="after")
+    def require_email_when_invited(self) -> "EmployeeCreate":
+        if self.status == "invited":
+            if not self.email or not self.email.strip():
+                raise ValueError("email is required when inviting an employee")
+        return self
 
 
 class EmployeeUpdate(BaseModel):
@@ -80,3 +88,9 @@ class EmployeeResponse(BaseModel):
     hired_at: date | None
     created_at: datetime
     updated_at: datetime
+    # Invite delivery (set on create when status=invited).
+    invite_email_sent: bool | None = None
+    invite_delivery: InviteDeliveryLiteral | None = None
+    invite_url: str | None = None
+    invite_detail: str | None = None
+    telegram_invite_url: str | None = None

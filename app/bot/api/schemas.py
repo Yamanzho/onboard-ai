@@ -39,6 +39,16 @@ class ProgramDTO(BaseModel):
     is_active: bool
 
 
+class ProgressStepDTO(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    title: str
+    description: str | None = None
+    step_type: str = "content"
+    content: dict[str, Any] = Field(default_factory=dict)
+    position: int = 0
+
+
 class ProgressItemDTO(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -47,6 +57,7 @@ class ProgressItemDTO(BaseModel):
     step_id: UUID
     status: str
     payload: dict[str, Any] = Field(default_factory=dict)
+    step: ProgressStepDTO | None = None
 
 
 class AssignmentProgressDTO(BaseModel):

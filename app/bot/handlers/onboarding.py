@@ -7,6 +7,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.bot.api.client import OnboardApiClient, OnboardApiError
 from app.bot.api.schemas import ProgressItemDTO
+from app.bot.handlers.step_content import format_step_message
 from app.bot.keyboards.menu import MENU_MY_ONBOARDING
 from app.bot.keyboards.onboarding import complete_step_keyboard, parse_complete_callback
 from app.bot.states.onboarding import OnboardingStates
@@ -30,13 +31,16 @@ def _format_step_message(
     item: ProgressItemDTO,
 ) -> str:
     status = _STATUS_LABELS.get(item.status, item.status)
-    safe_title = escape(program_title)
-    return (
-        f"📚 <b>{safe_title}</b>\n"
-        f"Прогресс: {percentage:.0f}%\n\n"
-        f"<b>Шаг {step_number} из {total_steps}</b>\n"
-        f"Статус: {status}\n\n"
-        "Когда выполните шаг — нажмите кнопку ниже."
+    step = item.step
+    return format_step_message(
+        program_title=program_title,
+        percentage=percentage,
+        step_number=step_number,
+        total_steps=total_steps,
+        status_label=status,
+        step_title=step.title if step is not None else None,
+        step_description=step.description if step is not None else None,
+        step_content=step.content if step is not None else None,
     )
 
 

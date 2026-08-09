@@ -145,6 +145,11 @@ export interface PlatformUser {
   last_login_at: string | null
   created_at: string
   updated_at: string
+  invite_email_sent?: boolean | null
+  invite_delivery?: 'email' | 'manual_url' | null
+  invite_url?: string | null
+  invite_detail?: string | null
+  invite_telegram_url?: string | null
 }
 
 export interface PlatformUserUpdate {
@@ -165,6 +170,8 @@ export interface InvitePreview {
   email: string
   company_name: string | null
   expires_at: string
+  purpose: 'employee' | 'hr' | 'admin'
+  role: 'employee' | 'hr' | 'admin'
 }
 
 export interface InviteAcceptPayload {

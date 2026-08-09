@@ -394,6 +394,7 @@ async def test_employee_invites_auth_bootstrap_only(
                 )
                 + __import__("datetime").timedelta(hours=1),
                 invited_email="rls@example.com",
+                purpose='employee',
             ),
         )
         await uow.commit()
@@ -633,6 +634,7 @@ async def test_f01_auth_cannot_enumerate_or_update_arbitrary_invites(
                 )
                 + __import__("datetime").timedelta(hours=1),
                 invited_email="a@example.com",
+                purpose='employee',
             ),
         )
         inv_b = await uow.employee_invites.create(
@@ -645,6 +647,7 @@ async def test_f01_auth_cannot_enumerate_or_update_arbitrary_invites(
                 )
                 + __import__("datetime").timedelta(hours=1),
                 invited_email="b@example.com",
+                purpose='employee',
             ),
         )
         await uow.commit()
@@ -812,6 +815,7 @@ async def test_f01_scoped_invite_and_sa_uow_lookups_work(
                 )
                 + __import__("datetime").timedelta(hours=1),
                 invited_email="invitee@example.com",
+                purpose='employee',
             ),
         )
         await uow.super_admins.create(

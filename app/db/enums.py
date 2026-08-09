@@ -9,6 +9,19 @@ class EmployeeRole(StrEnum):
     ADMIN = "admin"
 
 
+class InvitePurpose(StrEnum):
+    """Server-side invitation purpose — mirrors EmployeeRole, snapshotted on invite.
+
+    Accept flows must derive role/company from the invite row (token lookup),
+    never from client input. Purpose prevents accepting an invite as a different
+    role than the one that was invited.
+    """
+
+    EMPLOYEE = "employee"
+    HR = "hr"
+    ADMIN = "admin"
+
+
 class PlatformRole(StrEnum):
     """Platform-level roles (not tied to any company)."""
 

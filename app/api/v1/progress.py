@@ -67,4 +67,16 @@ async def complete_progress(
         company_id=current_user.company_id,
         payload=body.payload,
     )
-    return ProgressResponse.model_validate(updated)
+    # Explicit construction — ORM Progress.step relationship is not loaded here.
+    return ProgressResponse(
+        id=updated.id,
+        assignment_id=updated.assignment_id,
+        step_id=updated.step_id,
+        status=updated.status,
+        payload=updated.payload or {},
+        started_at=updated.started_at,
+        completed_at=updated.completed_at,
+        created_at=updated.created_at,
+        updated_at=updated.updated_at,
+        step=None,
+    )

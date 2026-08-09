@@ -16,6 +16,8 @@ from app.core.security import hash_password, verify_employee_password
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
+from app.services.email import InviteEmailResult
+from app.services.platform_management import InviteService
 from app.services.refresh_session import SUBJECT_EMPLOYEE
 from app.services.subscription_guard import (
     ensure_employee_limit,
@@ -31,8 +33,13 @@ _PRIVILEGED_ROLES = frozenset({EmployeeRole.ADMIN.value, EmployeeRole.HR.value})
 class EmployeeService:
     """Application service for Employee use cases (UnitOfWork + repositories)."""
 
-    def __init__(self, uow_factory: Callable[[], UnitOfWork] | None = None) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork] | None = None,
+        invite_service: InviteService | None = None,
+    ) -> None:
         self._uow_factory = uow_factory or UnitOfWork
+        self._invites = invite_service or InviteService(uow_factory=self._uow_factory)
 
     async def create_employee(
         self,
@@ -48,7 +55,7 @@ class EmployeeService:
         role: str = EmployeeRole.EMPLOYEE.value,
         status: str = EmployeeStatus.INVITED.value,
         hired_at: date | None = None,
-    ) -> Employee:
+    ) -> tuple[Employee, InviteEmailResult | None]:
         self._validate_role(role)
         self._validate_status(status)
         self._assert_can_assign_role(actor_role=actor_role, target_role=role)
@@ -64,11 +71,17 @@ class EmployeeService:
             not_found_message=f"Company {company_id} not found",
         )
 
+        normalized_email = email.strip().lower() if email else None
+        if status == EmployeeStatus.INVITED.value and not normalized_email:
+            raise ValidationError("email is required when inviting an employee")
+
+        company_name: str
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
+            company_name = company.name
             await ensure_employee_limit(uow, company_id)
 
             try:
@@ -79,7 +92,7 @@ class EmployeeService:
                         telegram_chat_id=telegram_chat_id,
                         telegram_username=telegram_username,
                         full_name=full_name,
-                        email=email,
+                        email=normalized_email,
                         role=role,
                         status=status,
                         hired_at=hired_at,
@@ -91,7 +104,18 @@ class EmployeeService:
                 raise ConflictError(
                     "Employee with this telegram_user_id already exists in the company"
                 ) from exc
-            return employee
+
+        delivery: InviteEmailResult | None = None
+        if status == EmployeeStatus.INVITED.value and normalized_email:
+            # Unified invite infrastructure (same InviteService as Super Admin).
+            # Invite table writes stay on platform RLS (no tenant dump of hashes).
+            delivery = await self._invites.create_and_send_invite(
+                employee=employee,
+                invited_email=normalized_email,
+                company_name=company_name,
+                use_platform_rls=True,
+            )
+        return employee, delivery
 
     async def get_employee(
         self,

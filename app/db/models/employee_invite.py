@@ -42,6 +42,8 @@ class EmployeeInvite(Base, TimestampMixin):
         nullable=True,
     )
     invited_email: Mapped[str] = mapped_column(String(320), nullable=False)
+    # Snapshotted at invite creation from employee.role (InvitePurpose values).
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
     created_by_super_admin_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("super_admins.id", ondelete="SET NULL"),

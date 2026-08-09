@@ -19,10 +19,21 @@ function readInviteToken(pathToken: string | undefined): string | null {
   return pathToken?.trim() || null
 }
 
+function inviteHeadline(preview: InvitePreview): string {
+  const company = preview.company_name ?? t('invite.yourCompany')
+  if (preview.purpose === 'hr') {
+    return t('invite.headlineHr', { company })
+  }
+  if (preview.purpose === 'admin') {
+    return t('invite.headlineAdmin', { company })
+  }
+  return t('invite.headlineEmployee', { company })
+}
+
 export function InviteAcceptPage() {
   const { token: pathToken } = useParams<{ token: string }>()
   const navigate = useNavigate()
-  const { login, isAuthenticated } = useAuth()
+  const { isAuthenticated } = useAuth()
   const [token, setToken] = useState<string | null>(() => readInviteToken(pathToken))
   const [preview, setPreview] = useState<InvitePreview | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -30,6 +41,7 @@ export function InviteAcceptPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [done, setDone] = useState(false)
 
   useEffect(() => {
     const resolved = readInviteToken(pathToken)
@@ -65,9 +77,9 @@ export function InviteAcceptPage() {
 
     setSubmitting(true)
     try {
-      const user = await authApi.acceptInvite({ token, password })
-      await login(user.id, password)
-      navigate('/dashboard', { replace: true })
+      await authApi.acceptInvite({ token, password })
+      setDone(true)
+      navigate('/login', { replace: true })
     } catch (err: unknown) {
       setSubmitError(
         err instanceof ApiError ? err.message : t('invite.acceptFailed'),
@@ -97,14 +109,14 @@ export function InviteAcceptPage() {
           <p className="mt-4 text-sm text-[var(--color-muted)]">{t('invite.loading')}</p>
         ) : (
           <>
-            <p className="mt-2 text-sm text-[var(--color-muted)]">
-              {preview.full_name}, {t('invite.setPasswordFor')}{' '}
-              <strong>{preview.company_name ?? t('invite.yourCompany')}</strong>.
-            </p>
+            <p className="mt-2 text-sm text-[var(--color-muted)]">{inviteHeadline(preview)}</p>
             <p className="mt-1 text-xs text-[var(--color-muted)]">
               {preview.email} · {t('invite.expiresAt')}{' '}
               {new Date(preview.expires_at).toLocaleString()}
             </p>
+            {done ? (
+              <p className="mt-4 text-sm text-[var(--color-muted)]">{t('invite.activatedGoLogin')}</p>
+            ) : null}
             {submitError ? <ErrorAlert message={submitError} /> : null}
             <form onSubmit={onSubmit} className="mt-4 space-y-3">
               <div>
@@ -132,7 +144,7 @@ export function InviteAcceptPage() {
                 />
               </div>
               <Button type="submit" className="w-full" disabled={submitting}>
-                {submitting ? t('invite.settingPassword') : t('invite.setPasswordAndSignIn')}
+                {submitting ? t('invite.settingPassword') : t('invite.setPasswordContinue')}
               </Button>
             </form>
           </>

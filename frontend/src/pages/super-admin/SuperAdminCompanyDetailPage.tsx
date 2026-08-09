@@ -381,13 +381,20 @@ function UsersTab({ companyId }: { companyId: string }) {
     e.preventDefault()
     setActionError(null)
     try {
-      await create.mutateAsync({
+      const created = await create.mutateAsync({
         full_name: fullName.trim(),
         email: email.trim(),
         role: role as 'admin' | 'hr' | 'employee',
       })
       setFullName('')
       setEmail('')
+      if (created.invite_delivery === 'manual_url' && created.invite_url) {
+        setActionError(
+          t('superAdmin.companies.detail.inviteManualUrl', {
+            url: created.invite_url,
+          }),
+        )
+      }
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : t('common.createFailed'))
     }
@@ -411,7 +418,14 @@ function UsersTab({ companyId }: { companyId: string }) {
   async function onResend(user: PlatformUser) {
     setBusyId(user.id)
     try {
-      await resendInvite.mutateAsync(user.id)
+      const delivery = await resendInvite.mutateAsync(user.id)
+      if (delivery.delivery === 'manual_url' && delivery.invite_url) {
+        setActionError(
+          t('superAdmin.companies.detail.inviteManualUrl', {
+            url: delivery.invite_url,
+          }),
+        )
+      }
     } catch (err) {
       setActionError(
         err instanceof ApiError ? err.message : t('superAdmin.companies.detail.resendFailed'),

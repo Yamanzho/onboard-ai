@@ -31,6 +31,7 @@ from app.schemas.super_admin import (
     CompanySubscriptionUpdate,
     CompanyUserCreate,
     InviteAcceptRequest,
+    InviteDeliveryResponse,
     InvitePreviewResponse,
     PlatformAuditLogResponse,
     PlatformDashboardStats,
@@ -337,7 +338,8 @@ async def get_company_detail(
     description=(
         "Create a new company tenant and provision the first "
         "company administrator (role=admin, status=invited). "
-        "An invite email is sent — the admin sets their own password."
+        "An invite is created; delivery is SMTP when configured, otherwise "
+        "the response includes invite_url for manual sharing."
     ),
     responses={
         **_AUTH_RESPONSES,
@@ -349,7 +351,7 @@ async def create_company_with_admin(
     current: SuperAdminUser,
     service: PlatformServiceDep,
 ) -> SuperAdminCompanyDetail:
-    company, _admin = await service.create_company_with_admin(
+    company, _admin, delivery = await service.create_company_with_admin(
         name=payload.name,
         slug=payload.slug,
         timezone=payload.timezone,
@@ -364,7 +366,16 @@ async def create_company_with_admin(
         admin_telegram_user_id=payload.admin_telegram_user_id,
         super_admin_id=current.id,
     )
-    return await service.get_company(company.id)
+    detail = await service.get_company(company.id)
+    return detail.model_copy(
+        update={
+            "invite_email_sent": delivery.email_sent,
+            "invite_delivery": delivery.delivery,
+            "invite_url": delivery.invite_url,
+            "invite_detail": delivery.detail,
+            "invite_telegram_url": delivery.telegram_invite_url,
+        }
+    )
 
 
 @router.patch(
@@ -579,7 +590,7 @@ async def create_company_user(
 
 @router.post(
     "/users/{employee_id}/resend-invite",
-    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=InviteDeliveryResponse,
     summary="Resend user invite email",
     responses={**_AUTH_RESPONSES},
 )
@@ -587,8 +598,15 @@ async def resend_user_invite(
     employee_id: UUID,
     current: SuperAdminUser,
     service: PlatformServiceDep,
-) -> None:
-    await service.resend_invite(employee_id, super_admin_id=current.id)
+) -> InviteDeliveryResponse:
+    delivery = await service.resend_invite(employee_id, super_admin_id=current.id)
+    return InviteDeliveryResponse(
+        email_sent=delivery.email_sent,
+        delivery=delivery.delivery,
+        invite_url=delivery.invite_url,
+        detail=delivery.detail,
+        telegram_invite_url=delivery.telegram_invite_url,
+    )
 
 
 @router.get(

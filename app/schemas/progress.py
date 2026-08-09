@@ -40,6 +40,18 @@ class ProgressCompleteRequest(BaseModel):
         )
 
 
+class ProgressStepInfo(BaseModel):
+    """Step payload embedded in assignment progress (for bot / employee clients)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    title: str
+    description: str | None = None
+    step_type: str
+    content: dict[str, Any] = Field(default_factory=dict)
+    position: int
+
+
 class ProgressResponse(BaseModel):
     """Progress resource for a single assignment step."""
 
@@ -54,6 +66,7 @@ class ProgressResponse(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    step: ProgressStepInfo | None = None
 
 
 class AssignmentProgressResponse(BaseModel):

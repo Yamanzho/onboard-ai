@@ -140,6 +140,7 @@ async def test_hr_cannot_promote_to_admin(
             "company_id": str(company_a.id),
             "telegram_user_id": 88001001,
             "full_name": "Would Be Admin",
+            "email": "would-be-admin@example.com",
             "role": "admin",
             "status": "invited",
         },
@@ -174,7 +175,7 @@ async def test_invite_email_does_not_log_token(
     invite_url = f"http://localhost:3000/invite#{token}"
     service = EmailService()
     with caplog.at_level(logging.INFO, logger="app.email"):
-        await service.send_invite_email(
+        result = await service.send_invite_email(
             to_email="user@example.com",
             full_name="Test User",
             invite_url=invite_url,
@@ -183,6 +184,10 @@ async def test_invite_email_does_not_log_token(
     joined = " ".join(record.getMessage() for record in caplog.records)
     assert token not in joined
     assert "body_omitted=true" in joined
+    assert result.email_sent is False
+    assert result.delivery == "manual_url"
+    assert result.invite_url == invite_url
+    assert "SMTP" in result.detail
 
 
 async def test_invited_employee_cannot_refresh(

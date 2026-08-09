@@ -60,6 +60,7 @@ async def _make_invite(employee_id, *, company_id, token: str, email: str) -> st
                 token_hash=hash_token(token),
                 expires_at=datetime.now(UTC) + timedelta(hours=24),
                 invited_email=email,
+                purpose='employee',
             ),
         )
         await uow.commit()

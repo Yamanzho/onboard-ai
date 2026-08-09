@@ -72,6 +72,14 @@ export function SuperAdminAuthProvider({ children }: { children: ReactNode }) {
       setUser(null)
       if (err instanceof ApiError) {
         setError(err.message)
+      } else if (
+        err instanceof TypeError ||
+        (err instanceof Error &&
+          /load failed|failed to fetch/i.test(err.message))
+      ) {
+        // Browsers (esp. Safari) surface cert/network failures as TypeError
+        // with messages like "Load failed" / "Failed to fetch".
+        setError(t('auth.networkOrCertFailed'))
       } else if (err instanceof Error) {
         setError(err.message)
       } else {

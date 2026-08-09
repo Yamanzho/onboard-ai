@@ -213,8 +213,14 @@ export async function blockUser(employeeId: string): Promise<PlatformUser> {
   )
 }
 
-export async function resendUserInvite(employeeId: string): Promise<void> {
-  await superAdminRequest<void>(
+export async function resendUserInvite(employeeId: string): Promise<{
+  email_sent: boolean
+  delivery: 'email' | 'manual_url'
+  invite_url: string | null
+  detail: string
+  telegram_invite_url?: string | null
+}> {
+  return superAdminRequest(
     `/api/v1/super-admin/users/${employeeId}/resend-invite`,
     { method: 'POST' },
   )

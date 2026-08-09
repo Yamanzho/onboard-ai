@@ -14,6 +14,11 @@ export interface Employee {
   hired_at: string | null
   created_at: string
   updated_at: string
+  invite_email_sent?: boolean | null
+  invite_delivery?: 'email' | 'manual_url' | null
+  invite_url?: string | null
+  invite_detail?: string | null
+  telegram_invite_url?: string | null
 }
 
 export interface EmployeeCreate {

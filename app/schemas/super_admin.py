@@ -223,6 +223,12 @@ class SuperAdminCompanyDetail(BaseModel):
     assignments_count: int = 0
     subscription: CompanySubscriptionResponse | None = None
     limits: CompanyLimitsResponse | None = None
+    # Set when creating a company provisions the first admin invite.
+    invite_email_sent: bool | None = None
+    invite_delivery: Literal["email", "manual_url"] | None = None
+    invite_url: str | None = None
+    invite_detail: str | None = None
+    invite_telegram_url: str | None = None
 
 
 class PlatformUserResponse(BaseModel):
@@ -241,6 +247,22 @@ class PlatformUserResponse(BaseModel):
     last_login_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+    # Invite delivery truthfulness (set on create/resend only).
+    invite_email_sent: bool | None = None
+    invite_delivery: Literal["email", "manual_url"] | None = None
+    invite_url: str | None = None
+    invite_detail: str | None = None
+    invite_telegram_url: str | None = None
+
+
+class InviteDeliveryResponse(BaseModel):
+    """Explicit invite delivery status — never implies email without SMTP."""
+
+    email_sent: bool
+    delivery: Literal["email", "manual_url"]
+    invite_url: str | None = None
+    detail: str
+    telegram_invite_url: str | None = None
 
 
 class PlatformUserUpdate(BaseModel):
@@ -267,6 +289,8 @@ class CompanyUserCreate(BaseModel):
 
 
 class InvitePreviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     token: str = Field(..., min_length=10, max_length=256)
 
 
@@ -276,9 +300,14 @@ class InvitePreviewResponse(BaseModel):
     email: str
     company_name: str | None
     expires_at: datetime
+    # Server-derived from invite.purpose (never from client).
+    purpose: Literal["employee", "hr", "admin"]
+    role: Literal["employee", "hr", "admin"]
 
 
 class InviteAcceptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     token: str = Field(..., min_length=10, max_length=256)
     password: str = Field(..., min_length=8, max_length=256)
 

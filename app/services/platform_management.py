@@ -14,6 +14,7 @@ from app.core.security import hash_password, hash_token
 from app.db.enums import (
     EmployeeRole,
     EmployeeStatus,
+    InvitePurpose,
     PaymentStatus,
     PlatformAuditAction,
     SubscriptionHistoryEventType,
@@ -27,7 +28,7 @@ from app.db.models.employee_invite import EmployeeInvite
 from app.db.models.platform_audit_log import PlatformAuditLog
 from app.db.models.subscription_history import SubscriptionHistoryEvent
 from app.db.uow import UnitOfWork
-from app.services.email import EmailService
+from app.services.email import EmailService, InviteEmailResult
 from app.services.refresh_session import SUBJECT_EMPLOYEE
 
 TIER_LIMITS: dict[str, dict[str, int]] = {
@@ -78,6 +79,22 @@ class InviteService(PlatformAuditMixin):
         self._uow_factory = uow_factory
         self._email = email_service or EmailService()
 
+    @staticmethod
+    def purpose_from_role(role: str) -> str:
+        allowed = {item.value for item in InvitePurpose}
+        if role not in allowed:
+            raise ValidationError(f"Unsupported invite purpose for role: {role}")
+        return role
+
+    @staticmethod
+    def build_telegram_invite_url(*, purpose: str) -> str | None:
+        if purpose != InvitePurpose.EMPLOYEE.value:
+            return None
+        username = get_settings().telegram_bot_username.strip().lstrip("@")
+        if not username:
+            return None
+        return f"https://t.me/{username}"
+
     async def create_and_send_invite(
         self,
         *,
@@ -85,20 +102,25 @@ class InviteService(PlatformAuditMixin):
         invited_email: str,
         company_name: str,
         super_admin_id: UUID | None = None,
-    ) -> None:
+        use_platform_rls: bool = True,
+    ) -> InviteEmailResult:
         # Onboarding invites are for INVITED users only — never ACTIVE password reset.
         if employee.status != EmployeeStatus.INVITED.value:
             raise ValidationError(
                 "Onboarding invites can only be sent to invited employees"
             )
 
+        purpose = self.purpose_from_role(employee.role)
         settings = get_settings()
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(UTC) + timedelta(hours=settings.invite_ttl_hours)
         normalized_email = invited_email.strip().lower()
 
         async with self._uow_factory() as uow:
-            await uow.enter_platform()
+            if use_platform_rls:
+                await uow.enter_platform()
+            else:
+                await uow.enter_tenant(employee.company_id)
             # Invalidate prior unused invites so resend cannot leave password-reset
             # tokens that overwrite a later-accepted password.
             await uow.employee_invites.invalidate_unused_for_employee(employee.id)
@@ -109,6 +131,7 @@ class InviteService(PlatformAuditMixin):
                     token_hash=hash_token(token),
                     expires_at=expires_at,
                     invited_email=normalized_email,
+                    purpose=purpose,
                     created_by_super_admin_id=super_admin_id,
                 ),
             )
@@ -119,11 +142,14 @@ class InviteService(PlatformAuditMixin):
         # Fragment carries the secret so browsers/proxies do not put it in path
         # access logs or Referer (SPA reads location.hash; preview uses POST body).
         invite_url = f"{settings.invite_base_url.rstrip('/')}/invite#{token}"
-        await self._email.send_invite_email(
+        telegram_invite_url = self.build_telegram_invite_url(purpose=purpose)
+        return await self._email.send_invite_email(
             to_email=normalized_email,
             full_name=employee.full_name,
             invite_url=invite_url,
             company_name=company_name,
+            purpose=purpose,
+            telegram_invite_url=telegram_invite_url,
         )
 
     async def get_invite_preview(self, token: str) -> dict[str, Any]:
@@ -157,6 +183,8 @@ class InviteService(PlatformAuditMixin):
                 "email": invite.invited_email,
                 "company_name": company.name if company else None,
                 "expires_at": invite.expires_at,
+                "purpose": invite.purpose,
+                "role": invite.purpose,
             }
 
     async def accept_invite(self, *, token: str, password: str) -> Employee:
@@ -186,10 +214,17 @@ class InviteService(PlatformAuditMixin):
                     "Invite is only valid for invited employees"
                 )
 
+            # Role and company come only from the invite/employee rows — never
+            # from client input. Purpose snapshot locks the invited role.
+            purpose = invite.purpose
+            if purpose not in {item.value for item in InvitePurpose}:
+                raise ValidationError("Invite has invalid purpose")
+
             updated = await uow.employees.update(
                 employee.id,
                 password_hash=hash_password(password),
                 status=EmployeeStatus.ACTIVE.value,
+                role=purpose,
             )
             # Consume this invite and any siblings so leftover tokens cannot
             # overwrite the password after activation / resend races.

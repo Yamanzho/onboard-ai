@@ -161,6 +161,31 @@ class ProgressService:
             )
             return await uow.progress.list_by_assignment_id(assignment_id)
 
+    async def get_steps_for_progress_items(
+        self,
+        items: list[Progress],
+        *,
+        company_id: UUID,
+    ) -> dict[UUID, Any]:
+        """Load step rows for progress items (title/description/content for bot)."""
+        step_ids = {item.step_id for item in items}
+        if not step_ids:
+            return {}
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            steps: dict[UUID, Any] = {}
+            for step_id in step_ids:
+                step = await uow.steps.get_by_id(step_id)
+                if step is None:
+                    continue
+                ensure_same_company(
+                    resource_company_id=step.company_id,
+                    actor_company_id=company_id,
+                    not_found_message=f"Step {step_id} not found",
+                )
+                steps[step.id] = step
+            return steps
+
     async def calculate_progress_percentage(
         self,
         assignment_id: UUID,

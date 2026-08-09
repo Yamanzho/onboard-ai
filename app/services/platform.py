@@ -268,7 +268,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         contact_phone: str | None = None,
         contact_person: str | None = None,
         logo_url: str | None = None,
-    ) -> tuple[Company, Employee]:
+    ) -> tuple[Company, Employee, Any]:
         if admin_telegram_user_id <= 0:
             raise ValidationError("admin_telegram_user_id must be a positive integer")
         if not admin_email:
@@ -325,13 +325,13 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
                     "Company slug or admin telegram_user_id already exists"
                 ) from exc
 
-        await self._invites.create_and_send_invite(
+        delivery = await self._invites.create_and_send_invite(
             employee=admin,
             invited_email=admin_email,
             company_name=company.name,
             super_admin_id=super_admin_id,
         )
-        return company, admin
+        return company, admin, delivery
 
     async def update_company(self, company_id: UUID, **values: Any) -> Company:
         if not values:
@@ -617,20 +617,20 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
                 await uow.rollback()
                 raise ConflictError("Employee telegram_user_id already exists") from exc
 
-        await self._invites.create_and_send_invite(
+        delivery = await self._invites.create_and_send_invite(
             employee=employee,
             invited_email=payload.email,
             company_name=company.name,
             super_admin_id=super_admin_id,
         )
-        return self._user_response(employee, company)
+        return self._user_response(employee, company, invite=delivery)
 
     async def resend_invite(
         self,
         employee_id: UUID,
         *,
         super_admin_id: UUID | None = None,
-    ) -> None:
+    ):
         async with self._uow_factory() as uow:
             await uow.enter_platform()
             employee = await uow.employees.get_by_id(employee_id)
@@ -656,7 +656,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             )
             await uow.commit()
 
-        await self._invites.create_and_send_invite(
+        return await self._invites.create_and_send_invite(
             employee=employee,
             invited_email=employee.email,
             company_name=company.name,
@@ -859,7 +859,12 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         )
 
     @staticmethod
-    def _user_response(employee: Employee, company: Company | None) -> PlatformUserResponse:
+    def _user_response(
+        employee: Employee,
+        company: Company | None,
+        *,
+        invite: Any | None = None,
+    ) -> PlatformUserResponse:
         return PlatformUserResponse(
             id=employee.id,
             company_id=employee.company_id,
@@ -874,4 +879,11 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             last_login_at=employee.last_login_at,
             created_at=employee.created_at,
             updated_at=employee.updated_at,
+            invite_email_sent=invite.email_sent if invite is not None else None,
+            invite_delivery=invite.delivery if invite is not None else None,
+            invite_url=invite.invite_url if invite is not None else None,
+            invite_detail=invite.detail if invite is not None else None,
+            invite_telegram_url=(
+                invite.telegram_invite_url if invite is not None else None
+            ),
         )

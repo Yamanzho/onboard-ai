@@ -78,7 +78,12 @@ export function SuperAdminUsersPage() {
     setActionError(null)
     setBusyId(user.id)
     try {
-      await resendInvite.mutateAsync(user.id)
+      const delivery = await resendInvite.mutateAsync(user.id)
+      if (delivery.delivery === 'manual_url' && delivery.invite_url) {
+        setActionError(
+          t('superAdmin.users.inviteManualUrl', { url: delivery.invite_url }),
+        )
+      }
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : t('superAdmin.users.resendFailed'))
     } finally {

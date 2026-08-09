@@ -114,6 +114,7 @@ async def test_invite_preview_uses_body_not_path(
                 token_hash=hash_token(raw),
                 expires_at=datetime.now(UTC) + timedelta(hours=24),
                 invited_email=email,
+                purpose='employee',
             )
         )
         await uow.commit()

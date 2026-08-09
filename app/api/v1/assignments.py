@@ -12,7 +12,11 @@ from app.api.auth_deps import (
 from app.api.deps import get_assignment_service, get_progress_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.assignment import AssignmentCreate, AssignmentResponse
-from app.schemas.progress import AssignmentProgressResponse, ProgressResponse
+from app.schemas.progress import (
+    AssignmentProgressResponse,
+    ProgressResponse,
+    ProgressStepInfo,
+)
 from app.services.assignment import AssignmentService
 from app.services.progress import ProgressService
 
@@ -266,7 +270,41 @@ async def get_assignment_progress(
         assignment_id,
         company_id=current_user.company_id,
     )
+    step_by_id = await service.get_steps_for_progress_items(
+        items,
+        company_id=current_user.company_id,
+    )
+    responses: list[ProgressResponse] = []
+    for item in items:
+        step = step_by_id.get(item.step_id)
+        step_info = (
+            ProgressStepInfo(
+                title=step.title,
+                description=step.description,
+                step_type=step.step_type,
+                content=step.content or {},
+                position=step.position,
+            )
+            if step is not None
+            else None
+        )
+        # Build explicitly — Progress ORM also has a ``step`` relationship that
+        # would DetachedInstanceError under model_validate(from_attributes).
+        responses.append(
+            ProgressResponse(
+                id=item.id,
+                assignment_id=item.assignment_id,
+                step_id=item.step_id,
+                status=item.status,
+                payload=item.payload or {},
+                started_at=item.started_at,
+                completed_at=item.completed_at,
+                created_at=item.created_at,
+                updated_at=item.updated_at,
+                step=step_info,
+            )
+        )
     return AssignmentProgressResponse(
         percentage=percentage,
-        items=[ProgressResponse.model_validate(item) for item in items],
+        items=responses,
     )

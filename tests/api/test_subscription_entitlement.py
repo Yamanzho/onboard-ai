@@ -521,6 +521,7 @@ async def test_invite_accept_does_not_grant_api_when_subscription_blocked(
                 token_hash=hash_token(raw_token),
                 expires_at=datetime.now(UTC) + timedelta(hours=24),
                 invited_email="invited-blocked@example.com",
+                purpose='employee',
             ),
         )
         await uow.commit()

@@ -141,6 +141,8 @@ class Settings(BaseSettings):
     bot_webhook_port: int = 8081
     bot_company_id: str = ""
     bot_service_token: str = ""
+    # Public Telegram bot username (without @) for employee invite deep links.
+    telegram_bot_username: str = ""
     # Bot telegram-login rate limit (per client IP, fixed window)
     bot_login_rate_limit: int = 30
     bot_login_rate_window_seconds: int = 60

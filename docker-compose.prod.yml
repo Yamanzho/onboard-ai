@@ -30,13 +30,17 @@
 # - F-04/F-07: Frontend publishes 127.0.0.1 only (TLS edge on host). API/DB/Redis
 #           have no host ports. Do not publish API:8000 while TRUST_PROXY_HEADERS=true.
 # - F-05: API/bot image runs as non-root UID 10001 (see Dockerfile USER).
+# - Sprint 1.1: Do NOT use docker-compose.ip.yml in production. That override
+#           publishes 0.0.0.0:3000 and AUTH_COOKIE_SECURE=false (HTTP-only hack).
+#           Host TLS config: deploy/nginx/onboardai.aoe.kz.conf
 #
 # Public edge contract (required for public production):
-#   Internet → TLS terminator (host) → 127.0.0.1:frontend → api (internal)
+#   Internet → TLS terminator (host nginx) → 127.0.0.1:frontend → api (internal)
 # Do not expose frontend plaintext, API, Postgres, or Redis to the public internet.
 #
 # Do not use this file while also publishing API:8000, Redis:6379, or Postgres:5432
 # to the internet.
+# Do not set AUTH_COOKIE_SECURE=false — production cookies must be Secure under HTTPS.
 
 services:
   frontend:

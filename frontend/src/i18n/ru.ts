@@ -146,6 +146,8 @@ export const ru = {
     employeeUuid: 'UUID сотрудника',
     employeeUuidPlaceholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
     loginFailed: 'Не удалось войти',
+    networkOrCertFailed:
+      'Сеть или сертификат: откройте https://… , примите предупреждение о сертификате и повторите вход. Не используйте порт :3000.',
     roleRequired: 'Панель доступна только ролям admin и hr',
     superAdminLoginHint:
       'Войдите с email и паролем Super Admin (SUPER_ADMIN_EMAIL).',
@@ -159,15 +161,18 @@ export const ru = {
     acceptTitle: 'Принятие приглашения',
     goToSignIn: 'Перейти ко входу',
     loading: 'Загрузка приглашения…',
-    setPasswordFor: 'установите пароль для входа в',
-    yourCompany: 'вашу компанию',
+    headlineHr: 'Вас пригласили в {company} как HR',
+    headlineAdmin: 'Вас пригласили в {company} как Admin',
+    headlineEmployee: 'Вас пригласили в {company}',
+    yourCompany: 'компанию',
     expiresAt: 'истекает',
     confirmPassword: 'Подтверждение пароля',
     passwordMinLength: 'Пароль должен содержать не менее 8 символов',
     passwordsMismatch: 'Пароли не совпадают',
     acceptFailed: 'Не удалось принять приглашение',
     settingPassword: 'Установка пароля…',
-    setPasswordAndSignIn: 'Установить пароль и войти',
+    setPasswordContinue: 'Установить пароль и продолжить',
+    activatedGoLogin: 'Аккаунт активирован. Войдите с новым паролем.',
   },
 
   dashboard: {
@@ -236,6 +241,8 @@ export const ru = {
     createTitle: 'Создание сотрудника',
     createDescription: 'Добавление нового сотрудника в компанию.',
     createFailed: 'Не удалось создать сотрудника',
+    inviteManualUrl:
+      'SMTP не настроен — отправьте ссылку вручную: {url}',
     profileDescription: 'Профиль сотрудника.',
     backToList: 'К списку',
     backToDetails: 'К карточке',
@@ -551,6 +558,8 @@ export const ru = {
         resendInvite: 'Повторить приглашение',
         blockConfirm: 'Заблокировать {name}?',
         resendFailed: 'Не удалось отправить приглашение',
+        inviteManualUrl:
+          'SMTP не настроен — отправьте ссылку вручную: {url}',
         noHistory: 'Нет истории',
         noHistoryHint: 'События подписки появятся здесь.',
         colWhen: 'Когда',
@@ -583,6 +592,8 @@ export const ru = {
       blockConfirm:
         'Заблокировать {name}? Пользователь будет архивирован и не сможет войти.',
       resendFailed: 'Не удалось отправить приглашение',
+      inviteManualUrl:
+        'SMTP не настроен — отправьте ссылку вручную: {url}',
     },
     audit: {
       title: 'Журнал действий',
