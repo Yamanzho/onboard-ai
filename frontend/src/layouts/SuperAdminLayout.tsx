@@ -2,17 +2,11 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useSuperAdminAuth } from '../hooks/useSuperAdminAuth'
 import { Button } from '../components/ui/Button'
 import { t } from '../i18n'
-
-const nav = [
-  { to: '/super-admin/dashboard', labelKey: 'nav.dashboard' },
-  { to: '/super-admin/companies', labelKey: 'nav.companies' },
-  { to: '/super-admin/users', labelKey: 'nav.users' },
-  { to: '/super-admin/audit-log', labelKey: 'nav.auditLog' },
-  { to: '/super-admin/settings', labelKey: 'nav.settings' },
-] as const
+import { navForRole } from '../lib/navigation'
 
 export function SuperAdminLayout() {
   const { user, logout } = useSuperAdminAuth()
+  const nav = navForRole('super_admin')
 
   return (
     <div className="flex min-h-screen">
@@ -26,8 +20,8 @@ export function SuperAdminLayout() {
         <nav className="flex flex-1 flex-col gap-1 p-3">
           {nav.map((item) => (
             <NavLink
-              key={item.to}
-              to={item.to}
+              key={item.path}
+              to={item.path}
               className={({ isActive }) =>
                 `rounded-md px-3 py-2 text-sm transition ${
                   isActive

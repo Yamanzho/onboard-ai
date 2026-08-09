@@ -15,6 +15,7 @@ import { useEmployee, useEmployeeMutations } from '../../hooks/useEmployees'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as employeesApi from '../../services/employeesApi'
+import type { Employee } from '../../types/employee'
 
 function formatDate(value: string | null) {
   if (!value) return t('common.emDash')
@@ -23,6 +24,10 @@ function formatDate(value: string | null) {
   } catch {
     return value
   }
+}
+
+async function copyText(value: string): Promise<void> {
+  await navigator.clipboard.writeText(value)
 }
 
 type Tab = 'profile' | 'assignments'
@@ -36,6 +41,13 @@ export function EmployeeDetailPage() {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('profile')
   const [resetPending, setResetPending] = useState(false)
+  const [invitePending, setInvitePending] = useState(false)
+  const [inviteLinks, setInviteLinks] = useState<{
+    invite_url?: string | null
+    telegram_invite_url?: string | null
+    invite_email_sent?: boolean | null
+  } | null>(null)
+  const [copyHint, setCopyHint] = useState<string | null>(null)
 
   async function onArchive() {
     if (!employee) return
@@ -81,6 +93,43 @@ export function EmployeeDetailPage() {
     }
   }
 
+  async function onResendInvite() {
+    if (!employee) return
+    setActionError(null)
+    setActionSuccess(null)
+    setCopyHint(null)
+    setInvitePending(true)
+    try {
+      const result: Employee = await employeesApi.resendInvite(employee.id)
+      setInviteLinks({
+        invite_url: result.invite_url,
+        telegram_invite_url: result.telegram_invite_url,
+        invite_email_sent: result.invite_email_sent,
+      })
+      if (result.invite_email_sent) {
+        setActionSuccess(t('employees.inviteEmailSent'))
+      } else {
+        setActionSuccess(t('employees.inviteSmtpOff'))
+      }
+      void refetch()
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError ? err.message : t('employees.resendInviteFailed'),
+      )
+    } finally {
+      setInvitePending(false)
+    }
+  }
+
+  async function onCopy(label: string, value: string) {
+    try {
+      await copyText(value)
+      setCopyHint(t('employees.inviteCopied', { label }))
+    } catch {
+      setCopyHint(t('employees.inviteCopyFailed'))
+    }
+  }
+
   if (isLoading) return <LoadingBlock />
   if (error || !employee || !employeeId) {
     return (
@@ -92,31 +141,25 @@ export function EmployeeDetailPage() {
     )
   }
 
-  const telegramStatus =
-    employee.telegram_username || employee.telegram_chat_id != null
-      ? t('settings.telegramConnected')
-      : t('settings.telegramNotConnected')
+  const telegramConnected = Boolean(
+    employee.telegram_username || employee.telegram_chat_id != null,
+  )
+  const telegramStatus = telegramConnected
+    ? t('settings.telegramConnected')
+    : t('settings.telegramNotConnected')
 
   const rows: { label: string; value: string }[] = [
     { label: t('employees.fullName'), value: employee.full_name },
     { label: t('common.email'), value: employee.email ?? t('common.emDash') },
-    {
-      label: t('employees.telegramUserId'),
-      value: String(employee.telegram_user_id),
-    },
+    { label: t('common.role'), value: employee.role },
+    { label: t('common.status'), value: employee.status },
+    { label: t('settings.companyId'), value: employee.company_id },
+    { label: t('settings.telegram'), value: telegramStatus },
     {
       label: t('employees.telegramUsername'),
       value: employee.telegram_username
         ? `@${employee.telegram_username}`
         : t('common.emDash'),
-    },
-    { label: t('settings.telegram'), value: telegramStatus },
-    {
-      label: t('employees.telegramChatId'),
-      value:
-        employee.telegram_chat_id != null
-          ? String(employee.telegram_chat_id)
-          : t('common.emDash'),
     },
     {
       label: t('employees.hiredAt'),
@@ -124,12 +167,15 @@ export function EmployeeDetailPage() {
     },
     { label: t('common.created'), value: formatDate(employee.created_at) },
     { label: t('common.updated'), value: formatDate(employee.updated_at) },
-    { label: t('settings.employeeId'), value: employee.id },
-    { label: t('settings.companyId'), value: employee.company_id },
   ]
 
   const canReset =
     employee.status === 'active' && Boolean(employee.email)
+  const canResendInvite = employee.status === 'invited' && Boolean(employee.email)
+  const showTelegramInviteActions =
+    !telegramConnected &&
+    employee.role === 'employee' &&
+    (canResendInvite || Boolean(inviteLinks?.telegram_invite_url))
 
   return (
     <div>
@@ -176,7 +222,76 @@ export function EmployeeDetailPage() {
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm">
         <EmployeeRoleBadge role={employee.role} />
         <EmployeeStatusBadge status={employee.status} />
+        <span className="text-[var(--color-muted)]">
+          {t('settings.telegram')}: {telegramStatus}
+        </span>
       </div>
+
+      {showTelegramInviteActions ? (
+        <div className="mb-4 space-y-3 rounded-lg border border-[var(--color-border)] bg-white p-4 text-sm">
+          <p className="font-medium">{t('employees.telegramInviteSection')}</p>
+          {canResendInvite ? (
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={invitePending}
+              onClick={() => void onResendInvite()}
+            >
+              {invitePending
+                ? t('common.saving')
+                : t('employees.openTelegramInvite')}
+            </Button>
+          ) : null}
+          {inviteLinks?.telegram_invite_url ? (
+            <div className="space-y-2">
+              <p className="text-[var(--color-muted)]">
+                {t('employees.inviteTelegramCreated')}
+              </p>
+              <code className="block break-all rounded bg-[var(--color-bg)] p-2 text-xs">
+                {inviteLinks.telegram_invite_url}
+              </code>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  onClick={() =>
+                    void onCopy(
+                      t('employees.inviteTelegramUrl'),
+                      inviteLinks.telegram_invite_url!,
+                    )
+                  }
+                >
+                  {t('employees.copyTelegramUrl')}
+                </Button>
+                <a
+                  className="inline-flex items-center text-[var(--color-accent)]"
+                  href={inviteLinks.telegram_invite_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {t('employees.openTelegram')}
+                </a>
+              </div>
+            </div>
+          ) : null}
+          {inviteLinks?.invite_url ? (
+            <div className="space-y-2">
+              <p className="font-medium">{t('employees.inviteWebUrl')}</p>
+              <code className="block break-all rounded bg-[var(--color-bg)] p-2 text-xs">
+                {inviteLinks.invite_url}
+              </code>
+              <Button
+                type="button"
+                onClick={() =>
+                  void onCopy(t('employees.inviteWebUrl'), inviteLinks.invite_url!)
+                }
+              >
+                {t('employees.copyInviteUrl')}
+              </Button>
+            </div>
+          ) : null}
+          {copyHint ? <p className="text-[var(--color-muted)]">{copyHint}</p> : null}
+        </div>
+      ) : null}
 
       <div className="mb-4 flex gap-2 border-b border-[var(--color-border)]">
         {(

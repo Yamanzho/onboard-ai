@@ -3,12 +3,24 @@ export const ru = {
     brand: 'OnboardAI',
     admin: 'Админ',
     adminPanel: 'Панель администратора',
+    hrPanel: 'Панель HR',
+    employeePanel: 'Кабинет сотрудника',
     superAdmin: 'Super Admin',
     platformPanel: 'Панель управления платформой',
   },
 
   nav: {
     dashboard: 'Главная',
+    companyDashboard: 'Дашборд компании',
+    hrDashboard: 'HR дашборд',
+    myOnboarding: 'Мой онбординг',
+    active: 'Активные',
+    history: 'История',
+    calendar: 'Календарь',
+    company: 'Компания',
+    profile: 'Профиль',
+    security: 'Безопасность',
+    companySettings: 'Настройки компании',
     knowledgeBase: 'База знаний',
     categories: 'Категории',
     tags: 'Теги',
@@ -18,6 +30,7 @@ export const ru = {
     settings: 'Настройки',
     companies: 'Компании',
     users: 'Пользователи',
+    subscriptions: 'Подписки',
     auditLog: 'Журнал действий',
   },
 
@@ -147,7 +160,7 @@ export const ru = {
     loginFailed: 'Не удалось войти',
     networkOrCertFailed:
       'Сеть или сертификат: откройте https://… , примите предупреждение о сертификате и повторите вход. Не используйте порт :3000.',
-    roleRequired: 'Панель доступна только ролям admin и hr',
+    roleRequired: 'Панель доступна только ролям admin, hr и employee',
     superAdminLoginHint:
       'Войдите с email и паролем Super Admin (SUPER_ADMIN_EMAIL).',
     superAdminRoleRequired: 'Требуется роль super_admin',
@@ -217,6 +230,8 @@ export const ru = {
   settings: {
     title: 'Настройки',
     description: 'Профиль и безопасность учётной записи.',
+    profileDescription: 'Личные данные и статус Telegram.',
+    securityDescription: 'Смена пароля учётной записи.',
     name: 'Имя',
     employeeId: 'ID сотрудника',
     companyId: 'ID компании',
@@ -240,6 +255,51 @@ export const ru = {
     currentPasswordIncorrect: 'Неверный текущий пароль',
     passwordMinLength: 'Пароль должен содержать не менее 8 символов',
     passwordsMismatch: 'Пароли не совпадают',
+  },
+
+  companySettings: {
+    title: 'Настройки компании',
+    description: 'Профиль компании (только администратор).',
+    saved: 'Настройки компании сохранены.',
+    saveFailed: 'Не удалось сохранить настройки компании',
+    loadFailed: 'Не удалось загрузить компанию',
+  },
+
+  employeePortal: {
+    myOnboardingTitle: 'Мой онбординг',
+    myOnboardingDescription: 'Текущая программа и прогресс.',
+    program: 'Программа',
+    progress: 'Прогресс',
+    remaining: 'Осталось шагов',
+    currentStep: 'Текущий шаг',
+    programComplete: 'Программа завершена.',
+    viewActive: 'Активные назначения',
+    noActiveTitle: 'Нет активного онбординга',
+    noActiveDescription: 'Когда HR назначит программу, она появится здесь.',
+    activeTitle: 'Активные',
+    activeDescription: 'Ваши текущие назначения.',
+    started: 'Начало',
+    deadline: 'Срок',
+    historyTitle: 'История',
+    historyDescription: 'Завершённые программы онбординга.',
+    historyEmptyTitle: 'История пока пуста',
+    historyEmptyDescription: 'Завершённые назначения появятся здесь.',
+    completedAt: 'Завершено',
+    calendarTitle: 'Календарь',
+    calendarDescription: 'События по вашим назначениям.',
+    calendarEmptyTitle: 'Запланированных событий нет',
+    calendarEmptyDescription: 'Дедлайны и даты назначений появятся здесь.',
+    calToday: 'Сегодня',
+    calTomorrow: 'Завтра',
+    calWeek: 'Следующая неделя',
+    calStart: 'Начало: {title}',
+    calDeadline: 'Дедлайн: {title}',
+    calCompleted: 'Завершено: {title}',
+    companyTitle: 'Компания',
+    companyDescriptionPage: 'Информация о вашей компании.',
+    companyName: 'Компания',
+    companyDescription: 'Описание',
+    startDate: 'Дата начала',
   },
 
   resetPassword: {
@@ -288,6 +348,10 @@ export const ru = {
     openTelegram: 'Открыть Telegram',
     inviteTelegramMissing:
       'Telegram-ссылка недоступна: задайте TELEGRAM_BOT_USERNAME на сервере.',
+    inviteTelegramCreated: 'Персональная Telegram ссылка создана.',
+    telegramInviteSection: 'Telegram приглашение',
+    openTelegramInvite: 'Создать / обновить Telegram invite',
+    resendInviteFailed: 'Не удалось создать приглашение',
     inviteCopied: 'Скопировано: {label}',
     inviteCopyFailed: 'Не удалось скопировать',
     telegramOptionalHint: 'необязательно — bind через Telegram-ссылку',
@@ -533,6 +597,9 @@ export const ru = {
   },
 
   superAdmin: {
+    subscriptionsDescription:
+      'Подписки компаний. Откройте карточку компании для управления.',
+    openSubscription: 'Открыть',
     dashboard: {
       title: 'Главная платформы',
       description: 'Обзор системы для {name}.',

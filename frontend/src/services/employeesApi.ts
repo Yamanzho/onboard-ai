@@ -71,3 +71,10 @@ export async function initiatePasswordReset(
     body: {},
   })
 }
+
+export async function resendInvite(employeeId: string): Promise<Employee> {
+  return apiRequest<Employee>(`/api/v1/employees/${employeeId}/resend-invite`, {
+    method: 'POST',
+    body: {},
+  })
+}

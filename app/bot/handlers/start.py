@@ -11,6 +11,24 @@ from app.bot.keyboards.menu import main_menu_keyboard
 router = Router(name="start")
 
 
+def _invite_error_message(exc: OnboardApiError) -> str:
+    detail = str(exc).lower()
+    if "already used" in detail:
+        return "Это приглашение уже использовано."
+    if "expired" in detail:
+        return "Ссылка приглашения истекла."
+    if "already linked" in detail:
+        return "Этот Telegram аккаунт уже связан с другим профилем."
+    if "another telegram" in detail:
+        return "Этот профиль уже связан с другим Telegram аккаунтом."
+    return (
+        "Не удалось принять приглашение.\n"
+        "Ссылка могла истечь, уже использована, или это не приглашение "
+        "сотрудника.\n\n"
+        "Обратитесь к HR за новой ссылкой."
+    )
+
+
 @router.message(CommandStart())
 async def cmd_start(
     message: Message,
@@ -23,30 +41,27 @@ async def cmd_start(
     invite_token = (command.args or "").strip()
 
     if invite_token and message.from_user is not None:
+        # Drop any stale JWT cache before bind so we never keep another identity.
+        api.invalidate_session(message.from_user.id)
         try:
-            await api.accept_invite_via_telegram(
+            employee = await api.accept_invite_via_telegram(
                 token=invite_token,
                 telegram_user_id=message.from_user.id,
                 telegram_username=message.from_user.username,
                 telegram_chat_id=message.chat.id if message.chat else None,
             )
-        except OnboardApiError:
+        except OnboardApiError as exc:
             # Do not echo the invite token or leak invite/tenant details.
             await message.answer(
-                "Не удалось принять приглашение.\n"
-                "Ссылка могла истечь, уже использована, или это не приглашение "
-                "сотрудника.\n\n"
-                "Обратитесь к HR за новой ссылкой.",
+                _invite_error_message(exc),
                 reply_markup=main_menu_keyboard(),
             )
             return
 
+        display_name = escape(employee.full_name or name)
         await message.answer(
-            f"Добро пожаловать в OnboardAI 👋\n\n"
-            f"Ваш Telegram подключён к профилю сотрудника, "
-            f"{escape(name)}.\n\n"
-            f"Если онбординг уже назначен — откройте «📚 Мой онбординг».\n"
-            f"Если ещё не назначен — подождите, пока HR назначит программу.",
+            f"Добро пожаловать, {display_name}!\n\n"
+            "Выберите раздел в меню:",
             reply_markup=main_menu_keyboard(),
         )
         return
@@ -54,6 +69,6 @@ async def cmd_start(
     await message.answer(
         f"Привет, {escape(name)}!\n\n"
         "Я бот OnboardAI — помогу пройти онбординг.\n"
-        "Открой меню и выбери «📚 Мой онбординг».",
+        "Открой меню и выбери нужный раздел.",
         reply_markup=main_menu_keyboard(),
     )

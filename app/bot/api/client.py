@@ -248,6 +248,13 @@ class OnboardApiClient:
         _telegram_user_id_var.set(telegram_user_id)
         return True
 
+    def invalidate_session(self, telegram_user_id: int) -> None:
+        """Drop targeted JWT cache for one Telegram user (no Redis FLUSHDB)."""
+        self._token_cache.pop(telegram_user_id, None)
+        if _telegram_user_id_var.get() == telegram_user_id:
+            _access_token_var.set(None)
+            _telegram_user_id_var.set(None)
+
     def _store_tokens(
         self,
         telegram_user_id: int,

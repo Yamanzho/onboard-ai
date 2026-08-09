@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +16,12 @@ class EmployeeDTO(BaseModel):
     full_name: str
     role: str
     status: str
+    email: str | None = None
+    telegram_username: str | None = None
+    telegram_connected: bool = False
+    company_name: str | None = None
+    company_description: str | None = None
+    hired_at: date | None = None
 
 
 class AssignmentDTO(BaseModel):
@@ -27,6 +33,9 @@ class AssignmentDTO(BaseModel):
     program_id: UUID
     status: str
     assigned_at: datetime
+    due_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class ProgramDTO(BaseModel):

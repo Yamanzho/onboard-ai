@@ -4,17 +4,18 @@ import { ErrorAlert } from '../components/common/PageHeader'
 import { Button } from '../components/ui/Button'
 import { Input, Label } from '../components/ui/Field'
 import { useAuth } from '../hooks/useAuth'
+import { homePathForRole } from '../lib/navigation'
 import { t } from '../i18n'
 
 export function LoginPage() {
-  const { login, isAuthenticated, loading, error, clearError } = useAuth()
+  const { login, isAuthenticated, loading, error, clearError, user } = useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
 
   if (!loading && isAuthenticated) {
-    return <Navigate to="/dashboard" replace />
+    return <Navigate to={homePathForRole(user?.role)} replace />
   }
 
   async function onSubmit(e: FormEvent) {
@@ -22,8 +23,8 @@ export function LoginPage() {
     clearError()
     setSubmitting(true)
     try {
-      await login(email.trim(), password)
-      navigate('/dashboard', { replace: true })
+      const me = await login(email.trim(), password)
+      navigate(homePathForRole(me.role), { replace: true })
     } catch {
       // error shown via context
     } finally {

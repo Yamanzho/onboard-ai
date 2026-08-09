@@ -4,14 +4,13 @@ import { PageHeader } from '../components/common/PageHeader'
 import { Button } from '../components/ui/Button'
 import { Input, Label } from '../components/ui/Field'
 import { useAuth } from '../hooks/useAuth'
-import {
-  labelEmployeeRole,
-  t,
-} from '../i18n'
+import { labelEmployeeRole, t } from '../i18n'
 import { ApiError } from '../services/apiClient'
 import * as authApi from '../services/authApi'
 
-export function SettingsPage() {
+export type SettingsSection = 'profile' | 'security' | 'all'
+
+export function SettingsPage({ section = 'all' }: { section?: SettingsSection }) {
   const { user, refreshUser, logout } = useAuth()
   const navigate = useNavigate()
 
@@ -107,125 +106,166 @@ export function SettingsPage() {
     ? t('settings.telegramConnected')
     : t('settings.telegramNotConnected')
 
+  const showProfile = section === 'all' || section === 'profile'
+  const showSecurity = section === 'all' || section === 'security'
+
+  const title =
+    section === 'profile'
+      ? t('nav.profile')
+      : section === 'security'
+        ? t('nav.security')
+        : t('settings.title')
+  const description =
+    section === 'profile'
+      ? t('settings.profileDescription')
+      : section === 'security'
+        ? t('settings.securityDescription')
+        : t('settings.description')
+
   return (
     <div>
-      <PageHeader
-        title={t('settings.title')}
-        description={t('settings.description')}
-      />
+      <PageHeader title={title} description={description} />
 
       <div className="grid max-w-2xl gap-6">
-        <section className="rounded-lg border border-[var(--color-border)] bg-white p-5">
-          <h2 className="mb-4 text-base font-semibold">{t('settings.profileSection')}</h2>
-          <form onSubmit={(e) => void onSaveProfile(e)} className="space-y-4" noValidate>
-            {profileError ? (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {profileError}
-              </div>
+        {showProfile ? (
+          <section className="rounded-lg border border-[var(--color-border)] bg-white p-5">
+            {section === 'all' ? (
+              <h2 className="mb-4 text-base font-semibold">
+                {t('settings.profileSection')}
+              </h2>
             ) : null}
-            {profileSuccess ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                {profileSuccess}
+            <form
+              onSubmit={(e) => void onSaveProfile(e)}
+              className="space-y-4"
+              noValidate
+            >
+              {profileError ? (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {profileError}
+                </div>
+              ) : null}
+              {profileSuccess ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {profileSuccess}
+                </div>
+              ) : null}
+
+              <div>
+                <Label htmlFor="settings_full_name">{t('settings.name')}</Label>
+                <Input
+                  id="settings_full_name"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  maxLength={255}
+                  autoComplete="name"
+                  required
+                />
               </div>
-            ) : null}
 
-            <div>
-              <Label htmlFor="settings_full_name">{t('settings.name')}</Label>
-              <Input
-                id="settings_full_name"
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                maxLength={255}
-                autoComplete="name"
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="settings_email">{t('common.email')}</Label>
-              <Input
-                id="settings_email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                maxLength={320}
-                autoComplete="email"
-              />
-            </div>
-
-            <ReadOnlyRow
-              label={t('common.role')}
-              value={user?.role ? labelEmployeeRole(user.role) : t('common.emDash')}
-            />
-            <ReadOnlyRow
-              label={t('settings.company')}
-              value={user?.company_name ?? user?.company_id ?? t('common.emDash')}
-            />
-            <ReadOnlyRow label={t('settings.telegram')} value={telegramLabel} />
-
-            <Button type="submit" disabled={profilePending}>
-              {profilePending ? t('common.saving') : t('settings.saveChanges')}
-            </Button>
-          </form>
-        </section>
-
-        <section className="rounded-lg border border-[var(--color-border)] bg-white p-5">
-          <h2 className="mb-4 text-base font-semibold">{t('settings.securitySection')}</h2>
-          <form onSubmit={(e) => void onChangePassword(e)} className="space-y-4" noValidate>
-            {securityError ? (
-              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                {securityError}
+              <div>
+                <Label htmlFor="settings_email">{t('common.email')}</Label>
+                <Input
+                  id="settings_email"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  maxLength={320}
+                  autoComplete="email"
+                />
               </div>
+
+              <ReadOnlyRow
+                label={t('common.role')}
+                value={
+                  user?.role ? labelEmployeeRole(user.role) : t('common.emDash')
+                }
+              />
+              <ReadOnlyRow
+                label={t('settings.company')}
+                value={
+                  user?.company_name ?? user?.company_id ?? t('common.emDash')
+                }
+              />
+              <ReadOnlyRow label={t('settings.telegram')} value={telegramLabel} />
+
+              <Button type="submit" disabled={profilePending}>
+                {profilePending ? t('common.saving') : t('settings.saveChanges')}
+              </Button>
+            </form>
+          </section>
+        ) : null}
+
+        {showSecurity ? (
+          <section className="rounded-lg border border-[var(--color-border)] bg-white p-5">
+            {section === 'all' ? (
+              <h2 className="mb-4 text-base font-semibold">
+                {t('settings.securitySection')}
+              </h2>
             ) : null}
-            {securitySuccess ? (
-              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                {securitySuccess}
+            <form
+              onSubmit={(e) => void onChangePassword(e)}
+              className="space-y-4"
+              noValidate
+            >
+              {securityError ? (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {securityError}
+                </div>
+              ) : null}
+              {securitySuccess ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                  {securitySuccess}
+                </div>
+              ) : null}
+
+              <div>
+                <Label htmlFor="current_password">
+                  {t('settings.currentPassword')}
+                </Label>
+                <Input
+                  id="current_password"
+                  type="password"
+                  value={currentPassword}
+                  onChange={(e) => setCurrentPassword(e.target.value)}
+                  autoComplete="current-password"
+                  required
+                />
               </div>
-            ) : null}
+              <div>
+                <Label htmlFor="new_password">{t('settings.newPassword')}</Label>
+                <Input
+                  id="new_password"
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                />
+              </div>
+              <div>
+                <Label htmlFor="confirm_password">
+                  {t('settings.confirmPassword')}
+                </Label>
+                <Input
+                  id="confirm_password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                  required
+                  minLength={8}
+                />
+              </div>
 
-            <div>
-              <Label htmlFor="current_password">{t('settings.currentPassword')}</Label>
-              <Input
-                id="current_password"
-                type="password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                autoComplete="current-password"
-                required
-              />
-            </div>
-            <div>
-              <Label htmlFor="new_password">{t('settings.newPassword')}</Label>
-              <Input
-                id="new_password"
-                type="password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                autoComplete="new-password"
-                required
-                minLength={8}
-              />
-            </div>
-            <div>
-              <Label htmlFor="confirm_password">{t('settings.confirmPassword')}</Label>
-              <Input
-                id="confirm_password"
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                autoComplete="new-password"
-                required
-                minLength={8}
-              />
-            </div>
-
-            <Button type="submit" disabled={securityPending}>
-              {securityPending
-                ? t('settings.changingPassword')
-                : t('settings.changePassword')}
-            </Button>
-          </form>
-        </section>
+              <Button type="submit" disabled={securityPending}>
+                {securityPending
+                  ? t('settings.changingPassword')
+                  : t('settings.changePassword')}
+              </Button>
+            </form>
+          </section>
+        ) : null}
       </div>
     </div>
   )
@@ -234,7 +274,9 @@ export function SettingsPage() {
 function ReadOnlyRow({ label, value }: { label: string; value: string }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-[var(--color-muted)]">{label}</dt>
+      <dt className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
+        {label}
+      </dt>
       <dd className="mt-0.5 break-all text-sm font-medium">{value}</dd>
     </div>
   )

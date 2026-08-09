@@ -793,6 +793,7 @@ def _current_user_response(
     employee: Employee,
     *,
     company_name: str | None = None,
+    company_description: str | None = None,
 ) -> CurrentUserResponse:
     base = CurrentUserResponse.model_validate(employee)
     return base.model_copy(
@@ -801,6 +802,8 @@ def _current_user_response(
                 employee.telegram_username or employee.telegram_chat_id
             ),
             "company_name": company_name,
+            "company_description": company_description,
+            "hired_at": employee.hired_at,
         }
     )
 
@@ -862,8 +865,12 @@ async def me(
     current_user: CurrentUser,
     employees: EmployeeServiceDep,
 ) -> CurrentUserResponse:
-    company_name = await employees.get_company_name(current_user.company_id)
-    return _current_user_response(current_user, company_name=company_name)
+    summary = await employees.get_company_summary(current_user.company_id)
+    return _current_user_response(
+        current_user,
+        company_name=summary["name"] if summary else None,
+        company_description=summary["description"] if summary else None,
+    )
 
 
 @router.patch(
@@ -909,8 +916,12 @@ async def update_me(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=exc.message,
         ) from exc
-    company_name = await employees.get_company_name(employee.company_id)
-    return _current_user_response(employee, company_name=company_name)
+    summary = await employees.get_company_summary(employee.company_id)
+    return _current_user_response(
+        employee,
+        company_name=summary["name"] if summary else None,
+        company_description=summary["description"] if summary else None,
+    )
 
 
 @router.post(
@@ -971,8 +982,12 @@ async def confirm_password_reset(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    company_name = await employees.get_company_name(employee.company_id)
-    return _current_user_response(employee, company_name=company_name)
+    summary = await employees.get_company_summary(employee.company_id)
+    return _current_user_response(
+        employee,
+        company_name=summary["name"] if summary else None,
+        company_description=summary["description"] if summary else None,
+    )
 
 
 @router.post(

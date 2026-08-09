@@ -1,5 +1,6 @@
 from aiogram import Router
 
+from app.bot.handlers.cabinet import router as cabinet_router
 from app.bot.handlers.onboarding import router as onboarding_router
 from app.bot.handlers.start import router as start_router
 
@@ -12,5 +13,6 @@ def get_handlers_router() -> Router:
         root = Router(name="bot_handlers")
         root.include_router(start_router)
         root.include_router(onboarding_router)
+        root.include_router(cabinet_router)
         _handlers_router = root
     return _handlers_router

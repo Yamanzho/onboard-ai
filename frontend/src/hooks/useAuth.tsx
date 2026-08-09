@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { t } from '../i18n'
-import { canAccessAdminPanel } from '../lib/roles'
+import { canAccessTenantPanel } from '../lib/roles'
 import { ApiError } from '../services/apiClient'
 import * as authApi from '../services/authApi'
 import type { CurrentUser } from '../types/auth'
@@ -18,7 +18,7 @@ export interface AuthContextValue {
   loading: boolean
   error: string | null
   isAuthenticated: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<CurrentUser>
   logout: () => void
   refreshUser: () => Promise<void>
   clearError: () => void
@@ -39,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const loadMe = useCallback(async () => {
     try {
       const me = await authApi.fetchMe()
-      if (!canAccessAdminPanel(me.role)) {
+      if (!canAccessTenantPanel(me.role)) {
         await authApi.logout().catch(() => undefined)
         setUser(null)
         setError(t('auth.roleRequired'))
@@ -62,12 +62,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       await authApi.login(email.trim(), password)
       const me = await authApi.fetchMe()
-      if (!canAccessAdminPanel(me.role)) {
+      if (!canAccessTenantPanel(me.role)) {
         await authApi.logout().catch(() => undefined)
         setUser(null)
         throw new Error(t('auth.roleRequired'))
       }
       setUser(me)
+      return me
     } catch (err) {
       setUser(null)
       if (err instanceof ApiError) {

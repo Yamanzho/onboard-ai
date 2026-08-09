@@ -23,6 +23,8 @@ export interface CurrentUser {
   telegram_username: string | null
   telegram_connected?: boolean
   company_name?: string | null
+  company_description?: string | null
+  hired_at?: string | null
   created_at: string
   updated_at: string
 }

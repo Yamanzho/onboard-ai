@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -65,6 +65,8 @@ class CurrentUserResponse(BaseModel):
     telegram_username: str | None
     telegram_connected: bool = False
     company_name: str | None = None
+    company_description: str | None = None
+    hired_at: date | None = None
     created_at: datetime
     updated_at: datetime
 

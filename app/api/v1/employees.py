@@ -212,6 +212,46 @@ async def initiate_password_reset(
     )
 
 
+@router.post(
+    "/{employee_id}/resend-invite",
+    response_model=EmployeeResponse,
+    summary="Resend employee invite",
+    description=(
+        "Invalidate prior unused invites and issue a new invite for an INVITED "
+        "employee. Returns invite_url / telegram_invite_url (token never logged)."
+    ),
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def resend_employee_invite(
+    employee_id: UUID,
+    current_user: HRUser,
+    service: ServiceDep,
+) -> EmployeeResponse:
+    delivery = await service.resend_invite(
+        employee_id=employee_id,
+        company_id=current_user.company_id,
+        actor_role=current_user.role,
+    )
+    employee = await service.get_employee(
+        employee_id,
+        company_id=current_user.company_id,
+    )
+    response = EmployeeResponse.model_validate(employee)
+    return response.model_copy(
+        update={
+            "invite_email_sent": delivery.email_sent,
+            "invite_delivery": delivery.delivery,
+            "invite_url": delivery.invite_url,
+            "invite_detail": delivery.detail,
+            "telegram_invite_url": delivery.telegram_invite_url,
+        }
+    )
+
+
 @router.delete(
     "/{employee_id}",
     status_code=status.HTTP_204_NO_CONTENT,

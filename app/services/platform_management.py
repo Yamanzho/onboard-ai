@@ -282,9 +282,9 @@ class InviteService(PlatformAuditMixin):
             if invite is None:
                 raise NotFoundError(invalid_msg)
             if invite.used_at is not None:
-                raise ValidationError(invalid_msg)
+                raise ValidationError("Invite already used")
             if invite.expires_at < datetime.now(UTC):
-                raise ValidationError(invalid_msg)
+                raise ValidationError("Invite expired")
             if invite.purpose != InvitePurpose.EMPLOYEE.value:
                 # HR/Admin must use web password accept — never Telegram.
                 raise ValidationError(invalid_msg)
@@ -300,6 +300,14 @@ class InviteService(PlatformAuditMixin):
                 and employee.company_id != expected_company_id
             ):
                 raise ValidationError(invalid_msg)
+
+            # Never auto-rebind: employee already linked to a different Telegram.
+            already_connected = bool(
+                employee.telegram_chat_id is not None
+                or (employee.telegram_username and employee.telegram_username.strip())
+            )
+            if already_connected and employee.telegram_user_id != telegram_user_id:
+                raise ConflictError("Employee already linked to another Telegram account")
 
             # Uniqueness: another employee in this company already owns this TG.
             await uow.enter_tenant(employee.company_id)

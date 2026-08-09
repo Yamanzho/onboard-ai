@@ -102,6 +102,9 @@ export function EmployeeCreatePage() {
           {created.telegram_invite_url ? (
             <div className="space-y-2">
               <p className="font-medium">{t('employees.inviteTelegramUrl')}</p>
+              <p className="text-[var(--color-muted)]">
+                {t('employees.inviteTelegramCreated')}
+              </p>
               <code className="block break-all rounded bg-[var(--color-bg)] p-2 text-xs">
                 {created.telegram_invite_url}
               </code>

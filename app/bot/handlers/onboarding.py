@@ -14,6 +14,8 @@ from app.bot.states.onboarding import OnboardingStates
 
 router = Router(name="onboarding")
 
+_DONE_STATUSES = frozenset({"completed", "skipped"})
+
 _STATUS_LABELS = {
     "not_started": "не начат",
     "in_progress": "в процессе",
@@ -130,6 +132,26 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
         return
 
     try:
+        program = await api.get_program(assignment.program_id)
+        progress = await api.get_progress(assignment.id)
+        done = sum(1 for i in progress.items if i.status in _DONE_STATUSES)
+        total = len(progress.items)
+        remaining = max(0, total - done)
+        current = api.first_incomplete_step(progress)
+        step_title = (
+            current[1].step.title
+            if current and current[1].step is not None
+            else "—"
+        )
+        overview = (
+            f"📚 <b>Ваш онбординг</b>\n\n"
+            f"Программа: {escape(program.title)}\n"
+            f"Прогресс: {done} / {total}\n"
+            f"{progress.percentage:.0f}%\n"
+            f"Осталось: {remaining}\n\n"
+            f"Текущий шаг:\n{escape(step_title)}"
+        )
+        await message.answer(overview)
         await _show_current_step(
             message=message,
             api=api,

@@ -2,20 +2,12 @@ import { NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { Button } from '../components/ui/Button'
 import { labelEmployeeRole, t } from '../i18n'
-
-const nav = [
-  { to: '/dashboard', labelKey: 'nav.dashboard' },
-  { to: '/knowledge/articles', labelKey: 'nav.knowledgeBase' },
-  { to: '/knowledge/categories', labelKey: 'nav.categories' },
-  { to: '/knowledge/tags', labelKey: 'nav.tags' },
-  { to: '/employees', labelKey: 'nav.employees' },
-  { to: '/onboarding', labelKey: 'nav.onboarding' },
-  { to: '/assignments', labelKey: 'nav.assignments' },
-  { to: '/settings', labelKey: 'nav.settings' },
-] as const
+import { navForRole } from '../lib/navigation'
+import { panelLabelKey } from '../lib/roles'
 
 export function AppLayout() {
   const { user, logout } = useAuth()
+  const nav = navForRole(user?.role)
 
   return (
     <div className="flex min-h-screen">
@@ -24,13 +16,15 @@ export function AppLayout() {
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-teal-300">
             {t('app.brand')}
           </p>
-          <p className="mt-1 text-sm text-slate-400">{t('app.admin')}</p>
+          <p className="mt-1 text-sm text-slate-400">
+            {t(panelLabelKey(user?.role))}
+          </p>
         </div>
         <nav className="flex flex-1 flex-col gap-1 p-3">
           {nav.map((item) => (
             <NavLink
-              key={item.to}
-              to={item.to}
+              key={`${item.path}:${item.labelKey}`}
+              to={item.path}
               className={({ isActive }) =>
                 `rounded-md px-3 py-2 text-sm transition ${
                   isActive

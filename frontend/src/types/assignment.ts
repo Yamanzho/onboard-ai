@@ -44,6 +44,7 @@ export interface ProgressItem {
   completed_at: string | null
   created_at: string
   updated_at: string
+  step?: { title: string; description?: string | null } | null
 }
 
 export interface AssignmentProgress {

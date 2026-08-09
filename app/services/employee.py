@@ -276,10 +276,23 @@ class EmployeeService:
             return updated
 
     async def get_company_name(self, company_id: UUID) -> str | None:
+        summary = await self.get_company_summary(company_id)
+        return summary["name"] if summary else None
+
+    async def get_company_summary(
+        self,
+        company_id: UUID,
+    ) -> dict[str, str | None] | None:
+        """Return safe company fields for the authenticated employee's own tenant."""
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
-            return company.name if company else None
+            if company is None:
+                return None
+            return {
+                "name": company.name,
+                "description": company.description,
+            }
 
     async def update_employee(
         self,
@@ -458,6 +471,53 @@ class EmployeeService:
         _logger.info(
             "password_reset_initiated employee_id=%s company_id=%s actor_role=%s "
             "delivery=%s",
+            employee_id,
+            company_id,
+            actor_role,
+            delivery.delivery,
+        )
+        return delivery
+
+    async def resend_invite(
+        self,
+        *,
+        employee_id: UUID,
+        company_id: UUID,
+        actor_role: str,
+    ) -> InviteEmailResult:
+        """Re-issue invite for an INVITED employee (new token; prior unused invalidated)."""
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            employee = await uow.employees.get_by_id(employee_id)
+            if employee is None:
+                raise NotFoundError(f"Employee {employee_id} not found")
+            ensure_same_company(
+                resource_company_id=employee.company_id,
+                actor_company_id=company_id,
+                not_found_message=f"Employee {employee_id} not found",
+            )
+            self._assert_can_manage_target(
+                actor_role=actor_role,
+                target_role=employee.role,
+            )
+            if employee.status != EmployeeStatus.INVITED.value:
+                raise ValidationError("Invite can only be resent for invited employees")
+            if not employee.email or not employee.email.strip():
+                raise ValidationError("Employee email is required to resend invite")
+            company = await uow.companies.get_by_id(company_id)
+            if company is None:
+                raise NotFoundError(f"Company {company_id} not found")
+            company_name = company.name
+            snapshot = employee
+
+        delivery = await self._invites.create_and_send_invite(
+            employee=snapshot,
+            invited_email=employee.email.strip().lower(),
+            company_name=company_name,
+            use_platform_rls=True,
+        )
+        _logger.info(
+            "invite_resent employee_id=%s company_id=%s actor_role=%s delivery=%s",
             employee_id,
             company_id,
             actor_role,
