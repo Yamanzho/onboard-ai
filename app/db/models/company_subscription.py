@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +31,13 @@ class CompanySubscription(Base, TimestampMixin):
         CheckConstraint(
             "payment_status IN ('unpaid', 'paid', 'past_due')",
             name="ck_company_subscriptions_payment_status",
+        ),
+        # P0-06: at most one current subscription per company (DB-enforced).
+        Index(
+            "uq_company_subscriptions_company_id_current",
+            "company_id",
+            unique=True,
+            postgresql_where=text("is_current IS TRUE"),
         ),
     )
 

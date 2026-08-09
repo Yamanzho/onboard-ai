@@ -12,6 +12,7 @@ class KnowledgeTagRepository(BaseRepository[KnowledgeTag]):
         super().__init__(session, KnowledgeTag)
 
     async def get_by_slug(self, company_id: UUID, slug: str) -> KnowledgeTag | None:
+        self._ensure_rls_context()
         stmt = select(KnowledgeTag).where(
             KnowledgeTag.company_id == company_id,
             KnowledgeTag.slug == slug,
@@ -26,6 +27,7 @@ class KnowledgeTagRepository(BaseRepository[KnowledgeTag]):
         offset: int = 0,
         limit: int = 100,
     ) -> list[KnowledgeTag]:
+        self._ensure_rls_context()
         stmt = self._company_list_statement(company_id, offset=offset, limit=limit)
         result = await self._session.scalars(stmt)
         return list(result.all())
@@ -38,6 +40,7 @@ class KnowledgeTagRepository(BaseRepository[KnowledgeTag]):
         offset: int = 0,
         limit: int = 100,
     ) -> list[KnowledgeTag]:
+        self._ensure_rls_context()
         if offset < 0:
             raise ValueError("offset must be >= 0")
         if limit < 1 or limit > _MAX_LIST_LIMIT:

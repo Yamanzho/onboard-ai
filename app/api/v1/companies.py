@@ -1,12 +1,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import AdminUser
+from app.api.auth_deps import AdminUser, CurrentUser
 from app.api.deps import get_company_service
 from app.api.v1.responses import ERROR_RESPONSES
-from app.schemas.company import CompanyCreate, CompanyResponse, CompanyUpdate
+from app.schemas.company import CompanyResponse, CompanyUpdate
 from app.services.company import CompanyService
 
 router = APIRouter(prefix="/companies", tags=["Companies"])
@@ -15,7 +15,9 @@ ServiceDep = Annotated[CompanyService, Depends(get_company_service)]
 
 _AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"},
-    status.HTTP_403_FORBIDDEN: {"description": "Admin role required"},
+    status.HTTP_403_FORBIDDEN: {
+        "description": "Admin role required, or platform-only tenant lifecycle operation",
+    },
 }
 
 
@@ -81,43 +83,28 @@ async def get_company(
 
 @router.post(
     "",
-    response_model=CompanyResponse,
-    status_code=status.HTTP_201_CREATED,
-    summary="Create company",
+    summary="Create company (forbidden for tenants)",
     description=(
-        "Create a new company tenant. Slug must be unique. "
-        "Note: this is a platform bootstrap operation (creates a new tenant)."
+        "Tenant creation is a platform-only operation. "
+        "Authenticated tenant users always receive 403. "
+        "Use ``POST /api/v1/super-admin/companies`` as Super Admin."
     ),
-    responses={
-        **_AUTH_RESPONSES,
-        status.HTTP_409_CONFLICT: ERROR_RESPONSES[status.HTTP_409_CONFLICT],
-        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
-            status.HTTP_422_UNPROCESSABLE_CONTENT
-        ],
-        status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
-            status.HTTP_500_INTERNAL_SERVER_ERROR
-        ],
-    },
+    responses={**_AUTH_RESPONSES},
 )
-async def create_company(
-    payload: CompanyCreate,
-    _: AdminUser,
-    service: ServiceDep,
-) -> CompanyResponse:
-    company = await service.create_company(
-        name=payload.name,
-        slug=payload.slug,
-        timezone=payload.timezone,
-        settings=payload.settings,
-    )
-    return CompanyResponse.model_validate(company)
+async def create_company(_: CurrentUser, service: ServiceDep) -> None:
+    """Deny tenant-scoped creation; service enforces platform-only lifecycle."""
+    await service.create_company(name="forbidden", slug="forbidden")
 
 
 @router.patch(
     "/{company_id}",
     response_model=CompanyResponse,
     summary="Update company",
-    description="Partially update the caller's own company. Cross-tenant IDs return 404.",
+    description=(
+        "Partially update the caller's own company profile. "
+        "Tenant activation/deactivation and hard delete are platform-only. "
+        "Cross-tenant IDs return 404."
+    ),
     responses={
         **_AUTH_RESPONSES,
         status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
@@ -147,27 +134,22 @@ async def update_company(
 
 @router.delete(
     "/{company_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete company",
-    description="Delete the caller's own company. Cross-tenant IDs return 404.",
-    responses={
-        **_AUTH_RESPONSES,
-        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
-        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
-            status.HTTP_422_UNPROCESSABLE_CONTENT
-        ],
-        status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
-            status.HTTP_500_INTERNAL_SERVER_ERROR
-        ],
-    },
+    summary="Delete company (forbidden for tenants)",
+    description=(
+        "Hard delete is a platform-only operation. "
+        "Authenticated tenant users always receive 403. "
+        "Super Admins should deactivate via "
+        "``POST /api/v1/super-admin/companies/{id}/deactivate``."
+    ),
+    responses={**_AUTH_RESPONSES},
 )
 async def delete_company(
     company_id: UUID,
-    current_user: AdminUser,
+    current_user: CurrentUser,
     service: ServiceDep,
-) -> Response:
+) -> None:
+    """Deny tenant-scoped deletion; service enforces platform-only lifecycle."""
     await service.delete_company(
         company_id,
         actor_company_id=current_user.company_id,
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)

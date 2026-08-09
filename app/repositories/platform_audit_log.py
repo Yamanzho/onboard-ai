@@ -18,6 +18,7 @@ class PlatformAuditLogRepository(BaseRepository[PlatformAuditLog]):
         limit: int = 100,
         company_id: UUID | None = None,
     ) -> list[PlatformAuditLog]:
+        self._ensure_rls_context()
         stmt = select(PlatformAuditLog).order_by(PlatformAuditLog.created_at.desc())
         if company_id is not None:
             stmt = stmt.where(PlatformAuditLog.company_id == company_id)

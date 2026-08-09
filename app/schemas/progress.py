@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.schemas.limits import (
+    MAX_PROGRESS_PAYLOAD_JSON_BYTES,
+    ensure_json_object_within_limit,
+)
 
 
 class ProgressCompleteRequest(BaseModel):
@@ -14,8 +19,25 @@ class ProgressCompleteRequest(BaseModel):
 
     payload: dict[str, Any] | None = Field(
         default=None,
-        description="Optional completion payload (quiz answers, ack metadata, etc.).",
+        description=(
+            "Optional completion payload (quiz answers, ack metadata, etc.); "
+            f"max {MAX_PROGRESS_PAYLOAD_JSON_BYTES} serialized UTF-8 bytes."
+        ),
     )
+
+    @field_validator("payload")
+    @classmethod
+    def limit_payload_size(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return value
+        return ensure_json_object_within_limit(
+            value,
+            max_bytes=MAX_PROGRESS_PAYLOAD_JSON_BYTES,
+            field_name="payload",
+        )
 
 
 class ProgressResponse(BaseModel):

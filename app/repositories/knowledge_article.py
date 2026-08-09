@@ -15,6 +15,7 @@ class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
         super().__init__(session, KnowledgeArticle)
 
     async def get_by_id_with_relations(self, article_id: UUID) -> KnowledgeArticle | None:
+        self._ensure_rls_context()
         stmt = (
             select(KnowledgeArticle)
             .where(KnowledgeArticle.id == article_id)
@@ -41,6 +42,7 @@ class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
         limit: int = 100,
         with_relations: bool = False,
     ) -> list[KnowledgeArticle]:
+        self._ensure_rls_context()
         stmt = self._company_list_statement(
             company_id,
             status=status,

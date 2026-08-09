@@ -1,4 +1,4 @@
-import type { TokenResponse } from '../types/auth'
+import type { BrowserSessionResponse } from '../types/auth'
 import type {
   CompanyLimits,
   CompanySubscription,
@@ -22,8 +22,8 @@ import { superAdminRequest } from './superAdminApiClient'
 export async function login(
   email: string,
   password: string,
-): Promise<TokenResponse> {
-  return superAdminRequest<TokenResponse>('/api/v1/super-admin/auth/login', {
+): Promise<BrowserSessionResponse> {
+  return superAdminRequest<BrowserSessionResponse>('/api/v1/super-admin/auth/login', {
     method: 'POST',
     auth: false,
     body: { email, password },
@@ -32,6 +32,14 @@ export async function login(
 
 export async function fetchMe(): Promise<SuperAdminUser> {
   return superAdminRequest<SuperAdminUser>('/api/v1/super-admin/auth/me')
+}
+
+export async function logout(): Promise<void> {
+  await superAdminRequest<void>('/api/v1/super-admin/auth/logout', {
+    method: 'POST',
+    auth: false,
+    body: {},
+  })
 }
 
 export async function fetchDashboard(): Promise<PlatformDashboardStats> {

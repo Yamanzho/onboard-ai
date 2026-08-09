@@ -10,8 +10,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
-from app.core.exceptions import ConflictError, NotFoundError, ValidationError
-from app.core.security import hash_password, verify_password
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError, ValidationError
+from app.core.security import hash_password, password_hash_needs_upgrade, verify_password
 from app.db.enums import (
     AssignmentStatus,
     EmployeeRole,
@@ -48,6 +48,7 @@ from app.schemas.super_admin import (
     SuperAdminCompanyDetail,
     SuperAdminCompanyProfileUpdate,
 )
+from app.services.refresh_session import SUBJECT_EMPLOYEE
 from app.services.platform_management import (
     InviteService,
     PlatformAuditMixin,
@@ -72,16 +73,26 @@ class SuperAdminAuthService:
         self._uow_factory = uow_factory or UnitOfWork
 
     async def authenticate(self, *, email: str, password: str) -> SuperAdmin:
+        normalized = email.strip().lower()
         async with self._uow_factory() as uow:
-            admin = await uow.super_admins.get_by_email(email.strip().lower())
+            # Pin email so auth RLS cannot enumerate other Super Admins.
+            await uow.enter_auth_bootstrap(super_admin_email=normalized)
+            admin = await uow.super_admins.get_by_email(normalized)
             if admin is None or not verify_password(password, admin.password_hash):
                 raise NotFoundError("Invalid credentials")
             if not admin.is_active:
                 raise ValidationError("Super Admin account is disabled")
+            # Transparent PBKDF2 → Argon2id (or param) upgrade under the same pin.
+            if password_hash_needs_upgrade(admin.password_hash):
+                admin.password_hash = hash_password(password)
+                await uow.session.flush()
+                await uow.commit()
             return admin
 
     async def get_by_id(self, admin_id: UUID) -> SuperAdmin:
         async with self._uow_factory() as uow:
+            # Pin subject id so auth RLS cannot enumerate other Super Admins.
+            await uow.enter_auth_bootstrap(super_admin_id=admin_id)
             admin = await uow.super_admins.get_by_id(admin_id)
             if admin is None:
                 raise NotFoundError(f"Super Admin {admin_id} not found")
@@ -98,6 +109,7 @@ class SuperAdminAuthService:
     ) -> SuperAdmin:
         normalized = email.strip().lower()
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             existing = await uow.super_admins.get_by_email(normalized)
             if existing is not None:
                 return existing
@@ -126,6 +138,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
 
     async def get_dashboard_stats(self) -> PlatformDashboardStats:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             companies_count = await uow.session.scalar(
                 select(func.count()).select_from(Company)
             )
@@ -185,6 +198,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         is_active: bool | None = None,
     ) -> list[Company]:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             stmt = select(Company).order_by(Company.created_at.desc())
             if is_active is not None:
                 stmt = stmt.where(Company.is_active.is_(is_active))
@@ -194,14 +208,27 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
 
     async def get_company(self, company_id: UUID) -> SuperAdminCompanyDetail:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
             usage = await self._usage_counts(uow, company_id)
             subscription = await uow.company_subscriptions.get_current_for_company(company_id)
             if subscription is None:
-                subscription = await self._create_subscription(uow, company_id=company_id)
-                await uow.commit()
+                try:
+                    subscription = await self._create_subscription(uow, company_id=company_id)
+                    await uow.commit()
+                except IntegrityError:
+                    # Concurrent bootstrap for the same company — unique partial
+                    # index rejected a second current row; use the winner.
+                    await uow.rollback()
+                    subscription = await uow.company_subscriptions.get_current_for_company(
+                        company_id
+                    )
+                    if subscription is None:
+                        raise ConflictError(
+                            "Company subscription could not be created; retry"
+                        ) from None
             return SuperAdminCompanyDetail(
                 id=company.id,
                 name=company.name,
@@ -246,8 +273,11 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             raise ValidationError("admin_telegram_user_id must be a positive integer")
         if not admin_email:
             raise ValidationError("admin_email is required to send an invite")
+        if not self.get_settings().allow_new_companies:
+            raise ForbiddenError("Creating new companies is disabled by platform settings")
 
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             try:
                 company = await uow.companies.create(
                     Company(
@@ -306,12 +336,14 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
     async def update_company(self, company_id: UUID, **values: Any) -> Company:
         if not values:
             async with self._uow_factory() as uow:
+                await uow.enter_platform()
                 company = await uow.companies.get_by_id(company_id)
                 if company is None:
                     raise NotFoundError(f"Company {company_id} not found")
                 return company
 
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -334,6 +366,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
     ) -> SuperAdminCompanyDetail:
         values = payload.model_dump(exclude_unset=True)
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -360,6 +393,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         super_admin_id: UUID | None = None,
     ) -> Company:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -384,6 +418,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
 
     async def get_subscription(self, company_id: UUID) -> CompanySubscriptionResponse:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -404,6 +439,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             return await self.get_subscription(company_id)
 
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             subscription = await uow.company_subscriptions.get_current_for_company(company_id)
             if subscription is None:
                 raise NotFoundError("Subscription not found")
@@ -469,6 +505,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         limit: int = 100,
     ) -> list[SubscriptionHistoryResponse]:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -487,6 +524,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         limit: int = 100,
     ) -> list[CompanySubscriptionResponse]:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             subs = await uow.company_subscriptions.list_for_company(
                 company_id,
                 offset=offset,
@@ -496,6 +534,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
 
     async def get_company_limits(self, company_id: UUID) -> CompanyLimitsResponse:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -513,6 +552,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         status: str | None = None,
     ) -> list[PlatformUserResponse]:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -541,6 +581,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             raise ValidationError(f"Invalid role {payload.role!r}")
 
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -591,12 +632,17 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         super_admin_id: UUID | None = None,
     ) -> None:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             employee = await uow.employees.get_by_id(employee_id)
             if employee is None:
                 raise NotFoundError(f"Employee {employee_id} not found")
             company = await uow.companies.get_by_id(employee.company_id)
             if company is None:
                 raise NotFoundError("Company not found")
+            if employee.status != EmployeeStatus.INVITED.value:
+                raise ValidationError(
+                    "Onboarding invites can only be resent to invited employees"
+                )
             if not employee.email:
                 raise ValidationError("Employee has no email for invite")
             await self._record_audit(
@@ -631,6 +677,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
                 f"Invalid role filter {role!r}; expected one of {sorted(_MANAGEMENT_ROLES)}"
             )
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             stmt = (
                 select(Employee, Company.name, Company.slug)
                 .join(Company, Company.id == Employee.company_id)
@@ -684,12 +731,19 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             raise ValidationError("No fields to update")
 
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             employee = await uow.employees.get_by_id(employee_id)
             if employee is None:
                 raise NotFoundError(f"Employee {employee_id} not found")
             updated = await uow.employees.update(employee_id, **values)
             if updated is None:
                 raise NotFoundError(f"Employee {employee_id} not found")
+            # Super Admin block / archive: revoke this subject's refresh sessions only.
+            if values.get("status") == EmployeeStatus.ARCHIVED.value:
+                await uow.refresh_sessions.revoke_all_for_subject(
+                    subject_type=SUBJECT_EMPLOYEE,
+                    subject_id=employee_id,
+                )
             company = await uow.companies.get_by_id(updated.company_id)
             await self._record_audit(
                 uow,
@@ -716,6 +770,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             super_admin_id=super_admin_id,
         )
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             await self._record_audit(
                 uow,
                 super_admin_id=super_admin_id,
@@ -736,6 +791,7 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
         company_id: UUID | None = None,
     ) -> list[PlatformAuditLogResponse]:
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
             logs = await uow.platform_audit_logs.list_recent(
                 offset=offset,
                 limit=limit,

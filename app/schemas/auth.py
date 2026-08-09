@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TokenResponse(BaseModel):
-    """JWT token pair returned by login/refresh."""
+    """JWT token pair returned by bot/service auth flows."""
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -20,14 +20,33 @@ class TokenResponse(BaseModel):
     )
 
     access_token: str = Field(description="Short-lived JWT access token.")
-    refresh_token: str = Field(description="Long-lived JWT refresh token.")
+    refresh_token: str = Field(description="Opaque refresh token.")
+    token_type: str = Field(default="bearer", description="Always 'bearer'.")
+
+
+class BrowserSessionResponse(BaseModel):
+    """Cookie-only browser auth acknowledgement (no raw tokens in JSON)."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "token_type": "bearer",
+                }
+            ]
+        }
+    )
+
     token_type: str = Field(default="bearer", description="Always 'bearer'.")
 
 
 class RefreshRequest(BaseModel):
-    """Refresh token payload."""
+    """Refresh token payload (optional when httpOnly cookie is present)."""
 
-    refresh_token: str = Field(description="Refresh JWT issued by /auth/login.")
+    refresh_token: str | None = Field(
+        default=None,
+        description="Opaque refresh token from login (or omit and use cookie).",
+    )
 
 
 class CurrentUserResponse(BaseModel):
@@ -72,3 +91,10 @@ class BotTelegramLoginResponse(TokenResponse):
     """JWT pair plus the employee resolved from Telegram identity."""
 
     employee: CurrentUserResponse
+
+
+class PasswordChangeRequest(BaseModel):
+    """Authenticated employee password change."""
+
+    current_password: str = Field(..., min_length=1, max_length=256)
+    new_password: str = Field(..., min_length=8, max_length=256)

@@ -36,6 +36,7 @@ class TagService:
             raise ValidationError(str(exc)) from exc
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -71,6 +72,7 @@ class TagService:
         company_id: UUID,
     ) -> KnowledgeTag:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             tag = await uow.knowledge_tags.get_by_id(tag_id)
             if tag is None:
                 raise NotFoundError(f"Knowledge tag {tag_id} not found")
@@ -96,6 +98,7 @@ class TagService:
             not_found_message=f"Company {company_id} not found",
         )
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -125,6 +128,7 @@ class TagService:
             raise ValidationError(f"Cannot update fields via update_tag: {sorted(extra)}")
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             tag = await uow.knowledge_tags.get_by_id(tag_id)
             if tag is None:
                 raise NotFoundError(f"Knowledge tag {tag_id} not found")

@@ -29,6 +29,7 @@ class StepService:
     ) -> list[Step]:
         """List steps for a program within the caller's tenant, ordered by position."""
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             program = await uow.onboarding_programs.get_by_id(program_id)
             if program is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
@@ -64,6 +65,7 @@ class StepService:
             raise ValidationError("estimated_minutes must be >= 0")
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             program = await uow.onboarding_programs.get_by_id(program_id)
             if program is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
@@ -82,6 +84,7 @@ class StepService:
             try:
                 step = await uow.steps.create(
                     Step(
+                        company_id=program.company_id,
                         program_id=program_id,
                         title=title,
                         description=description,
@@ -125,6 +128,7 @@ class StepService:
                 raise ValidationError("estimated_minutes must be >= 0")
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             step = await uow.steps.get_by_id(step_id)
             if step is None:
                 raise NotFoundError(f"Step {step_id} not found")
@@ -155,6 +159,7 @@ class StepService:
             raise ValidationError("step_ids must be unique")
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             program = await uow.onboarding_programs.get_by_id(program_id)
             if program is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
@@ -196,6 +201,7 @@ class StepService:
         company_id: UUID,
     ) -> None:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             step = await uow.steps.get_by_id(step_id)
             if step is None:
                 raise NotFoundError(f"Step {step_id} not found")

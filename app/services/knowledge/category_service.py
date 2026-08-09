@@ -38,6 +38,7 @@ class CategoryService:
             raise ValidationError(str(exc)) from exc
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -78,6 +79,7 @@ class CategoryService:
         company_id: UUID,
     ) -> KnowledgeCategory:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             category = await uow.knowledge_categories.get_by_id(category_id)
             if category is None:
                 raise NotFoundError(f"Knowledge category {category_id} not found")
@@ -104,6 +106,7 @@ class CategoryService:
             not_found_message=f"Company {company_id} not found",
         )
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -128,6 +131,7 @@ class CategoryService:
             raise ValidationError(f"Cannot update fields via update_category: {sorted(extra)}")
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             category = await uow.knowledge_categories.get_by_id(category_id)
             if category is None:
                 raise NotFoundError(f"Knowledge category {category_id} not found")

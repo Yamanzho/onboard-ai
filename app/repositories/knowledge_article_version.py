@@ -18,6 +18,7 @@ class KnowledgeArticleVersionRepository(BaseRepository[KnowledgeArticleVersion])
         offset: int = 0,
         limit: int = 100,
     ) -> list[KnowledgeArticleVersion]:
+        self._ensure_rls_context()
         if offset < 0:
             raise ValueError("offset must be >= 0")
         if limit < 1 or limit > _MAX_LIST_LIMIT:
@@ -38,6 +39,7 @@ class KnowledgeArticleVersionRepository(BaseRepository[KnowledgeArticleVersion])
         article_id: UUID,
         version: int,
     ) -> KnowledgeArticleVersion | None:
+        self._ensure_rls_context()
         stmt = select(KnowledgeArticleVersion).where(
             KnowledgeArticleVersion.article_id == article_id,
             KnowledgeArticleVersion.version == version,
@@ -46,6 +48,7 @@ class KnowledgeArticleVersionRepository(BaseRepository[KnowledgeArticleVersion])
         return result.first()
 
     async def next_version_number(self, article_id: UUID) -> int:
+        self._ensure_rls_context()
         stmt = select(func.coalesce(func.max(KnowledgeArticleVersion.version), 0)).where(
             KnowledgeArticleVersion.article_id == article_id,
         )

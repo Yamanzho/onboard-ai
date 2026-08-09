@@ -119,7 +119,11 @@ async def list_articles(
     "/{article_id}",
     response_model=ArticleResponse,
     summary="Get knowledge article",
-    description="Get an article with current version and tags within the caller's company.",
+    description=(
+        "Get an article with current version and tags within the caller's company. "
+        "HR/Admin may read any status. Employees may only read **published** articles "
+        "allowed by visibility (`company`, or `program` via article links + assignment)."
+    ),
     responses={
         **_READ_AUTH_RESPONSES,
         status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
@@ -139,6 +143,8 @@ async def get_article(
     article = await service.get_article(
         article_id,
         company_id=current_user.company_id,
+        actor_role=current_user.role,
+        actor_employee_id=current_user.id,
     )
     return ArticleResponse.model_validate(article)
 

@@ -9,10 +9,21 @@ import * as authApi from '../services/authApi'
 import { ApiError } from '../services/apiClient'
 import type { InvitePreview } from '../types/superAdmin'
 
+function readInviteToken(pathToken: string | undefined): string | null {
+  // Prefer fragment secret (email links: /invite#<token>) — never sent to the
+  // server on navigation. Legacy path /invite/:token still works for old emails.
+  const hash = window.location.hash.replace(/^#/, '').trim()
+  if (hash) {
+    return hash
+  }
+  return pathToken?.trim() || null
+}
+
 export function InviteAcceptPage() {
-  const { token } = useParams<{ token: string }>()
+  const { token: pathToken } = useParams<{ token: string }>()
   const navigate = useNavigate()
   const { login, isAuthenticated } = useAuth()
+  const [token, setToken] = useState<string | null>(() => readInviteToken(pathToken))
   const [preview, setPreview] = useState<InvitePreview | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [submitError, setSubmitError] = useState<string | null>(null)
@@ -21,17 +32,23 @@ export function InviteAcceptPage() {
   const [submitting, setSubmitting] = useState(false)
 
   useEffect(() => {
-    if (!token) {
+    const resolved = readInviteToken(pathToken)
+    setToken(resolved)
+    if (!resolved) {
       setLoadError(t('invite.invalidLink'))
       return
     }
+    // Drop the fragment from the address bar after capturing the secret.
+    if (window.location.hash) {
+      window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`)
+    }
     void authApi
-      .previewInvite(token)
+      .previewInvite(resolved)
       .then(setPreview)
       .catch((err: unknown) => {
         setLoadError(err instanceof ApiError ? err.message : t('invite.notFound'))
       })
-  }, [token])
+  }, [pathToken])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()

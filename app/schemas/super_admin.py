@@ -4,6 +4,11 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.schemas.limits import (
+    MAX_COMPANY_SETTINGS_JSON_BYTES,
+    ensure_json_object_within_limit,
+)
+
 CompanyAdminRoleLiteral = Literal["admin", "hr", "employee"]
 SubscriptionTierLiteral = Literal["starter", "professional", "enterprise"]
 SubscriptionStatusLiteral = Literal["trial", "active", "suspended", "expired", "blocked"]
@@ -106,7 +111,12 @@ class SuperAdminCompanyCreate(BaseModel):
         pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
     )
     timezone: str = Field(default="UTC", min_length=1, max_length=64)
-    settings: dict[str, Any] = Field(default_factory=dict)
+    settings: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            f"Company settings; max {MAX_COMPANY_SETTINGS_JSON_BYTES} serialized UTF-8 bytes."
+        ),
+    )
     description: str | None = None
     logo_url: str | None = Field(default=None, max_length=2048)
     contact_email: str | None = Field(default=None, max_length=320)
@@ -115,6 +125,15 @@ class SuperAdminCompanyCreate(BaseModel):
     admin_full_name: str = Field(..., min_length=1, max_length=255)
     admin_email: str = Field(..., min_length=3, max_length=320)
     admin_telegram_user_id: int = Field(..., gt=0)
+
+    @field_validator("settings")
+    @classmethod
+    def limit_settings_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return ensure_json_object_within_limit(
+            value,
+            max_bytes=MAX_COMPANY_SETTINGS_JSON_BYTES,
+            field_name="settings",
+        )
 
     @field_validator("admin_email")
     @classmethod
@@ -132,7 +151,26 @@ class SuperAdminCompanyUpdate(BaseModel):
     )
     timezone: str | None = Field(default=None, min_length=1, max_length=64)
     is_active: bool | None = None
-    settings: dict[str, Any] | None = None
+    settings: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            f"Company settings; max {MAX_COMPANY_SETTINGS_JSON_BYTES} serialized UTF-8 bytes."
+        ),
+    )
+
+    @field_validator("settings")
+    @classmethod
+    def limit_settings_size(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return value
+        return ensure_json_object_within_limit(
+            value,
+            max_bytes=MAX_COMPANY_SETTINGS_JSON_BYTES,
+            field_name="settings",
+        )
 
     @model_validator(mode="after")
     def require_at_least_one_field(self) -> "SuperAdminCompanyUpdate":
@@ -226,6 +264,10 @@ class CompanyUserCreate(BaseModel):
     @classmethod
     def normalize_email(cls, value: str) -> str:
         return value.strip().lower()
+
+
+class InvitePreviewRequest(BaseModel):
+    token: str = Field(..., min_length=10, max_length=256)
 
 
 class InvitePreviewResponse(BaseModel):

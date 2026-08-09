@@ -18,6 +18,7 @@ class KnowledgeArticleLinkRepository(BaseRepository[KnowledgeArticleLink]):
         offset: int = 0,
         limit: int = 100,
     ) -> list[KnowledgeArticleLink]:
+        self._ensure_rls_context()
         if offset < 0:
             raise ValueError("offset must be >= 0")
         if limit < 1 or limit > _MAX_LIST_LIMIT:
@@ -42,6 +43,7 @@ class KnowledgeArticleLinkRepository(BaseRepository[KnowledgeArticleLink]):
         offset: int = 0,
         limit: int = 100,
     ) -> list[KnowledgeArticleLink]:
+        self._ensure_rls_context()
         if offset < 0:
             raise ValueError("offset must be >= 0")
         if limit < 1 or limit > _MAX_LIST_LIMIT:
@@ -62,6 +64,7 @@ class KnowledgeArticleLinkRepository(BaseRepository[KnowledgeArticleLink]):
         return list(result.all())
 
     async def delete_by_article_id(self, article_id: UUID) -> int:
+        self._ensure_rls_context()
         stmt = delete(KnowledgeArticleLink).where(
             KnowledgeArticleLink.article_id == article_id,
         )

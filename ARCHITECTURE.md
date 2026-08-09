@@ -443,7 +443,7 @@ Company-роли **не переписывались** при добавлени
 |---------|---------|------------|
 | `SECRET_KEY` | (dev) | HMAC HS256 |
 | `JWT_ALGORITHM` | `HS256` | Algorithm |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access TTL |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `15` | Access TTL |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | Refresh TTL |
 
 ### Схемы паролей / секретов

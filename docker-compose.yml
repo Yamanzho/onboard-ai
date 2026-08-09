@@ -6,10 +6,24 @@ services:
       - .env
     environment:
       # Reach Postgres/Redis over the Compose network (overrides localhost from .env)
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-onboard}:${POSTGRES_PASSWORD:-onboard}@db:5432/${POSTGRES_DB:-onboard_ai}
+      # SEC-R3: runtime = onboard_app; migrations = onboard_owner; bootstrap = POSTGRES_USER
+      ONBOARD_OWNER_PASSWORD: ${ONBOARD_OWNER_PASSWORD:-onboard}
+      ONBOARD_APP_PASSWORD: ${ONBOARD_APP_PASSWORD:-onboard}
+      DATABASE_URL: postgresql+asyncpg://onboard_app:${ONBOARD_APP_PASSWORD:-onboard}@db:5432/${POSTGRES_DB:-onboard_ai}
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://onboard_owner:${ONBOARD_OWNER_PASSWORD:-onboard}@db:5432/${POSTGRES_DB:-onboard_ai}
+      BOOTSTRAP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-onboard}:${POSTGRES_PASSWORD:-onboard}@db:5432/${POSTGRES_DB:-onboard_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-onboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-onboard}
+      POSTGRES_DB: ${POSTGRES_DB:-onboard_ai}
+      POSTGRES_HOST: db
       REDIS_URL: redis://redis:6379/0
-      SEED_DEMO: ${SEED_DEMO:-true}
+      SEED_DEMO: ${SEED_DEMO:-false}
+      # Default false: published API port must not trust spoofable X-Forwarded-For.
+      # Production (API internal-only): set true via docker-compose.prod.yml.
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
     ports:
+      # Local/dev convenience (Swagger, direct curl). Do not publish in production —
+      # use docker-compose.prod.yml so clients reach the API only via frontend nginx.
       - "${API_PORT:-8000}:8000"
     volumes:
       - .:/app
@@ -38,7 +52,7 @@ services:
       dockerfile: Dockerfile
     container_name: onboard-ai-frontend
     ports:
-      - "${FRONTEND_PORT:-3000}:80"
+      - "${FRONTEND_PORT:-3000}:8080"
     depends_on:
       api:
         condition: service_healthy
@@ -55,7 +69,9 @@ services:
       # Default to demo seed company when unset
       BOT_COMPANY_ID: ${BOT_COMPANY_ID:-11111111-1111-4111-8111-111111111111}
     ports:
-      - "${BOT_WEBHOOK_PORT:-8081}:8081"
+      # Local webhook testing via host nginx → 127.0.0.1 only (not LAN/public).
+      # Production compose overrides further; polling needs no published port.
+      - "127.0.0.1:${BOT_WEBHOOK_PORT:-8081}:8081"
     volumes:
       - .:/app
     command: ["/app/docker/entrypoint-bot.sh"]
@@ -73,8 +89,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-onboard}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-onboard}
       POSTGRES_DB: ${POSTGRES_DB:-onboard_ai}
+    # Bind to localhost only — never expose DB to the LAN/public by default.
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -86,8 +103,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: onboard-ai-redis
+    # Development-only: no requirepass. Bound to localhost so LAN/public cannot
+    # reach Redis. Production (docker-compose.prod.yml): password + no host ports.
     ports:
-      - "${REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
     volumes:
       - redis_data:/data
     healthcheck:

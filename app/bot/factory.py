@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from aiogram import Bot, Dispatcher
@@ -14,6 +15,8 @@ from app.bot.api.client import OnboardApiClient
 from app.bot.handlers import get_handlers_router
 from app.bot.middlewares.api_client import ApiClientMiddleware
 from app.core.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def create_api_client(settings: Settings | None = None) -> OnboardApiClient:
@@ -40,11 +43,29 @@ def create_bot(settings: Settings | None = None) -> Bot:
 
 
 def _create_storage(settings: Settings) -> BaseStorage:
+    """Create FSM storage.
+
+    Production: Redis is required — initialization failure raises (no MemoryStorage).
+    Development: falls back to MemoryStorage when Redis is unavailable.
+    Error messages never include Redis credentials.
+    """
     try:
         from aiogram.fsm.storage.redis import RedisStorage
 
         return RedisStorage.from_url(settings.redis_url)
     except Exception:
+        if settings.is_production:
+            logger.error(
+                "Bot FSM: Redis storage required when APP_ENV=production but unavailable"
+            )
+            raise RuntimeError(
+                "Redis FSM storage is required when APP_ENV=production "
+                "(Redis unreachable, auth failed, or REDIS_URL misconfigured)"
+            ) from None
+        logger.warning(
+            "Bot FSM: Redis unavailable, using MemoryStorage "
+            "(development only; not shared/durable)"
+        )
         return MemoryStorage()
 
 

@@ -8,13 +8,24 @@ from typing import Any, Literal
 from uuid import UUID
 
 import jwt
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
 
 from app.core.config import get_settings
 from app.core.exceptions import AppError
 
 TokenType = Literal["access", "refresh"]
 
+_PBKDF2_SCHEME = "pbkdf2_sha256"
 _PBKDF2_ITERATIONS = 120_000
+# Interactive Argon2id parameters (OWASP-aligned for typical API hosts).
+_ARGON2 = PasswordHasher(
+    time_cost=3,
+    memory_cost=65_536,
+    parallelism=2,
+    hash_len=32,
+    salt_len=16,
+)
 
 
 class InvalidTokenError(AppError):
@@ -41,24 +52,39 @@ def verify_bot_service_token(token: str) -> bool:
 
 
 def hash_password(password: str) -> str:
-    """Hash a password with PBKDF2-SHA256 (stdlib; no extra deps)."""
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        salt.encode("utf-8"),
-        _PBKDF2_ITERATIONS,
-    )
-    return f"pbkdf2_sha256${_PBKDF2_ITERATIONS}${salt}${digest.hex()}"
+    """Hash a password with Argon2id (new hashes)."""
+    return _ARGON2.hash(password)
+
+
+def password_hash_needs_upgrade(password_hash: str | None) -> bool:
+    """True when the stored hash should be replaced with current Argon2id params."""
+    if not password_hash:
+        return False
+    if password_hash.startswith(f"{_PBKDF2_SCHEME}$"):
+        return True
+    if password_hash.startswith("$argon2"):
+        try:
+            return _ARGON2.check_needs_rehash(password_hash)
+        except (InvalidHashError, VerificationError):
+            return True
+    return True
 
 
 def verify_password(password: str, password_hash: str) -> bool:
-    """Verify a password against a hash produced by ``hash_password``."""
+    """Verify a password against Argon2id or legacy PBKDF2-SHA256 hashes."""
+    if password_hash.startswith("$argon2"):
+        try:
+            return _ARGON2.verify(password_hash, password)
+        except VerifyMismatchError:
+            return False
+        except (InvalidHashError, VerificationError):
+            return False
+
     try:
         scheme, iterations_s, salt, expected_hex = password_hash.split("$", 3)
     except ValueError:
         return False
-    if scheme != "pbkdf2_sha256":
+    if scheme != _PBKDF2_SCHEME:
         return False
     try:
         iterations = int(iterations_s)
@@ -81,11 +107,15 @@ def hash_token(token: str) -> str:
 def verify_employee_password(*, password: str, password_hash: str | None) -> bool:
     """Verify employee login password.
 
-    Invited users with a personal hash must use it. Legacy/demo users without
-    a hash continue to use the shared ``AUTH_PASSWORD``.
+    Users with a personal hash must use it. Legacy/demo users without a hash
+    may use the shared ``AUTH_PASSWORD`` only when
+    ``allow_shared_auth_password`` is enabled (never in production).
     """
     if password_hash:
         return verify_password(password, password_hash)
+    settings = get_settings()
+    if not settings.allow_shared_auth_password:
+        return False
     return verify_auth_password(password)
 
 
@@ -103,6 +133,8 @@ def create_access_token(
             "role": role,
             "company_id": str(company_id) if company_id is not None else None,
             "type": "access",
+            "iss": settings.jwt_issuer,
+            "aud": settings.jwt_audience,
             "exp": expire,
             "iat": datetime.now(UTC),
         }
@@ -123,6 +155,8 @@ def create_refresh_token(
             "role": role,
             "company_id": str(company_id) if company_id is not None else None,
             "type": "refresh",
+            "iss": settings.jwt_issuer,
+            "aud": settings.jwt_audience,
             "exp": expire,
             "iat": datetime.now(UTC),
         }
@@ -136,6 +170,11 @@ def decode_token(token: str, *, expected_type: TokenType) -> dict[str, Any]:
             token,
             settings.secret_key,
             algorithms=[settings.jwt_algorithm],
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            options={
+                "require": ["exp", "iat", "sub", "role", "type", "iss", "aud"],
+            },
         )
     except jwt.PyJWTError as exc:
         raise InvalidTokenError("Invalid or expired token") from exc

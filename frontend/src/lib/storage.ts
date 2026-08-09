@@ -1,20 +1,17 @@
-const ACCESS_KEY = 'onboard_access_token'
-const REFRESH_KEY = 'onboard_refresh_token'
+/** @deprecated Tokens live in httpOnly cookies; kept as no-ops for compatibility. */
 
 export function getAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_KEY)
+  return null
 }
 
 export function getRefreshToken(): string | null {
-  return localStorage.getItem(REFRESH_KEY)
+  return null
 }
 
-export function setTokens(access: string, refresh: string): void {
-  localStorage.setItem(ACCESS_KEY, access)
-  localStorage.setItem(REFRESH_KEY, refresh)
+export function setTokens(_access: string, _refresh: string): void {
+  // no-op: server sets httpOnly cookies
 }
 
 export function clearTokens(): void {
-  localStorage.removeItem(ACCESS_KEY)
-  localStorage.removeItem(REFRESH_KEY)
+  // no-op: call POST /auth/logout to clear cookies
 }

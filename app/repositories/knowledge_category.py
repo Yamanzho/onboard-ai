@@ -12,6 +12,7 @@ class KnowledgeCategoryRepository(BaseRepository[KnowledgeCategory]):
         super().__init__(session, KnowledgeCategory)
 
     async def get_by_slug(self, company_id: UUID, slug: str) -> KnowledgeCategory | None:
+        self._ensure_rls_context()
         stmt = select(KnowledgeCategory).where(
             KnowledgeCategory.company_id == company_id,
             KnowledgeCategory.slug == slug,
@@ -28,6 +29,7 @@ class KnowledgeCategoryRepository(BaseRepository[KnowledgeCategory]):
         offset: int = 0,
         limit: int = 100,
     ) -> list[KnowledgeCategory]:
+        self._ensure_rls_context()
         stmt = self._company_list_statement(
             company_id,
             parent_id=parent_id,

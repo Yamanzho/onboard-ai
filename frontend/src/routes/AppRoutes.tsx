@@ -43,6 +43,9 @@ export function AppRoutes() {
           <Route path="/login" element={<LoginPage />} />
         </Route>
 
+        <Route path="/invite" element={<InviteAcceptPage />} />
+        {/* Legacy path links from older emails; prefer /invite#<token>.
+            Keep until INVITE_TTL_HOURS (default 24h) after last path-link send. */}
         <Route path="/invite/:token" element={<InviteAcceptPage />} />
 
         <Route element={<SuperAdminAuthLayout />}>

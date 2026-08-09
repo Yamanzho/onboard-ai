@@ -8,11 +8,6 @@ import {
   type ReactNode,
 } from 'react'
 import { t } from '../i18n'
-import {
-  clearSuperAdminTokens,
-  getSuperAdminAccessToken,
-  setSuperAdminTokens,
-} from '../lib/superAdminStorage'
 import { ApiError } from '../services/apiClient'
 import * as superAdminApi from '../services/superAdminApi'
 import type { SuperAdminUser } from '../types/superAdmin'
@@ -37,28 +32,21 @@ export function SuperAdminAuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
 
   const logout = useCallback(() => {
-    clearSuperAdminTokens()
+    void superAdminApi.logout().catch(() => undefined)
     setUser(null)
   }, [])
 
   const loadMe = useCallback(async () => {
-    const token = getSuperAdminAccessToken()
-    if (!token) {
-      setUser(null)
-      setLoading(false)
-      return
-    }
     try {
       const me = await superAdminApi.fetchMe()
       if (me.role !== 'super_admin') {
-        clearSuperAdminTokens()
+        await superAdminApi.logout().catch(() => undefined)
         setUser(null)
         setError(t('auth.superAdminRoleRequired'))
       } else {
         setUser(me)
       }
     } catch {
-      clearSuperAdminTokens()
       setUser(null)
     } finally {
       setLoading(false)
@@ -72,17 +60,15 @@ export function SuperAdminAuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     setError(null)
     try {
-      const tokens = await superAdminApi.login(email.trim(), password)
-      setSuperAdminTokens(tokens.access_token, tokens.refresh_token)
+      await superAdminApi.login(email.trim(), password)
       const me = await superAdminApi.fetchMe()
       if (me.role !== 'super_admin') {
-        clearSuperAdminTokens()
+        await superAdminApi.logout().catch(() => undefined)
         setUser(null)
         throw new Error(t('auth.superAdminRoleRequired'))
       }
       setUser(me)
     } catch (err) {
-      clearSuperAdminTokens()
       setUser(null)
       if (err instanceof ApiError) {
         setError(err.message)

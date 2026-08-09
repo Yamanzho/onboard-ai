@@ -28,7 +28,7 @@ async def test_list_and_get_assignment(
             "telegram_user_id": uuid4().int % 1_000_000_000 + 10,
             "full_name": "Assignee",
             "role": "employee",
-            "status": "active",
+            "status": "invited",
         },
     )
     assert employee_res.status_code == 201, employee_res.text

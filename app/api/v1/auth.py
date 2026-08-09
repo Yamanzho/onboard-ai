@@ -5,20 +5,24 @@ from datetime import UTC, datetime
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.api.auth_deps import CurrentUser, EmployeeServiceDep
 from app.api.deps import get_platform_service
 from app.api.v1.responses import ERROR_RESPONSES
+from app.core.auth_cookies import (
+    clear_auth_cookies,
+    read_refresh_cookie,
+    set_auth_cookies,
+)
+from app.core.client_ip import client_ip
 from app.core.config import get_settings
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ForbiddenError, NotFoundError, UnauthorizedError, ValidationError
 from app.core.rate_limit import is_rate_limited
 from app.core.security import (
-    InvalidTokenError,
-    create_access_token,
-    create_refresh_token,
-    decode_token,
+    hash_password,
+    password_hash_needs_upgrade,
     verify_bot_service_token,
     verify_employee_password,
 )
@@ -28,34 +32,128 @@ from app.db.uow import UnitOfWork
 from app.schemas.auth import (
     BotTelegramLoginRequest,
     BotTelegramLoginResponse,
+    BrowserSessionResponse,
     CurrentUserResponse,
+    PasswordChangeRequest,
     RefreshRequest,
     TokenResponse,
 )
-from app.schemas.super_admin import InviteAcceptRequest, InvitePreviewResponse
+from app.schemas.super_admin import (
+    InviteAcceptRequest,
+    InvitePreviewRequest,
+    InvitePreviewResponse,
+)
 from app.services.employee import EmployeeService
 from app.services.platform import PlatformService
+from app.services.refresh_session import SUBJECT_EMPLOYEE, RefreshSessionService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 logger = logging.getLogger("app.auth.bot_login")
 
 PlatformServiceDep = Annotated[PlatformService, Depends(get_platform_service)]
+_refresh_sessions = RefreshSessionService()
 
 
-def _issue_tokens(employee: Employee) -> TokenResponse:
-    return TokenResponse(
-        access_token=create_access_token(
-            subject=employee.id,
-            role=employee.role,
-            company_id=employee.company_id,
-        ),
-        refresh_token=create_refresh_token(
-            subject=employee.id,
-            role=employee.role,
-            company_id=employee.company_id,
-        ),
-        token_type="bearer",
+async def _issue_tokens(employee: Employee) -> TokenResponse:
+    issued = await _refresh_sessions.issue(
+        subject_type=SUBJECT_EMPLOYEE,
+        subject_id=employee.id,
+        role=employee.role,
+        company_id=employee.company_id,
     )
+    return issued.tokens
+
+
+def _resolve_refresh_token(request: Request, payload: RefreshRequest | None) -> str | None:
+    if payload is not None and payload.refresh_token:
+        return payload.refresh_token
+    return read_refresh_cookie(request.cookies, kind="tenant")
+
+
+def _enforce_login_rate_limit(request: Request, *, bucket: str) -> str:
+    """Rate-limit password / bot logins by client IP. Returns the resolved IP."""
+    settings = get_settings()
+    ip = client_ip(request)
+    if bucket == "bot_login":
+        limit = settings.bot_login_rate_limit
+        window = settings.bot_login_rate_window_seconds
+    else:
+        limit = settings.login_rate_limit
+        window = settings.login_rate_window_seconds
+    limited = is_rate_limited(
+        f"{bucket}:ip:{ip}",
+        limit=limit,
+        window_seconds=window,
+    )
+    if limited:
+        logger.warning(
+            "%s failed reason=rate_limited ip=%s limit=%s window_s=%s",
+            bucket,
+            ip,
+            limit,
+            window,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Try again later.",
+            headers={"Retry-After": str(window)},
+        )
+    return ip
+
+
+def _enforce_invite_rate_limit(request: Request, *, bucket: str) -> str:
+    """Rate-limit invite preview / accept by client IP. Returns the resolved IP."""
+    settings = get_settings()
+    ip = client_ip(request)
+    if bucket == "invite_accept":
+        limit = settings.invite_accept_rate_limit
+        window = settings.invite_accept_rate_window_seconds
+    else:
+        limit = settings.invite_preview_rate_limit
+        window = settings.invite_preview_rate_window_seconds
+    limited = is_rate_limited(
+        f"{bucket}:ip:{ip}",
+        limit=limit,
+        window_seconds=window,
+    )
+    if limited:
+        logger.warning(
+            "%s failed reason=rate_limited ip=%s limit=%s window_s=%s",
+            bucket,
+            ip,
+            limit,
+            window,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many invite attempts. Try again later.",
+            headers={"Retry-After": str(window)},
+        )
+    return ip
+
+
+def _enforce_refresh_rate_limit(request: Request) -> str:
+    """Rate-limit tenant refresh by client IP before rotation. Returns IP."""
+    settings = get_settings()
+    ip = client_ip(request)
+    limited = is_rate_limited(
+        f"tenant_refresh:ip:{ip}",
+        limit=settings.refresh_rate_limit,
+        window_seconds=settings.refresh_rate_window_seconds,
+    )
+    if limited:
+        logger.warning(
+            "tenant_refresh failed reason=rate_limited ip=%s limit=%s window_s=%s",
+            ip,
+            settings.refresh_rate_limit,
+            settings.refresh_rate_window_seconds,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many refresh attempts. Try again later.",
+            headers={"Retry-After": str(settings.refresh_rate_window_seconds)},
+        )
+    return ip
 
 
 async def _authenticate_employee_login(
@@ -82,6 +180,13 @@ async def _authenticate_employee_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Please accept your invite and set a password first",
         )
+    try:
+        await employees.assert_company_active(employee.company_id)
+    except ForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=exc.message,
+        ) from exc
     if not verify_employee_password(password=password, password_hash=employee.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -89,64 +194,47 @@ async def _authenticate_employee_login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    # Transparent upgrade: legacy PBKDF2 (or stale Argon2 params) → current Argon2id.
+    upgrade_hash: str | None = None
+    if employee.password_hash and password_hash_needs_upgrade(employee.password_hash):
+        upgrade_hash = hash_password(password)
+
     async with UnitOfWork() as uow:
-        await uow.employees.update(employee_id, last_login_at=datetime.now(UTC))
+        await uow.enter_tenant(employee.company_id)
+        updates: dict = {"last_login_at": datetime.now(UTC)}
+        if upgrade_hash is not None:
+            updates["password_hash"] = upgrade_hash
+        await uow.employees.update(employee_id, **updates)
         await uow.commit()
     employee.last_login_at = datetime.now(UTC)
+    if upgrade_hash is not None:
+        employee.password_hash = upgrade_hash
     return employee
-
-
-def _client_ip(request: Request) -> str:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    if request.client is not None:
-        return request.client.host
-    return "unknown"
-
-
-def _enforce_bot_login_rate_limit(request: Request) -> str:
-    """Rate-limit bot telegram-login by client IP. Returns the resolved IP."""
-    settings = get_settings()
-    ip = _client_ip(request)
-    limited = is_rate_limited(
-        f"bot_login:ip:{ip}",
-        limit=settings.bot_login_rate_limit,
-        window_seconds=settings.bot_login_rate_window_seconds,
-    )
-    if limited:
-        logger.warning(
-            "bot_login failed reason=rate_limited ip=%s limit=%s window_s=%s",
-            ip,
-            settings.bot_login_rate_limit,
-            settings.bot_login_rate_window_seconds,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Too many bot login attempts. Try again later.",
-            headers={"Retry-After": str(settings.bot_login_rate_window_seconds)},
-        )
-    return ip
 
 
 @router.post(
     "/login",
-    response_model=TokenResponse,
+    response_model=BrowserSessionResponse,
     summary="Login",
     description=(
-        "Exchange employee credentials for JWT access and refresh tokens.\n\n"
+        "Exchange employee credentials for an httpOnly cookie session.\n\n"
         "**Username** must be the employee UUID.\n"
         "**Password** is the employee password set via invite, "
-        "or the shared MVP auth password (`AUTH_PASSWORD`) for legacy/demo users.\n\n"
-        "Use the returned `access_token` with Swagger **Authorize** "
-        "(OAuth2 password flow / Bearer)."
+        "or the shared MVP auth password (`AUTH_PASSWORD`) for legacy/demo users "
+        "when `ALLOW_SHARED_AUTH_PASSWORD` is enabled (disabled in production).\n\n"
+        "Raw access/refresh tokens are **not** returned in the JSON body. "
+        "The browser must send cookies (`credentials: include`) on subsequent "
+        "requests. Bot/service clients should use ``POST /auth/bot/telegram``."
     ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {
             "description": "Invalid username or password",
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Employee is archived",
+            "description": "Employee is archived or company deactivated",
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": "Login rate limit exceeded",
         },
         status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
             status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -157,9 +245,12 @@ def _enforce_bot_login_rate_limit(request: Request) -> str:
     },
 )
 async def login(
+    request: Request,
+    response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     employees: EmployeeServiceDep,
-) -> TokenResponse:
+) -> BrowserSessionResponse:
+    _enforce_login_rate_limit(request, bucket="employee_login")
     try:
         employee_id = UUID(form_data.username)
     except ValueError as exc:
@@ -174,7 +265,9 @@ async def login(
         employee_id,
         form_data.password,
     )
-    return _issue_tokens(employee)
+    tokens = await _issue_tokens(employee)
+    set_auth_cookies(response, tokens, kind="tenant")
+    return BrowserSessionResponse()
 
 
 @router.post(
@@ -184,6 +277,8 @@ async def login(
     description=(
         "Trusted Telegram bot identity exchange.\n\n"
         "Requires header `X-Bot-Service-Token` matching `BOT_SERVICE_TOKEN`. "
+        "When `BOT_COMPANY_ID` is configured on the API, the request "
+        "`company_id` must match it (prevents cross-tenant impersonation).\n"
         "Resolves the employee by `(company_id, telegram_user_id)` and issues "
         "a normal employee JWT pair. Does **not** use `AUTH_PASSWORD`.\n\n"
         "The bot then calls protected REST endpoints with the returned "
@@ -197,7 +292,7 @@ async def login(
             "description": "Invalid or missing bot service token",
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Employee is archived",
+            "description": "Employee archived, invited, company deactivated, or company mismatch",
         },
         status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
         status.HTTP_429_TOO_MANY_REQUESTS: {
@@ -223,7 +318,7 @@ async def bot_telegram_login(
         ),
     ] = None,
 ) -> BotTelegramLoginResponse:
-    ip = _enforce_bot_login_rate_limit(request)
+    ip = _enforce_login_rate_limit(request, bucket="bot_login")
 
     if not verify_bot_service_token(x_bot_service_token or ""):
         logger.warning(
@@ -236,6 +331,36 @@ async def bot_telegram_login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid bot service token",
+        )
+
+    settings = get_settings()
+    if not settings.bot_company_id:
+        logger.error(
+            "bot_login failed reason=bot_company_id_unset ip=%s",
+            ip,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Bot company binding is not configured",
+        )
+    try:
+        allowed_company = UUID(settings.bot_company_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Bot company id is misconfigured",
+        ) from None
+    if payload.company_id != allowed_company:
+        logger.warning(
+            "bot_login failed reason=company_mismatch ip=%s "
+            "company_id=%s telegram_user_id=%s",
+            ip,
+            payload.company_id,
+            payload.telegram_user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bot is not authorized for this company",
         )
 
     try:
@@ -269,8 +394,36 @@ async def bot_telegram_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employee is archived",
         )
+    if employee.status == EmployeeStatus.INVITED.value:
+        logger.warning(
+            "bot_login failed reason=employee_invited ip=%s "
+            "company_id=%s telegram_user_id=%s employee_id=%s",
+            ip,
+            payload.company_id,
+            payload.telegram_user_id,
+            employee.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please accept your invite and set a password first",
+        )
 
-    tokens = _issue_tokens(employee)
+    try:
+        await employees.assert_company_active(employee.company_id)
+    except ForbiddenError as exc:
+        logger.warning(
+            "bot_login failed reason=company_deactivated ip=%s "
+            "company_id=%s telegram_user_id=%s",
+            ip,
+            payload.company_id,
+            payload.telegram_user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=exc.message,
+        ) from exc
+
+    tokens = await _issue_tokens(employee)
     logger.info(
         "bot_login success ip=%s company_id=%s telegram_user_id=%s "
         "employee_id=%s role=%s",
@@ -290,15 +443,26 @@ async def bot_telegram_login(
 
 @router.post(
     "/refresh",
-    response_model=TokenResponse,
+    response_model=None,
     summary="Refresh tokens",
-    description="Issue a new access/refresh token pair using a valid refresh token.",
+    description=(
+        "Rotate refresh token and issue a new access/refresh pair via httpOnly "
+        "cookies.\n\n"
+        "Browser clients should omit the JSON body and rely on the refresh cookie; "
+        "the response body is cookie-only (``token_type`` acknowledgement).\n\n"
+        "Bot/service clients that present ``refresh_token`` in the JSON body "
+        "receive a full token pair in the response (cookies are still set).\n\n"
+        "Reuse of a revoked refresh token invalidates the whole session family."
+    ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {
-            "description": "Invalid or expired refresh token",
+            "description": "Invalid, expired, or reused refresh token",
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Employee is archived",
+            "description": "Employee is archived, invited, or company deactivated",
+        },
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": "Refresh rate limit exceeded",
         },
         status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
             status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -309,21 +473,142 @@ async def bot_telegram_login(
     },
 )
 async def refresh_tokens(
-    payload: RefreshRequest,
+    request: Request,
+    response: Response,
     employees: EmployeeServiceDep,
-) -> TokenResponse:
-    try:
-        token_payload = decode_token(payload.refresh_token, expected_type="refresh")
-        employee_id = UUID(token_payload["sub"])
-    except (InvalidTokenError, ValueError) as exc:
+    payload: RefreshRequest | None = None,
+) -> BrowserSessionResponse | TokenResponse:
+    _enforce_refresh_rate_limit(request)
+    raw = _resolve_refresh_token(request, payload)
+    service_mode = bool(payload is not None and payload.refresh_token)
+    if not raw:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        subject_id, family_id = await _refresh_sessions.begin_rotation(
+            raw_refresh=raw,
+            subject_type=SUBJECT_EMPLOYEE,
+        )
+    except UnauthorizedError as exc:
+        clear_auth_cookies(response, kind="tenant")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.message,
+            headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
-    employee = await _load_active_employee_for_refresh(employees, employee_id)
-    return _issue_tokens(employee)
+    employee = await _load_active_employee_for_refresh(employees, subject_id)
+    issued = await _refresh_sessions.issue(
+        subject_type=SUBJECT_EMPLOYEE,
+        subject_id=employee.id,
+        role=employee.role,
+        company_id=employee.company_id,
+        family_id=family_id,
+    )
+    set_auth_cookies(response, issued.tokens, kind="tenant")
+    if service_mode:
+        return issued.tokens
+    return BrowserSessionResponse()
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Logout",
+    description="Revoke the current refresh session and clear auth cookies.",
+)
+async def logout(
+    request: Request,
+    response: Response,
+    payload: RefreshRequest | None = None,
+) -> None:
+    raw = _resolve_refresh_token(request, payload)
+    await _refresh_sessions.revoke_raw(raw)
+    clear_auth_cookies(response, kind="tenant")
+
+
+@router.post(
+    "/logout-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Logout all sessions",
+    description=(
+        "Revoke all refresh sessions for the authenticated employee "
+        "and clear auth cookies. Does not affect other users."
+    ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Missing or invalid access token",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Employee is archived, invited, or company deactivated",
+        },
+    },
+)
+async def logout_all(
+    response: Response,
+    current_user: CurrentUser,
+) -> None:
+    await _refresh_sessions.revoke_all_for_subject(
+        subject_type=SUBJECT_EMPLOYEE,
+        subject_id=current_user.id,
+    )
+    clear_auth_cookies(response, kind="tenant")
+
+
+@router.post(
+    "/password",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Change password",
+    description=(
+        "Change the authenticated employee's password. "
+        "Requires the current password. Revokes all refresh sessions for this employee."
+    ),
+    responses={
+        status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
+        status.HTTP_401_UNAUTHORIZED: {
+            "description": "Missing/invalid access token or wrong current password",
+        },
+        status.HTTP_403_FORBIDDEN: {
+            "description": "Employee is archived, invited, or company deactivated",
+        },
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+    },
+)
+async def change_password(
+    payload: PasswordChangeRequest,
+    response: Response,
+    current_user: CurrentUser,
+    employees: EmployeeServiceDep,
+) -> None:
+    try:
+        await employees.change_password(
+            employee_id=current_user.id,
+            company_id=current_user.company_id,
+            current_password=payload.current_password,
+            new_password=payload.new_password,
+        )
+    except UnauthorizedError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.message,
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    except ForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=exc.message,
+        ) from exc
+    clear_auth_cookies(response, kind="tenant")
 
 
 async def _load_active_employee_for_refresh(
@@ -344,6 +629,18 @@ async def _load_active_employee_for_refresh(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Employee is archived",
         )
+    if employee.status == EmployeeStatus.INVITED.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Please accept your invite and set a password first",
+        )
+    try:
+        await employees.assert_company_active(employee.company_id)
+    except ForbiddenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=exc.message,
+        ) from exc
     return employee
 
 
@@ -357,7 +654,7 @@ async def _load_active_employee_for_refresh(
             "description": "Missing or invalid access token",
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Employee is archived",
+            "description": "Employee is archived or company deactivated",
         },
         status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
             status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -371,14 +668,28 @@ async def me(current_user: CurrentUser) -> CurrentUserResponse:
     return CurrentUserResponse.model_validate(current_user)
 
 
-@router.get(
-    "/invite/{token}",
+@router.post(
+    "/invite/preview",
     response_model=InvitePreviewResponse,
     summary="Preview employee invite",
+    description=(
+        "Preview an invite using the secret token in the JSON body "
+        "(not the URL path) so access logs / proxies do not capture the credential."
+    ),
+    responses={
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": "Invite preview rate limit exceeded",
+        },
+    },
 )
-async def preview_invite(token: str, platform: PlatformServiceDep) -> InvitePreviewResponse:
+async def preview_invite(
+    request: Request,
+    payload: InvitePreviewRequest,
+    platform: PlatformServiceDep,
+) -> InvitePreviewResponse:
+    _enforce_invite_rate_limit(request, bucket="invite_preview")
     try:
-        return await platform.preview_invite(token)
+        return await platform.preview_invite(payload.token)
     except NotFoundError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValidationError as exc:
@@ -389,11 +700,18 @@ async def preview_invite(token: str, platform: PlatformServiceDep) -> InvitePrev
     "/invite/accept",
     response_model=CurrentUserResponse,
     summary="Accept invite and set password",
+    responses={
+        status.HTTP_429_TOO_MANY_REQUESTS: {
+            "description": "Invite accept rate limit exceeded",
+        },
+    },
 )
 async def accept_invite(
+    request: Request,
     payload: InviteAcceptRequest,
     platform: PlatformServiceDep,
 ) -> CurrentUserResponse:
+    _enforce_invite_rate_limit(request, bucket="invite_accept")
     try:
         employee = await platform.accept_invite(payload)
     except NotFoundError as exc:
@@ -407,7 +725,10 @@ async def accept_invite(
 __all__ = [
     "accept_invite",
     "bot_telegram_login",
+    "change_password",
     "login",
+    "logout",
+    "logout_all",
     "me",
     "preview_invite",
     "refresh_tokens",

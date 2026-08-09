@@ -19,6 +19,7 @@ class AssignmentRepository(BaseRepository[Assignment]):
         limit: int = 100,
         status: str | None = None,
     ) -> list[Assignment]:
+        self._ensure_rls_context()
         stmt = self._employee_list_statement(
             employee_id,
             offset=offset,
@@ -37,6 +38,7 @@ class AssignmentRepository(BaseRepository[Assignment]):
         status: str | None = None,
         employee_id: UUID | None = None,
     ) -> list[Assignment]:
+        self._ensure_rls_context()
         stmt = self._company_list_statement(
             company_id,
             offset=offset,

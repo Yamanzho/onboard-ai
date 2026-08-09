@@ -1,20 +1,17 @@
-const ACCESS_KEY = 'onboard_sa_access_token'
-const REFRESH_KEY = 'onboard_sa_refresh_token'
+/** @deprecated Tokens live in httpOnly cookies; kept as no-ops for compatibility. */
 
 export function getSuperAdminAccessToken(): string | null {
-  return localStorage.getItem(ACCESS_KEY)
+  return null
 }
 
 export function getSuperAdminRefreshToken(): string | null {
-  return localStorage.getItem(REFRESH_KEY)
+  return null
 }
 
-export function setSuperAdminTokens(access: string, refresh: string): void {
-  localStorage.setItem(ACCESS_KEY, access)
-  localStorage.setItem(REFRESH_KEY, refresh)
+export function setSuperAdminTokens(_access: string, _refresh: string): void {
+  // no-op: server sets httpOnly cookies
 }
 
 export function clearSuperAdminTokens(): void {
-  localStorage.removeItem(ACCESS_KEY)
-  localStorage.removeItem(REFRESH_KEY)
+  // no-op: call POST /super-admin/auth/logout to clear cookies
 }

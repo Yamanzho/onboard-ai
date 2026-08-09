@@ -18,11 +18,13 @@ class StepRepository(BaseRepository[Step]):
         offset: int = 0,
         limit: int = 1000,
     ) -> list[Step]:
+        self._ensure_rls_context()
         stmt = self._program_list_statement(program_id, offset=offset, limit=limit)
         result = await self._session.scalars(stmt)
         return list(result.all())
 
     async def get_max_position(self, program_id: UUID) -> int | None:
+        self._ensure_rls_context()
         stmt = select(func.max(Step.position)).where(Step.program_id == program_id)
         result = await self._session.scalar(stmt)
         return result

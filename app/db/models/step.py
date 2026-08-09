@@ -32,6 +32,12 @@ class Step(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     program_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("onboarding_programs.id", ondelete="CASCADE"),

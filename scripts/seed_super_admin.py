@@ -36,7 +36,7 @@ async def seed() -> None:
     print()
     print("=== Super Admin seed ready ===")
     print(f"Email:    {admin.email}")
-    print(f"Password: {settings.super_admin_password}")
+    print("Password: (from SUPER_ADMIN_PASSWORD — not printed)")
     print(f"ID:       {admin.id}")
     print("Login:    POST /api/v1/super-admin/auth/login")
     print("Panel:    http://localhost:3000/super-admin/login")

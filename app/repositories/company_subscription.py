@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.company_subscription import CompanySubscription
@@ -12,6 +12,7 @@ class CompanySubscriptionRepository(BaseRepository[CompanySubscription]):
         super().__init__(session, CompanySubscription)
 
     async def get_current_for_company(self, company_id: UUID) -> CompanySubscription | None:
+        self._ensure_rls_context()
         stmt = (
             select(CompanySubscription)
             .where(
@@ -24,6 +25,22 @@ class CompanySubscriptionRepository(BaseRepository[CompanySubscription]):
         result = await self._session.scalars(stmt)
         return result.first()
 
+    async def clear_current_for_company(self, company_id: UUID) -> None:
+        """Demote any current subscription(s) to historical before promoting another.
+
+        Must run in the same transaction as creating/updating the new current row
+        so the partial unique index is never violated mid-switch.
+        """
+        self._ensure_rls_context()
+        await self._session.execute(
+            update(CompanySubscription)
+            .where(
+                CompanySubscription.company_id == company_id,
+                CompanySubscription.is_current.is_(True),
+            )
+            .values(is_current=False)
+        )
+
     async def list_for_company(
         self,
         company_id: UUID,
@@ -31,6 +48,7 @@ class CompanySubscriptionRepository(BaseRepository[CompanySubscription]):
         offset: int = 0,
         limit: int = 100,
     ) -> list[CompanySubscription]:
+        self._ensure_rls_context()
         stmt = (
             select(CompanySubscription)
             .where(CompanySubscription.company_id == company_id)

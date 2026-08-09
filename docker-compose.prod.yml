@@ -1,0 +1,135 @@
+# Production overrides for OnboardAI.
+#
+# Usage:
+#   # Generate secrets (do not use .env.example placeholders in production):
+#   #   openssl rand -hex 32                                          # SECRET_KEY
+#   #   python -c "import secrets; print(secrets.token_urlsafe(24))"  # SUPER_ADMIN_PASSWORD
+#   #   python -c "import secrets; print(secrets.token_urlsafe(32))"  # REDIS_PASSWORD
+#   #   python -c "import secrets; print(secrets.token_urlsafe(32))"  # POSTGRES_PASSWORD
+#   # Put SECRET_KEY, SUPER_ADMIN_PASSWORD, REDIS_PASSWORD, POSTGRES_PASSWORD in .env
+#   # (DEBUG must be false).
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Security / immutability intent:
+# - P0-01: API has no host port; TRUST_PROXY_HEADERS defaults true (nginx → api).
+#           nginx.prod.conf overwrites X-Forwarded-For / X-Real-IP with $remote_addr
+#           (SEC-R1: never $proxy_add_x_forwarded_for — that preserves client spoofs).
+# - P0-02: SECRET_KEY + SUPER_ADMIN_PASSWORD required at compose interpolate time;
+#           Settings fail-fast rejects weak/default secrets when APP_ENV=production.
+# - P0-03: Redis requires a password and has no host port.
+#           Bot webhook binds to 127.0.0.1 only (host nginx → webhook).
+# - P0-04: No source bind-mounts; code comes from the image built by Dockerfile.
+#           API starts without uvicorn --reload (APP_ENV=production → workers).
+# - P0-05: Frontend nginx uses nginx.prod.conf (no /docs|/redoc|/openapi.json proxy);
+#           FastAPI disables OpenAPI when APP_ENV=production.
+# - SEC-R2: POSTGRES_PASSWORD required (no default); DB has no host port;
+#           Settings rejects weak/missing DATABASE_URL password in production.
+# - F-03: Changing POSTGRES_PASSWORD in .env does NOT rotate an existing volume.
+#           See docs/runbooks/postgres-password-rotation.md (ALTER ROLE; never wipe
+#           postgres_data as the primary rotation method).
+# - F-04/F-07: Frontend publishes 127.0.0.1 only (TLS edge on host). API/DB/Redis
+#           have no host ports. Do not publish API:8000 while TRUST_PROXY_HEADERS=true.
+# - F-05: API/bot image runs as non-root UID 10001 (see Dockerfile USER).
+#
+# Public edge contract (required for public production):
+#   Internet → TLS terminator (host) → 127.0.0.1:frontend → api (internal)
+# Do not expose frontend plaintext, API, Postgres, or Redis to the public internet.
+#
+# Do not use this file while also publishing API:8000, Redis:6379, or Postgres:5432
+# to the internet.
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NGINX_CONF: nginx.prod.conf
+    # F-07: plaintext UI must not be the public internet listener — TLS edge only.
+    # Container listens on 8080 as non-root nginx; host bind stays 127.0.0.1:3000.
+    ports: !override
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:8080"
+
+  api:
+    environment:
+      # Forced for this compose file — do not inherit development from .env.
+      APP_ENV: production
+      DEBUG: "false"
+      # P0-02: refuse to interpolate with missing/empty critical secrets.
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD is required for docker-compose.prod.yml}
+      # Trusted single-proxy mode: frontend nginx overwrites X-Real-IP / XFF.
+      # Keep API host ports empty (below). Never set true if API is published.
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
+      # SEC-R2: no POSTGRES_PASSWORD:-onboard fallback — password required below.
+      # SEC-R3: runtime onboard_app; migrator onboard_owner (separate from bootstrap).
+      # F-03: ONBOARD_* passwords are applied by bootstrap_rls_roles on API start.
+      #       POSTGRES_PASSWORD is NOT re-applied to an existing postgres_data volume.
+      ONBOARD_OWNER_PASSWORD: ${ONBOARD_OWNER_PASSWORD:?ONBOARD_OWNER_PASSWORD is required for docker-compose.prod.yml}
+      ONBOARD_APP_PASSWORD: ${ONBOARD_APP_PASSWORD:?ONBOARD_APP_PASSWORD is required for docker-compose.prod.yml}
+      DATABASE_URL: postgresql+asyncpg://onboard_app:${ONBOARD_APP_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://onboard_owner:${ONBOARD_OWNER_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+      BOOTSTRAP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-onboard}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-onboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for docker-compose.prod.yml}
+      POSTGRES_DB: ${POSTGRES_DB:-onboard_ai}
+      POSTGRES_HOST: db
+      # Compose network host; password from REDIS_PASSWORD (required below).
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+    ports: !reset []
+    # Immutable image: application code is COPY'd in Dockerfile (not host .:/app).
+    volumes: !reset []
+    restart: unless-stopped
+
+  bot:
+    environment:
+      APP_ENV: production
+      DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      # R-AUDIT-02: bot does not open DB connections (HTTP → API only), but
+      # Settings still validates DATABASE_URL when APP_ENV=production. Override
+      # env_file inheritance so rendered config does not keep localhost URLs.
+      ONBOARD_OWNER_PASSWORD: ${ONBOARD_OWNER_PASSWORD:?ONBOARD_OWNER_PASSWORD is required for docker-compose.prod.yml}
+      ONBOARD_APP_PASSWORD: ${ONBOARD_APP_PASSWORD:?ONBOARD_APP_PASSWORD is required for docker-compose.prod.yml}
+      DATABASE_URL: postgresql+asyncpg://onboard_app:${ONBOARD_APP_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://onboard_owner:${ONBOARD_OWNER_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+    # Preserve host-nginx → 127.0.0.1:8081 webhook path; block LAN/0.0.0.0.
+    # Polling mode does not need this port — leave BOT_WEBHOOK_URL empty.
+    ports: !override
+      - "127.0.0.1:${BOT_WEBHOOK_PORT:-8081}:8081"
+    volumes: !reset []
+    restart: unless-stopped
+
+  db:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-onboard}
+      # SEC-R2: refuse missing/empty password — never fall back to "onboard".
+      # F-03 WARNING: this value is applied ONLY on first init of postgres_data.
+      # Changing it later does not rotate the live role — see
+      # docs/runbooks/postgres-password-rotation.md
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for docker-compose.prod.yml}
+      POSTGRES_DB: ${POSTGRES_DB:-onboard_ai}
+    # Internal Compose network only — same posture as production Redis/API.
+    ports: !reset []
+    restart: unless-stopped
+
+  redis:
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?REDIS_PASSWORD is required for docker-compose.prod.yml}
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required for docker-compose.prod.yml}
+    ports: !reset []
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10

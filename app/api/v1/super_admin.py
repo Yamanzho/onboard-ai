@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.api.super_admin_deps import (
@@ -12,16 +12,18 @@ from app.api.super_admin_deps import (
     SuperAdminUser,
 )
 from app.api.v1.responses import ERROR_RESPONSES
-from app.core.exceptions import NotFoundError, ValidationError
-from app.core.security import (
-    InvalidTokenError,
-    create_access_token,
-    create_refresh_token,
-    decode_token,
+from app.core.auth_cookies import (
+    clear_auth_cookies,
+    read_refresh_cookie,
+    set_auth_cookies,
 )
+from app.core.client_ip import client_ip
+from app.core.config import get_settings
+from app.core.exceptions import NotFoundError, UnauthorizedError, ValidationError
+from app.core.rate_limit import is_rate_limited
 from app.db.enums import EmployeeStatus, PlatformRole
 from app.db.models.super_admin import SuperAdmin
-from app.schemas.auth import RefreshRequest, TokenResponse
+from app.schemas.auth import BrowserSessionResponse, RefreshRequest, TokenResponse
 from app.schemas.company import CompanyResponse
 from app.schemas.super_admin import (
     CompanyLimitsResponse,
@@ -44,8 +46,10 @@ from app.schemas.super_admin import (
     SuperAdminLoginRequest,
     SuperAdminResponse,
 )
+from app.services.refresh_session import SUBJECT_SUPER_ADMIN, RefreshSessionService
 
 router = APIRouter(prefix="/super-admin", tags=["Super Admin"])
+_refresh_sessions = RefreshSessionService()
 
 _AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid Super Admin token"},
@@ -53,20 +57,20 @@ _AUTH_RESPONSES = {
 }
 
 
-def _issue_tokens(admin: SuperAdmin) -> TokenResponse:
-    return TokenResponse(
-        access_token=create_access_token(
-            subject=admin.id,
-            role=PlatformRole.SUPER_ADMIN.value,
-            company_id=None,
-        ),
-        refresh_token=create_refresh_token(
-            subject=admin.id,
-            role=PlatformRole.SUPER_ADMIN.value,
-            company_id=None,
-        ),
-        token_type="bearer",
+async def _issue_tokens(admin: SuperAdmin) -> TokenResponse:
+    issued = await _refresh_sessions.issue(
+        subject_type=SUBJECT_SUPER_ADMIN,
+        subject_id=admin.id,
+        role=PlatformRole.SUPER_ADMIN.value,
+        company_id=None,
     )
+    return issued.tokens
+
+
+def _resolve_sa_refresh(request: Request, payload: RefreshRequest | None) -> str | None:
+    if payload is not None and payload.refresh_token:
+        return payload.refresh_token
+    return read_refresh_cookie(request.cookies, kind="super_admin")
 
 
 def _to_super_admin_response(admin: SuperAdmin) -> SuperAdminResponse:
@@ -81,27 +85,65 @@ def _to_super_admin_response(admin: SuperAdmin) -> SuperAdminResponse:
     )
 
 
+def _enforce_super_admin_login_rate_limit(request: Request) -> None:
+    settings = get_settings()
+    ip = client_ip(request)
+    limited = is_rate_limited(
+        f"super_admin_login:ip:{ip}",
+        limit=settings.login_rate_limit,
+        window_seconds=settings.login_rate_window_seconds,
+    )
+    if limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Try again later.",
+            headers={"Retry-After": str(settings.login_rate_window_seconds)},
+        )
+
+
+def _enforce_super_admin_refresh_rate_limit(request: Request) -> None:
+    """Rate-limit Super Admin refresh by client IP before rotation."""
+    settings = get_settings()
+    ip = client_ip(request)
+    limited = is_rate_limited(
+        f"super_admin_refresh:ip:{ip}",
+        limit=settings.refresh_rate_limit,
+        window_seconds=settings.refresh_rate_window_seconds,
+    )
+    if limited:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many refresh attempts. Try again later.",
+            headers={"Retry-After": str(settings.refresh_rate_window_seconds)},
+        )
+
+
 @router.post(
     "/auth/login",
-    response_model=TokenResponse,
+    response_model=BrowserSessionResponse,
     summary="Super Admin login",
     description=(
         "Authenticate a platform Super Admin with email + password. "
+        "Issues httpOnly Super Admin cookies (no raw tokens in JSON). "
         "Tokens have role ``super_admin`` and no ``company_id``. "
         "They cannot access tenant company APIs."
     ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "Invalid credentials"},
         status.HTTP_403_FORBIDDEN: {"description": "Account disabled"},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"description": "Login rate limit exceeded"},
         status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
             status.HTTP_422_UNPROCESSABLE_CONTENT
         ],
     },
 )
 async def super_admin_login(
+    request: Request,
+    response: Response,
     payload: SuperAdminLoginRequest,
     auth: SuperAdminAuthServiceDep,
-) -> TokenResponse:
+) -> BrowserSessionResponse:
+    _enforce_super_admin_login_rate_limit(request)
     try:
         admin = await auth.authenticate(email=payload.email, password=payload.password)
     except NotFoundError as exc:
@@ -115,21 +157,27 @@ async def super_admin_login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
-    return _issue_tokens(admin)
+    tokens = await _issue_tokens(admin)
+    set_auth_cookies(response, tokens, kind="super_admin")
+    return BrowserSessionResponse()
 
 
 @router.post(
     "/auth/login/form",
-    response_model=TokenResponse,
+    response_model=BrowserSessionResponse,
     include_in_schema=False,
     summary="Super Admin OAuth2 form login",
 )
 async def super_admin_login_form(
+    request: Request,
+    response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     auth: SuperAdminAuthServiceDep,
-) -> TokenResponse:
-    """OAuth2 password form for Swagger Authorize (username = email)."""
+) -> BrowserSessionResponse:
+    """OAuth2 password form login (cookie-only; username = email)."""
     return await super_admin_login(
+        request,
+        response,
         SuperAdminLoginRequest(email=form_data.username, password=form_data.password),
         auth,
     )
@@ -137,31 +185,49 @@ async def super_admin_login_form(
 
 @router.post(
     "/auth/refresh",
-    response_model=TokenResponse,
+    response_model=None,
     summary="Refresh Super Admin tokens",
+    description=(
+        "Rotate Super Admin refresh session. Browser clients omit the JSON body "
+        "and receive a cookie-only acknowledgement. Service clients that send "
+        "``refresh_token`` in the body receive a full token pair."
+    ),
     responses={
         status.HTTP_401_UNAUTHORIZED: {"description": "Invalid refresh token"},
         status.HTTP_403_FORBIDDEN: {"description": "Account disabled"},
+        status.HTTP_429_TOO_MANY_REQUESTS: {"description": "Refresh rate limit exceeded"},
     },
 )
 async def super_admin_refresh(
-    payload: RefreshRequest,
+    request: Request,
+    response: Response,
     auth: SuperAdminAuthServiceDep,
-) -> TokenResponse:
-    try:
-        token_payload = decode_token(payload.refresh_token, expected_type="refresh")
-        if token_payload.get("role") != PlatformRole.SUPER_ADMIN.value:
-            raise InvalidTokenError("Not a Super Admin token")
-        admin_id = UUID(token_payload["sub"])
-    except (InvalidTokenError, ValueError) as exc:
+    payload: RefreshRequest | None = None,
+) -> BrowserSessionResponse | TokenResponse:
+    _enforce_super_admin_refresh_rate_limit(request)
+    raw = _resolve_sa_refresh(request, payload)
+    service_mode = bool(payload is not None and payload.refresh_token)
+    if not raw:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    try:
+        subject_id, family_id = await _refresh_sessions.begin_rotation(
+            raw_refresh=raw,
+            subject_type=SUBJECT_SUPER_ADMIN,
+        )
+    except UnauthorizedError as exc:
+        clear_auth_cookies(response, kind="super_admin")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=exc.message,
+            headers={"WWW-Authenticate": "Bearer"},
         ) from exc
 
     try:
-        admin = await auth.get_by_id(admin_id)
+        admin = await auth.get_by_id(subject_id)
     except NotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -173,7 +239,33 @@ async def super_admin_refresh(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=str(exc),
         ) from exc
-    return _issue_tokens(admin)
+
+    issued = await _refresh_sessions.issue(
+        subject_type=SUBJECT_SUPER_ADMIN,
+        subject_id=admin.id,
+        role=PlatformRole.SUPER_ADMIN.value,
+        company_id=None,
+        family_id=family_id,
+    )
+    set_auth_cookies(response, issued.tokens, kind="super_admin")
+    if service_mode:
+        return issued.tokens
+    return BrowserSessionResponse()
+
+
+@router.post(
+    "/auth/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Super Admin logout",
+)
+async def super_admin_logout(
+    request: Request,
+    response: Response,
+    payload: RefreshRequest | None = None,
+) -> None:
+    raw = _resolve_sa_refresh(request, payload)
+    await _refresh_sessions.revoke_raw(raw)
+    clear_auth_cookies(response, kind="super_admin")
 
 
 @router.get(

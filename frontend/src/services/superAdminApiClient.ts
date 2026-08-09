@@ -1,9 +1,3 @@
-import {
-  clearSuperAdminTokens,
-  getSuperAdminAccessToken,
-  getSuperAdminRefreshToken,
-  setSuperAdminTokens,
-} from '../lib/superAdminStorage'
 import { ApiError } from './apiClient'
 
 const API_BASE =
@@ -18,26 +12,13 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
 let refreshPromise: Promise<boolean> | null = null
 
 async function refreshSuperAdminToken(): Promise<boolean> {
-  const refresh = getSuperAdminRefreshToken()
-  if (!refresh) return false
-
   const res = await fetch(`${API_BASE}/api/v1/super-admin/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refresh_token: refresh }),
+    credentials: 'include',
+    body: JSON.stringify({}),
   })
-
-  if (!res.ok) {
-    clearSuperAdminTokens()
-    return false
-  }
-
-  const data = (await res.json()) as {
-    access_token: string
-    refresh_token: string
-  }
-  setSuperAdminTokens(data.access_token, data.refresh_token)
-  return true
+  return res.ok
 }
 
 function ensureRefresh(): Promise<boolean> {
@@ -77,13 +58,9 @@ export async function superAdminRequest<T>(
     finalHeaders.set('Content-Type', 'application/json')
   }
 
-  if (auth) {
-    const token = getSuperAdminAccessToken()
-    if (token) finalHeaders.set('Authorization', `Bearer ${token}`)
-  }
-
   const init: RequestInit = {
     ...rest,
+    credentials: 'include',
     headers: finalHeaders,
     body: body === undefined ? undefined : JSON.stringify(body),
   }
@@ -93,9 +70,7 @@ export async function superAdminRequest<T>(
   if (res.status === 401 && auth) {
     const refreshed = await ensureRefresh()
     if (refreshed) {
-      const token = getSuperAdminAccessToken()
-      if (token) finalHeaders.set('Authorization', `Bearer ${token}`)
-      res = await fetch(`${API_BASE}${path}`, { ...init, headers: finalHeaders })
+      res = await fetch(`${API_BASE}${path}`, init)
     }
   }
 

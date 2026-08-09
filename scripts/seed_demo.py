@@ -46,6 +46,8 @@ DEMO_EMPLOYEE_TELEGRAM = 100003
 async def seed() -> None:
     settings = get_settings()
     async with UnitOfWork(session_factory=async_session_factory) as uow:
+        # Seed runs under migrator or app role; platform mode required for RLS.
+        await uow.enter_platform()
         company = await uow.companies.get_by_id(DEMO_COMPANY_ID)
         if company is None:
             company = await uow.companies.create(

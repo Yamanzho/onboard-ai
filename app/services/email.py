@@ -34,11 +34,11 @@ class EmailService:
     async def _send(self, *, to_email: str, subject: str, body: str) -> None:
         settings = get_settings()
         if not settings.smtp_host:
+            # Never log body — invite emails contain one-time tokens.
             logger.info(
-                "email skipped (SMTP not configured) to=%s subject=%r body=%r",
+                "email skipped (SMTP not configured) to=%s subject=%r body_omitted=true",
                 to_email,
                 subject,
-                body,
             )
             return
 

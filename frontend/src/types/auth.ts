@@ -1,8 +1,14 @@
 export type EmployeeRole = 'admin' | 'hr' | 'employee'
 
+/** Cookie-only browser auth acknowledgement (no raw tokens). */
+export interface BrowserSessionResponse {
+  token_type: string
+}
+
+/** @deprecated Prefer BrowserSessionResponse for browser flows. */
 export interface TokenResponse {
-  access_token: string
-  refresh_token: string
+  access_token?: string
+  refresh_token?: string
   token_type: string
 }
 

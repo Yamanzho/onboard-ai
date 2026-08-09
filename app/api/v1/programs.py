@@ -103,8 +103,10 @@ async def list_programs(
     summary="Get onboarding program",
     description=(
         "Get a program within the caller's company. "
-        "Any authenticated employee in the tenant may read program metadata "
-        "(needed for Telegram onboarding UX)."
+        "HR/admin may read any same-tenant program. "
+        "Employees may read published programs, or an unpublished program "
+        "only when they have a non-cancelled assignment to it "
+        "(Telegram onboarding UX after archive)."
     ),
     responses={
         **_READ_AUTH_RESPONSES,
@@ -125,6 +127,8 @@ async def get_program(
     program = await service.get_program(
         program_id,
         company_id=current_user.company_id,
+        actor_role=current_user.role,
+        actor_employee_id=current_user.id,
     )
     return ProgramResponse.model_validate(program)
 

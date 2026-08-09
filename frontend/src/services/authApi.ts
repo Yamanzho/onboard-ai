@@ -1,13 +1,13 @@
-import type { CurrentUser, TokenResponse } from '../types/auth'
+import type { BrowserSessionResponse, CurrentUser } from '../types/auth'
 import type { InviteAcceptPayload, InvitePreview } from '../types/superAdmin'
 import { apiRequest } from './apiClient'
 
-export async function login(username: string, password: string): Promise<TokenResponse> {
+export async function login(username: string, password: string): Promise<BrowserSessionResponse> {
   const body = new URLSearchParams()
   body.set('username', username)
   body.set('password', password)
 
-  return apiRequest<TokenResponse>('/api/v1/auth/login', {
+  return apiRequest<BrowserSessionResponse>('/api/v1/auth/login', {
     method: 'POST',
     auth: false,
     form: true,
@@ -20,17 +20,27 @@ export async function fetchMe(): Promise<CurrentUser> {
   return apiRequest<CurrentUser>('/api/v1/auth/me')
 }
 
-export async function refresh(refreshToken: string): Promise<TokenResponse> {
-  return apiRequest<TokenResponse>('/api/v1/auth/refresh', {
+export async function refresh(): Promise<BrowserSessionResponse> {
+  return apiRequest<BrowserSessionResponse>('/api/v1/auth/refresh', {
     method: 'POST',
     auth: false,
-    body: { refresh_token: refreshToken },
+    body: {},
+  })
+}
+
+export async function logout(): Promise<void> {
+  await apiRequest<void>('/api/v1/auth/logout', {
+    method: 'POST',
+    auth: false,
+    body: {},
   })
 }
 
 export async function previewInvite(token: string): Promise<InvitePreview> {
-  return apiRequest<InvitePreview>(`/api/v1/auth/invite/${encodeURIComponent(token)}`, {
+  return apiRequest<InvitePreview>('/api/v1/auth/invite/preview', {
+    method: 'POST',
     auth: false,
+    body: { token },
   })
 }
 

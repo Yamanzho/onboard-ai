@@ -18,6 +18,7 @@ class SubscriptionHistoryRepository(BaseRepository[SubscriptionHistoryEvent]):
         offset: int = 0,
         limit: int = 100,
     ) -> list[SubscriptionHistoryEvent]:
+        self._ensure_rls_context()
         stmt = (
             select(SubscriptionHistoryEvent)
             .where(SubscriptionHistoryEvent.company_id == company_id)

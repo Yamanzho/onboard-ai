@@ -28,6 +28,7 @@ class AssignmentService:
         due_at: datetime | None = None,
     ) -> Assignment:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             employee = await uow.employees.get_by_id(employee_id)
             if employee is None:
                 raise NotFoundError(f"Employee {employee_id} not found")
@@ -84,6 +85,7 @@ class AssignmentService:
                 for step in steps:
                     await uow.progress.create(
                         Progress(
+                            company_id=employee.company_id,
                             assignment_id=assignment.id,
                             step_id=step.id,
                             status=ProgressStatus.NOT_STARTED.value,
@@ -104,6 +106,7 @@ class AssignmentService:
         company_id: UUID,
     ) -> Assignment:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             assignment = await uow.assignments.get_by_id(assignment_id)
             if assignment is None:
                 raise NotFoundError(f"Assignment {assignment_id} not found")
@@ -132,6 +135,7 @@ class AssignmentService:
         company_id: UUID,
     ) -> Assignment:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             assignment = await uow.assignments.get_by_id(assignment_id)
             if assignment is None:
                 raise NotFoundError(f"Assignment {assignment_id} not found")
@@ -155,6 +159,7 @@ class AssignmentService:
             raise ValidationError(f"Invalid assignment status {status!r}")
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             employee = await uow.employees.get_by_id(employee_id)
             if employee is None:
                 raise NotFoundError(f"Employee {employee_id} not found")
@@ -189,6 +194,7 @@ class AssignmentService:
         )
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")

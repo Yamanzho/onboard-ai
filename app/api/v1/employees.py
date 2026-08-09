@@ -49,6 +49,7 @@ async def create_employee(
     employee = await service.create_employee(
         company_id=payload.company_id,
         actor_company_id=current_user.company_id,
+        actor_role=current_user.role,
         telegram_user_id=payload.telegram_user_id,
         telegram_chat_id=payload.telegram_chat_id,
         telegram_username=payload.telegram_username,
@@ -153,6 +154,7 @@ async def update_employee(
     employee = await service.update_employee(
         employee_id,
         company_id=current_user.company_id,
+        actor_role=current_user.role,
         **payload.model_dump(exclude_unset=True),
     )
     return EmployeeResponse.model_validate(employee)
@@ -182,5 +184,6 @@ async def delete_employee(
     await service.delete_employee(
         employee_id,
         company_id=current_user.company_id,
+        actor_role=current_user.role,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

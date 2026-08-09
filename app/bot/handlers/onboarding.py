@@ -1,3 +1,4 @@
+from html import escape
 from uuid import UUID
 
 from aiogram import F, Router
@@ -29,8 +30,9 @@ def _format_step_message(
     item: ProgressItemDTO,
 ) -> str:
     status = _STATUS_LABELS.get(item.status, item.status)
+    safe_title = escape(program_title)
     return (
-        f"📚 <b>{program_title}</b>\n"
+        f"📚 <b>{safe_title}</b>\n"
         f"Прогресс: {percentage:.0f}%\n\n"
         f"<b>Шаг {step_number} из {total_steps}</b>\n"
         f"Статус: {status}\n\n"
@@ -55,7 +57,7 @@ async def _show_current_step(
         await state.clear()
         text = (
             f"🎉 <b>Поздравляем!</b>\n\n"
-            f"Вы завершили программу «{program.title}».\n"
+            f"Вы завершили программу «{escape(program.title)}».\n"
             f"Прогресс: {progress.percentage:.0f}%."
         )
         if edit:

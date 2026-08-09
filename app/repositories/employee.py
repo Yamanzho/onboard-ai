@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.employee import Employee
@@ -16,12 +16,19 @@ class EmployeeRepository(BaseRepository[Employee]):
         company_id: UUID,
         telegram_user_id: int,
     ) -> Employee | None:
+        self._ensure_rls_context()
         stmt = select(Employee).where(
             Employee.company_id == company_id,
             Employee.telegram_user_id == telegram_user_id,
         )
         result = await self._session.scalars(stmt)
         return result.first()
+
+    async def count_by_company_id(self, company_id: UUID) -> int:
+        self._ensure_rls_context()
+        stmt = select(func.count()).select_from(Employee).where(Employee.company_id == company_id)
+        result = await self._session.scalar(stmt)
+        return int(result or 0)
 
     async def list_by_company_id(
         self,
@@ -31,6 +38,7 @@ class EmployeeRepository(BaseRepository[Employee]):
         limit: int = 100,
         status: str | None = None,
     ) -> list[Employee]:
+        self._ensure_rls_context()
         stmt = self._company_list_statement(
             company_id,
             offset=offset,

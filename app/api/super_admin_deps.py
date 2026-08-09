@@ -2,10 +2,11 @@ from collections.abc import Callable
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 
 from app.api.deps import get_platform_service, get_super_admin_auth_service
+from app.core.auth_cookies import read_access_cookie
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.security import InvalidTokenError, decode_token
 from app.db.enums import PlatformRole
@@ -14,6 +15,7 @@ from app.services.platform import PlatformService, SuperAdminAuthService
 
 super_admin_oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl="/api/v1/super-admin/auth/login/form",
+    auto_error=False,
 )
 
 SuperAdminAuthServiceDep = Annotated[
@@ -24,12 +26,20 @@ PlatformServiceDep = Annotated[PlatformService, Depends(get_platform_service)]
 
 
 async def get_current_super_admin(
-    token: Annotated[str, Depends(super_admin_oauth2_scheme)],
+    request: Request,
+    token: Annotated[str | None, Depends(super_admin_oauth2_scheme)],
     auth: SuperAdminAuthServiceDep,
 ) -> SuperAdmin:
-    """Resolve the authenticated platform Super Admin from a Bearer token."""
+    """Resolve Super Admin from Bearer or httpOnly access cookie."""
+    access = token or read_access_cookie(request.cookies, kind="super_admin")
+    if not access:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     try:
-        payload = decode_token(token, expected_type="access")
+        payload = decode_token(access, expected_type="access")
         if payload.get("role") != PlatformRole.SUPER_ADMIN.value:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

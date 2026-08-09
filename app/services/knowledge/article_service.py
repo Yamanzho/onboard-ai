@@ -6,8 +6,11 @@ from uuid import UUID
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.db.enums import (
+    AssignmentStatus,
+    EmployeeRole,
     KnowledgeArticleStatus,
     KnowledgeBodyFormat,
+    KnowledgeLinkTargetType,
     KnowledgeVisibility,
 )
 from app.db.models.knowledge_article import KnowledgeArticle
@@ -24,6 +27,20 @@ _ARCHIVABLE_STATUSES = frozenset(
     {
         KnowledgeArticleStatus.DRAFT.value,
         KnowledgeArticleStatus.PUBLISHED.value,
+    }
+)
+# HR/Admin manage drafts/archives; employees only get published + visibility ACL.
+_KB_MANAGEMENT_ROLES = frozenset(
+    {
+        EmployeeRole.ADMIN.value,
+        EmployeeRole.HR.value,
+    }
+)
+_ASSIGNMENT_STATUSES_GRANTING_PROGRAM_KB = frozenset(
+    {
+        AssignmentStatus.PENDING.value,
+        AssignmentStatus.IN_PROGRESS.value,
+        AssignmentStatus.COMPLETED.value,
     }
 )
 
@@ -58,6 +75,7 @@ class ArticleService:
         tag_ids = tag_ids or []
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -78,6 +96,7 @@ class ArticleService:
             )
             version = await uow.knowledge_article_versions.create(
                 KnowledgeArticleVersion(
+                    company_id=company_id,
                     article_id=article.id,
                     version=1,
                     title=title,
@@ -108,17 +127,87 @@ class ArticleService:
         article_id: UUID,
         *,
         company_id: UUID,
+        actor_role: str,
+        actor_employee_id: UUID | None = None,
     ) -> KnowledgeArticle:
+        """Load an article for the actor within ``company_id``.
+
+        HR/Admin may read any same-tenant article (including draft/archived).
+        Employees may only read **published** articles that pass visibility rules.
+        Unauthorized access returns NotFoundError (same as missing) to avoid
+        existence enumeration.
+        """
+        not_found = f"Knowledge article {article_id} not found"
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             article = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             if article is None:
-                raise NotFoundError(f"Knowledge article {article_id} not found")
+                raise NotFoundError(not_found)
             ensure_same_company(
                 resource_company_id=article.company_id,
                 actor_company_id=company_id,
-                not_found_message=f"Knowledge article {article_id} not found",
+                not_found_message=not_found,
             )
-            return article
+
+            if actor_role in _KB_MANAGEMENT_ROLES:
+                return article
+
+            # Employee (and any other non-management role): published + visibility.
+            if article.status != KnowledgeArticleStatus.PUBLISHED.value:
+                raise NotFoundError(not_found)
+
+            if article.visibility == KnowledgeVisibility.COMPANY.value:
+                return article
+
+            if article.visibility == KnowledgeVisibility.PROGRAM.value:
+                if actor_employee_id is None:
+                    raise NotFoundError(not_found)
+                if await self._employee_may_read_program_article(
+                    uow,
+                    article,
+                    actor_employee_id=actor_employee_id,
+                ):
+                    return article
+                raise NotFoundError(not_found)
+
+            # Unknown visibility value — fail closed for non-management readers.
+            raise NotFoundError(not_found)
+
+    async def _employee_may_read_program_article(
+        self,
+        uow: UnitOfWork,
+        article: KnowledgeArticle,
+        *,
+        actor_employee_id: UUID,
+    ) -> bool:
+        """True when the employee has a non-cancelled assignment to a linked program."""
+        links = list(article.links or [])
+        if not links:
+            return False
+
+        assignments = await uow.assignments.list_by_employee_id(
+            actor_employee_id,
+            offset=0,
+            limit=1000,
+        )
+        allowed_program_ids = {
+            assignment.program_id
+            for assignment in assignments
+            if assignment.status in _ASSIGNMENT_STATUSES_GRANTING_PROGRAM_KB
+        }
+        if not allowed_program_ids:
+            return False
+
+        for link in links:
+            if link.target_type == KnowledgeLinkTargetType.PROGRAM.value:
+                if link.target_id in allowed_program_ids:
+                    return True
+                continue
+            if link.target_type == KnowledgeLinkTargetType.STEP.value:
+                step = await uow.steps.get_by_id(link.target_id)
+                if step is not None and step.program_id in allowed_program_ids:
+                    return True
+        return False
 
     async def list_articles(
         self,
@@ -144,6 +233,7 @@ class ArticleService:
                 )
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -192,6 +282,7 @@ class ArticleService:
         content_touched = bool(content_keys.intersection(values))
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             article = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             if article is None:
                 raise NotFoundError(f"Knowledge article {article_id} not found")
@@ -247,6 +338,7 @@ class ArticleService:
                 )
                 version = await uow.knowledge_article_versions.create(
                     KnowledgeArticleVersion(
+                        company_id=company_id,
                         article_id=article.id,
                         version=next_version,
                         title=str(title),
@@ -273,6 +365,7 @@ class ArticleService:
         company_id: UUID,
     ) -> KnowledgeArticle:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             article = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             if article is None:
                 raise NotFoundError(f"Knowledge article {article_id} not found")
@@ -315,6 +408,7 @@ class ArticleService:
         company_id: UUID,
     ) -> KnowledgeArticle:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             article = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             if article is None:
                 raise NotFoundError(f"Knowledge article {article_id} not found")

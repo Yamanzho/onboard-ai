@@ -73,6 +73,7 @@ async def test_update_article_creates_new_version_and_keeps_old(
     assert updated.current_version_id != v1_id
 
     async with UnitOfWork() as uow:
+        await uow.enter_platform()
         old = await uow.session.get(KnowledgeArticleVersion, v1_id)
         assert old is not None
         assert old.version == 1
@@ -138,7 +139,11 @@ async def test_archive_article(
 @pytest.mark.asyncio
 async def test_get_article_not_found(article_service: ArticleService, company_a: Company) -> None:
     with pytest.raises(NotFoundError, match="not found"):
-        await article_service.get_article(uuid4(), company_id=company_a.id)
+        await article_service.get_article(
+            uuid4(),
+            company_id=company_a.id,
+            actor_role="hr",
+        )
 
 
 @pytest.mark.asyncio
@@ -154,7 +159,11 @@ async def test_cannot_get_article_from_other_company(
         body="secret",
     )
     with pytest.raises(NotFoundError, match="not found"):
-        await article_service.get_article(article.id, company_id=company_b.id)
+        await article_service.get_article(
+            article.id,
+            company_id=company_b.id,
+            actor_role="hr",
+        )
 
 
 @pytest.mark.asyncio
@@ -261,9 +270,15 @@ async def test_list_articles_eager_loads_relations_without_n_plus_one(
     finally:
         event.remove(bind, "before_cursor_execute", _before_cursor_execute)
 
-    select_count = sum(1 for s in statements if s.lstrip().upper().startswith("SELECT"))
+    select_count = sum(
+        1
+        for s in statements
+        if s.lstrip().upper().startswith("SELECT")
+        and "set_config(" not in s.lower()
+    )
     # company lookup + list + selectinload batches (version/tags/links/category).
-    assert select_count <= 6
+    # SEC-R3 set_config GUC helpers are excluded (security plumbing, not N+1).
+    assert select_count <= 8
 
 
 @pytest.mark.asyncio

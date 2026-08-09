@@ -28,6 +28,7 @@ from app.db.models.platform_audit_log import PlatformAuditLog
 from app.db.models.subscription_history import SubscriptionHistoryEvent
 from app.db.uow import UnitOfWork
 from app.services.email import EmailService
+from app.services.refresh_session import SUBJECT_EMPLOYEE
 
 TIER_LIMITS: dict[str, dict[str, int]] = {
     SubscriptionTier.STARTER.value: {"employees": 10, "programs": 3},
@@ -85,14 +86,25 @@ class InviteService(PlatformAuditMixin):
         company_name: str,
         super_admin_id: UUID | None = None,
     ) -> None:
+        # Onboarding invites are for INVITED users only — never ACTIVE password reset.
+        if employee.status != EmployeeStatus.INVITED.value:
+            raise ValidationError(
+                "Onboarding invites can only be sent to invited employees"
+            )
+
         settings = get_settings()
         token = secrets.token_urlsafe(32)
         expires_at = datetime.now(UTC) + timedelta(hours=settings.invite_ttl_hours)
         normalized_email = invited_email.strip().lower()
 
         async with self._uow_factory() as uow:
+            await uow.enter_platform()
+            # Invalidate prior unused invites so resend cannot leave password-reset
+            # tokens that overwrite a later-accepted password.
+            await uow.employee_invites.invalidate_unused_for_employee(employee.id)
             await uow.employee_invites.create(
                 EmployeeInvite(
+                    company_id=employee.company_id,
                     employee_id=employee.id,
                     token_hash=hash_token(token),
                     expires_at=expires_at,
@@ -104,7 +116,9 @@ class InviteService(PlatformAuditMixin):
                 await uow.employees.update(employee.id, email=normalized_email)
             await uow.commit()
 
-        invite_url = f"{settings.invite_base_url.rstrip('/')}/invite/{token}"
+        # Fragment carries the secret so browsers/proxies do not put it in path
+        # access logs or Referer (SPA reads location.hash; preview uses POST body).
+        invite_url = f"{settings.invite_base_url.rstrip('/')}/invite#{token}"
         await self._email.send_invite_email(
             to_email=normalized_email,
             full_name=employee.full_name,
@@ -113,8 +127,11 @@ class InviteService(PlatformAuditMixin):
         )
 
     async def get_invite_preview(self, token: str) -> dict[str, Any]:
+        token_hash = hash_token(token)
         async with self._uow_factory() as uow:
-            invite = await uow.employee_invites.get_by_token_hash(hash_token(token))
+            # Pin token_hash so auth RLS cannot enumerate other invites.
+            await uow.enter_auth_bootstrap(invite_token_hash=token_hash)
+            invite = await uow.employee_invites.get_by_token_hash(token_hash)
             if invite is None:
                 raise NotFoundError("Invite not found")
             if invite.used_at is not None:
@@ -122,9 +139,17 @@ class InviteService(PlatformAuditMixin):
             if invite.expires_at < datetime.now(UTC):
                 raise ValidationError("Invite expired")
 
+            # Pin invite.employee_id (from DB invite row, not client input).
+            await uow.enter_auth_bootstrap(employee_id=invite.employee_id)
             employee = await uow.employees.get_by_id(invite.employee_id)
             if employee is None:
                 raise NotFoundError("Employee not found")
+            if employee.status != EmployeeStatus.INVITED.value:
+                raise ValidationError(
+                    "Invite is only valid for invited employees"
+                )
+            # Company name via tenant mode from DB-resolved company_id.
+            await uow.enter_tenant(employee.company_id)
             company = await uow.companies.get_by_id(employee.company_id)
             return {
                 "employee_id": employee.id,
@@ -138,8 +163,11 @@ class InviteService(PlatformAuditMixin):
         if len(password) < 8:
             raise ValidationError("Password must be at least 8 characters")
 
+        token_hash = hash_token(token)
         async with self._uow_factory() as uow:
-            invite = await uow.employee_invites.get_by_token_hash(hash_token(token))
+            # Pin token_hash so auth RLS cannot enumerate/update other invites.
+            await uow.enter_auth_bootstrap(invite_token_hash=token_hash)
+            invite = await uow.employee_invites.get_by_token_hash_for_update(token_hash)
             if invite is None:
                 raise NotFoundError("Invite not found")
             if invite.used_at is not None:
@@ -147,20 +175,31 @@ class InviteService(PlatformAuditMixin):
             if invite.expires_at < datetime.now(UTC):
                 raise ValidationError("Invite expired")
 
+            # Pin employee for subject update + sibling invite invalidate.
+            await uow.enter_auth_bootstrap(employee_id=invite.employee_id)
             employee = await uow.employees.get_by_id(invite.employee_id)
             if employee is None:
                 raise NotFoundError("Employee not found")
-            if employee.status == EmployeeStatus.ARCHIVED.value:
-                raise ValidationError("Employee is archived")
+            # Only INVITED → ACTIVE via onboarding invite (blocks ACTIVE takeover).
+            if employee.status != EmployeeStatus.INVITED.value:
+                raise ValidationError(
+                    "Invite is only valid for invited employees"
+                )
 
             updated = await uow.employees.update(
                 employee.id,
                 password_hash=hash_password(password),
                 status=EmployeeStatus.ACTIVE.value,
             )
-            await uow.employee_invites.update(
-                invite.id,
-                used_at=datetime.now(UTC),
+            # Consume this invite and any siblings so leftover tokens cannot
+            # overwrite the password after activation / resend races.
+            await uow.employee_invites.invalidate_unused_for_employee(employee.id)
+            # Drop any pre-existing refresh sessions for this employee only
+            # (e.g. bot-issued tokens while still invited).
+            await uow.enter_session_bootstrap()
+            await uow.refresh_sessions.revoke_all_for_subject(
+                subject_type=SUBJECT_EMPLOYEE,
+                subject_id=employee.id,
             )
             await uow.commit()
             if updated is None:
@@ -180,6 +219,9 @@ class SubscriptionMixin:
     ) -> CompanySubscription:
         limits = tier_limits(tier)
         now = datetime.now(UTC)
+        # P0-06: demote existing current row(s) before inserting a new current
+        # so the partial unique index is never violated.
+        await uow.company_subscriptions.clear_current_for_company(company_id)
         subscription = await uow.company_subscriptions.create(
             CompanySubscription(
                 company_id=company_id,

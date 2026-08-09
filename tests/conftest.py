@@ -11,6 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.db.session as db_session
 from app.api import deps as api_deps
+from app.core.auth_cookies import (
+    ACCESS_COOKIE,
+    REFRESH_COOKIE,
+    SA_ACCESS_COOKIE,
+    SA_REFRESH_COOKIE,
+)
 from app.core.config import get_settings
 from app.core.security import create_access_token
 from app.db.enums import EmployeeRole, EmployeeStatus
@@ -31,6 +37,13 @@ async def _bind_engine_to_session_loop() -> AsyncIterator[None]:
     when pytest creates a fresh loop per test/session.
     """
     settings = get_settings()
+    # Disable auth rate limits in tests (shared client IP would otherwise 429).
+    settings.login_rate_limit = 0
+    settings.bot_login_rate_limit = 0
+    settings.invite_preview_rate_limit = 0
+    settings.invite_accept_rate_limit = 0
+    settings.refresh_rate_limit = 0
+
     await db_session.engine.dispose()
     engine = create_async_engine(
         settings.database_url,
@@ -59,6 +72,21 @@ async def _bind_engine_to_session_loop() -> AsyncIterator[None]:
         await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _keep_auth_rate_limits_disabled() -> None:
+    """Re-apply after any test that calls ``get_settings.cache_clear()``.
+
+    Cached Settings recreation restores default login limits (10/min), which
+    causes flaky 429s across the shared test client IP.
+    """
+    settings = get_settings()
+    settings.login_rate_limit = 0
+    settings.bot_login_rate_limit = 0
+    settings.invite_preview_rate_limit = 0
+    settings.invite_accept_rate_limit = 0
+    settings.refresh_rate_limit = 0
+
+
 def _uow_factory() -> UnitOfWork:
     return UnitOfWork(session_factory=db_session.async_session_factory)
 
@@ -66,6 +94,7 @@ def _uow_factory() -> UnitOfWork:
 async def _create_company(*, name: str | None = None) -> Company:
     suffix = uuid4().hex[:10]
     async with _uow_factory() as uow:
+        await uow.enter_platform()
         company = await uow.companies.create(
             Company(
                 name=name or f"Test Co {suffix}",
@@ -86,6 +115,7 @@ async def _create_employee(
 ) -> Employee:
     suffix = uuid4().int % 1_000_000_000
     async with _uow_factory() as uow:
+        await uow.enter_platform()
         employee = await uow.employees.create(
             Employee(
                 company_id=company_id,
@@ -101,6 +131,7 @@ async def _create_employee(
 
 async def _delete_company(company_id) -> None:
     async with _uow_factory() as uow:
+        await uow.enter_platform()
         await uow.companies.delete(company_id)
         await uow.commit()
 
@@ -134,6 +165,19 @@ async def hr_b(company_b: Company) -> Employee:
 
 
 @pytest.fixture
+async def admin_a(company_a: Company) -> Employee:
+    return await _create_employee(company_id=company_a.id, role=EmployeeRole.ADMIN.value)
+
+
+@pytest.fixture
+async def employee_a(company_a: Company) -> Employee:
+    return await _create_employee(
+        company_id=company_a.id,
+        role=EmployeeRole.EMPLOYEE.value,
+    )
+
+
+@pytest.fixture
 def article_service() -> ArticleService:
     return ArticleService(uow_factory=_uow_factory)
 
@@ -162,3 +206,21 @@ def auth_header(employee: Employee) -> dict[str, str]:
         company_id=employee.company_id,
     )
     return {"Authorization": f"Bearer {token}"}
+
+
+def tenant_tokens_from_response(response) -> dict[str, str]:
+    """Read access/refresh from Set-Cookie after cookie-only browser login."""
+    access = response.cookies.get(ACCESS_COOKIE)
+    refresh = response.cookies.get(REFRESH_COOKIE)
+    assert access, "expected onboard_access cookie"
+    assert refresh, "expected onboard_refresh cookie"
+    return {"access_token": access, "refresh_token": refresh}
+
+
+def sa_tokens_from_response(response) -> dict[str, str]:
+    """Read Super Admin access/refresh from Set-Cookie after cookie-only login."""
+    access = response.cookies.get(SA_ACCESS_COOKIE)
+    refresh = response.cookies.get(SA_REFRESH_COOKIE)
+    assert access, "expected onboard_sa_access cookie"
+    assert refresh, "expected onboard_sa_refresh cookie"
+    return {"access_token": access, "refresh_token": refresh}

@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.schemas.knowledge.tag import TagResponse
 from app.schemas.knowledge.version import ArticleVersionResponse
+from app.schemas.limits import MAX_ARTICLE_BODY_LENGTH
 
 KnowledgeStatusLiteral = Literal["draft", "published", "archived"]
 KnowledgeVisibilityLiteral = Literal["company", "program"]
@@ -32,7 +33,14 @@ class ArticleCreate(BaseModel):
 
     company_id: UUID = Field(description="Tenant company that owns the article.")
     title: str = Field(..., min_length=1, max_length=500)
-    body: str = Field(..., min_length=1)
+    body: str = Field(
+        ...,
+        min_length=1,
+        max_length=MAX_ARTICLE_BODY_LENGTH,
+        description=(
+            f"Article body (markdown/html/plain); max {MAX_ARTICLE_BODY_LENGTH} characters."
+        ),
+    )
     body_format: KnowledgeBodyFormatLiteral = Field(default="markdown")
     category_id: UUID | None = Field(default=None)
     visibility: KnowledgeVisibilityLiteral = Field(default="company")
@@ -62,7 +70,14 @@ class ArticleUpdate(BaseModel):
     )
 
     title: str | None = Field(default=None, min_length=1, max_length=500)
-    body: str | None = Field(default=None, min_length=1)
+    body: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_ARTICLE_BODY_LENGTH,
+        description=(
+            f"Article body (markdown/html/plain); max {MAX_ARTICLE_BODY_LENGTH} characters."
+        ),
+    )
     body_format: KnowledgeBodyFormatLiteral | None = None
     category_id: UUID | None = None
     visibility: KnowledgeVisibilityLiteral | None = None

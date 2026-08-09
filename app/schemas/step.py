@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.schemas.limits import (
+    MAX_STEP_CONTENT_JSON_BYTES,
+    ensure_json_object_within_limit,
+)
 
 StepTypeLiteral = Literal["content", "task", "quiz", "ack"]
 
@@ -37,10 +42,22 @@ class StepCreate(BaseModel):
     )
     content: dict[str, Any] = Field(
         default_factory=dict,
-        description="Type-specific payload (text, quiz questions, links, etc.).",
+        description=(
+            "Type-specific payload (text, quiz questions, links, etc.); "
+            f"max {MAX_STEP_CONTENT_JSON_BYTES} serialized UTF-8 bytes."
+        ),
     )
     is_required: bool = Field(default=True)
     estimated_minutes: int | None = Field(default=None, ge=0)
+
+    @field_validator("content")
+    @classmethod
+    def limit_content_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return ensure_json_object_within_limit(
+            value,
+            max_bytes=MAX_STEP_CONTENT_JSON_BYTES,
+            field_name="content",
+        )
 
 
 class StepUpdate(BaseModel):
@@ -49,9 +66,29 @@ class StepUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=5000)
     step_type: StepTypeLiteral | None = None
-    content: dict[str, Any] | None = None
+    content: dict[str, Any] | None = Field(
+        default=None,
+        description=(
+            "Type-specific payload; "
+            f"max {MAX_STEP_CONTENT_JSON_BYTES} serialized UTF-8 bytes."
+        ),
+    )
     is_required: bool | None = None
     estimated_minutes: int | None = Field(default=None, ge=0)
+
+    @field_validator("content")
+    @classmethod
+    def limit_content_size(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return value
+        return ensure_json_object_within_limit(
+            value,
+            max_bytes=MAX_STEP_CONTENT_JSON_BYTES,
+            field_name="content",
+        )
 
     @model_validator(mode="after")
     def require_at_least_one_field(self) -> "StepUpdate":

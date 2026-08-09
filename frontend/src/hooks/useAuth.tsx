@@ -9,7 +9,6 @@ import {
 } from 'react'
 import { t } from '../i18n'
 import { canAccessAdminPanel } from '../lib/roles'
-import { clearTokens, getAccessToken, setTokens } from '../lib/storage'
 import { ApiError } from '../services/apiClient'
 import * as authApi from '../services/authApi'
 import type { CurrentUser } from '../types/auth'
@@ -32,28 +31,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
 
   const logout = useCallback(() => {
-    clearTokens()
+    void authApi.logout().catch(() => undefined)
     setUser(null)
   }, [])
 
   const loadMe = useCallback(async () => {
-    const token = getAccessToken()
-    if (!token) {
-      setUser(null)
-      setLoading(false)
-      return
-    }
     try {
       const me = await authApi.fetchMe()
       if (!canAccessAdminPanel(me.role)) {
-        clearTokens()
+        await authApi.logout().catch(() => undefined)
         setUser(null)
         setError(t('auth.roleRequired'))
       } else {
         setUser(me)
       }
     } catch {
-      clearTokens()
       setUser(null)
     } finally {
       setLoading(false)
@@ -67,17 +59,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     setError(null)
     try {
-      const tokens = await authApi.login(username.trim(), password)
-      setTokens(tokens.access_token, tokens.refresh_token)
+      await authApi.login(username.trim(), password)
       const me = await authApi.fetchMe()
       if (!canAccessAdminPanel(me.role)) {
-        clearTokens()
+        await authApi.logout().catch(() => undefined)
         setUser(null)
         throw new Error(t('auth.roleRequired'))
       }
       setUser(me)
     } catch (err) {
-      clearTokens()
       setUser(null)
       if (err instanceof ApiError) {
         setError(err.message)

@@ -19,6 +19,7 @@ class OnboardingProgramRepository(BaseRepository[OnboardingProgram]):
         limit: int = 100,
         is_active: bool | None = None,
     ) -> list[OnboardingProgram]:
+        self._ensure_rls_context()
         stmt = self._company_list_statement(
             company_id,
             offset=offset,
@@ -27,6 +28,16 @@ class OnboardingProgramRepository(BaseRepository[OnboardingProgram]):
         )
         result = await self._session.scalars(stmt)
         return list(result.all())
+
+    async def count_by_company_id(self, company_id: UUID) -> int:
+        self._ensure_rls_context()
+        stmt = (
+            select(func.count())
+            .select_from(OnboardingProgram)
+            .where(OnboardingProgram.company_id == company_id)
+        )
+        result = await self._session.scalar(stmt)
+        return int(result or 0)
 
     def _company_list_statement(
         self,

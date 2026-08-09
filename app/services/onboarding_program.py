@@ -3,9 +3,27 @@ from typing import Any
 from uuid import UUID
 
 from app.core.exceptions import NotFoundError, ValidationError
+from app.db.enums import AssignmentStatus, EmployeeRole
 from app.db.models.onboarding_program import OnboardingProgram
 from app.db.uow import UnitOfWork
+from app.services.subscription_guard import ensure_program_limit
 from app.services.tenancy import ensure_same_company
+
+# HR/Admin manage drafts/archives; employees only see published or assigned programs.
+_PROGRAM_MANAGEMENT_ROLES = frozenset(
+    {
+        EmployeeRole.ADMIN.value,
+        EmployeeRole.HR.value,
+    }
+)
+# Same grant set as program-scoped KB: cancelled does not grant visibility.
+_ASSIGNMENT_STATUSES_GRANTING_PROGRAM_READ = frozenset(
+    {
+        AssignmentStatus.PENDING.value,
+        AssignmentStatus.IN_PROGRESS.value,
+        AssignmentStatus.COMPLETED.value,
+    }
+)
 
 
 class OnboardingProgramService:
@@ -28,9 +46,11 @@ class OnboardingProgramService:
             not_found_message=f"Company {company_id} not found",
         )
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
+            await ensure_program_limit(uow, company_id)
 
             program = await uow.onboarding_programs.create(
                 OnboardingProgram(
@@ -56,6 +76,7 @@ class OnboardingProgramService:
             raise ValidationError(f"Cannot update fields via update_program: {sorted(extra)}")
 
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             program = await uow.onboarding_programs.get_by_id(program_id)
             if program is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
@@ -77,6 +98,7 @@ class OnboardingProgramService:
         company_id: UUID,
     ) -> OnboardingProgram:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             program = await uow.onboarding_programs.get_by_id(program_id)
             if program is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
@@ -102,6 +124,7 @@ class OnboardingProgramService:
         company_id: UUID,
     ) -> OnboardingProgram:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             program = await uow.onboarding_programs.get_by_id(program_id)
             if program is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
@@ -131,6 +154,7 @@ class OnboardingProgramService:
             not_found_message=f"Company {company_id} not found",
         )
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
@@ -146,14 +170,60 @@ class OnboardingProgramService:
         program_id: UUID,
         *,
         company_id: UUID,
+        actor_role: str,
+        actor_employee_id: UUID | None = None,
     ) -> OnboardingProgram:
+        """Load a program for the actor within ``company_id``.
+
+        HR/Admin may read any same-tenant program (including draft/archived).
+        Employees may read **published** (``is_active``) programs in-tenant, or
+        an unpublished program only when they have a non-cancelled assignment to
+        it (e.g. bot UX after archive). Unauthorized access returns NotFoundError
+        to avoid existence enumeration.
+        """
+        not_found = f"Onboarding program {program_id} not found"
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             program = await uow.onboarding_programs.get_by_id(program_id)
             if program is None:
-                raise NotFoundError(f"Onboarding program {program_id} not found")
+                raise NotFoundError(not_found)
             ensure_same_company(
                 resource_company_id=program.company_id,
                 actor_company_id=company_id,
-                not_found_message=f"Onboarding program {program_id} not found",
+                not_found_message=not_found,
             )
-            return program
+
+            if actor_role in _PROGRAM_MANAGEMENT_ROLES:
+                return program
+
+            if program.is_active:
+                return program
+
+            # Unpublished/draft/archived: only the assigned employee may read.
+            if actor_employee_id is None:
+                raise NotFoundError(not_found)
+            if await self._employee_has_program_assignment(
+                uow,
+                program_id=program_id,
+                employee_id=actor_employee_id,
+            ):
+                return program
+            raise NotFoundError(not_found)
+
+    @staticmethod
+    async def _employee_has_program_assignment(
+        uow: UnitOfWork,
+        *,
+        program_id: UUID,
+        employee_id: UUID,
+    ) -> bool:
+        assignments = await uow.assignments.list_by_employee_id(
+            employee_id,
+            offset=0,
+            limit=1000,
+        )
+        return any(
+            assignment.program_id == program_id
+            and assignment.status in _ASSIGNMENT_STATUSES_GRANTING_PROGRAM_READ
+            for assignment in assignments
+        )

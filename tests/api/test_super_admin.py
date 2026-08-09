@@ -14,7 +14,7 @@ from app.db.models.company import Company
 from app.db.models.employee import Employee
 from app.db.models.super_admin import SuperAdmin
 from app.db.uow import UnitOfWork
-from tests.conftest import auth_header
+from tests.conftest import auth_header, sa_tokens_from_response
 
 
 async def _create_super_admin(
@@ -25,6 +25,7 @@ async def _create_super_admin(
     suffix = uuid4().hex[:8]
     email = email or f"sa-{suffix}@test.local"
     async with UnitOfWork() as uow:
+        await uow.enter_platform()
         admin = await uow.super_admins.create(
             SuperAdmin(
                 email=email,
@@ -67,8 +68,10 @@ async def test_super_admin_login_and_me(api_client: AsyncClient) -> None:
         json={"email": admin.email, "password": password},
     )
     assert login.status_code == 200, login.text
-    tokens = login.json()
-    assert "access_token" in tokens
+    body = login.json()
+    assert "access_token" not in body
+    assert "refresh_token" not in body
+    tokens = sa_tokens_from_response(login)
 
     me = await api_client.get(
         "/api/v1/super-admin/auth/me",
@@ -129,7 +132,11 @@ async def test_dashboard_and_company_lifecycle(
 
     slug = f"new-{uuid4().hex[:8]}"
     admin_email = f"admin@{slug}.test"
-    with patch("app.services.platform_management.secrets.token_urlsafe", return_value="test-invite-token"):
+    invite_token = f"invite-{uuid4().hex}"
+    with patch(
+        "app.services.platform_management.secrets.token_urlsafe",
+        return_value=invite_token,
+    ):
         create = await api_client.post(
             "/api/v1/super-admin/companies",
             headers=headers,
@@ -180,14 +187,17 @@ async def test_dashboard_and_company_lifecycle(
     assert rename.status_code == 200
     assert rename.json()["name"] == "Renamed Tenant"
 
-    preview = await api_client.get("/api/v1/auth/invite/test-invite-token")
+    preview = await api_client.post(
+        "/api/v1/auth/invite/preview",
+        json={"token": invite_token},
+    )
     assert preview.status_code == 200, preview.text
     preview_body = preview.json()
     assert preview_body["email"] == admin_email
 
     accept = await api_client.post(
         "/api/v1/auth/invite/accept",
-        json={"token": "test-invite-token", "password": "new-secure-password"},
+        json={"token": invite_token, "password": "new-secure-password"},
     )
     assert accept.status_code == 200, accept.text
     assert accept.json()["status"] == EmployeeStatus.ACTIVE.value

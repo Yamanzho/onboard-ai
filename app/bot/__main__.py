@@ -118,6 +118,11 @@ def main() -> None:
         sys.exit(1)
 
     if settings.bot_webhook_url:
+        if not settings.bot_webhook_secret:
+            logger.error(
+                "BOT_WEBHOOK_SECRET is required when BOT_WEBHOOK_URL is set"
+            )
+            sys.exit(1)
         logger.info("BOT_WEBHOOK_URL set — starting webhook server")
         run_webhook()
     else:

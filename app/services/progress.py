@@ -30,6 +30,7 @@ class ProgressService:
         payload: dict[str, Any] | None = None,
     ) -> Progress:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             assignment = await uow.assignments.get_by_id(assignment_id)
             if assignment is None:
                 raise NotFoundError(f"Assignment {assignment_id} not found")
@@ -99,6 +100,7 @@ class ProgressService:
         payload: dict[str, Any] | None = None,
     ) -> Progress:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             progress = await uow.progress.get_by_id(progress_id)
             if progress is None:
                 raise NotFoundError(f"Progress {progress_id} not found")
@@ -127,6 +129,7 @@ class ProgressService:
         company_id: UUID,
     ) -> Progress:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             progress = await uow.progress.get_by_id(progress_id)
             if progress is None:
                 raise NotFoundError(f"Progress {progress_id} not found")
@@ -147,6 +150,7 @@ class ProgressService:
         company_id: UUID,
     ) -> list[Progress]:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             assignment = await uow.assignments.get_by_id(assignment_id)
             if assignment is None:
                 raise NotFoundError(f"Assignment {assignment_id} not found")
@@ -164,6 +168,7 @@ class ProgressService:
         company_id: UUID,
     ) -> float:
         async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
             assignment = await uow.assignments.get_by_id(assignment_id)
             if assignment is None:
                 raise NotFoundError(f"Assignment {assignment_id} not found")

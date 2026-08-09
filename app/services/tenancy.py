@@ -2,7 +2,8 @@
 
 from uuid import UUID
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import ForbiddenError, NotFoundError
+from app.db.models.company import Company
 
 
 def ensure_same_company(
@@ -17,3 +18,12 @@ def ensure_same_company(
     """
     if resource_company_id != actor_company_id:
         raise NotFoundError(not_found_message)
+
+
+def ensure_company_is_active(company: Company | None, *, company_id: UUID) -> Company:
+    """Raise ForbiddenError when the tenant is missing or deactivated."""
+    if company is None:
+        raise ForbiddenError(f"Company {company_id} is deactivated")
+    if not company.is_active:
+        raise ForbiddenError("Company is deactivated")
+    return company

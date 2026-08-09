@@ -33,6 +33,12 @@ class Progress(Base, TimestampMixin):
         primary_key=True,
         default=uuid.uuid4,
     )
+    company_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("companies.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
     assignment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("assignments.id", ondelete="CASCADE"),

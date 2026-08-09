@@ -19,3 +19,15 @@ class ConflictError(AppError):
 
 class ValidationError(AppError):
     """Business rule or domain invariant was violated."""
+
+
+class ForbiddenError(AppError):
+    """Caller is authenticated but not permitted to perform this action."""
+
+
+class UnauthorizedError(AppError):
+    """Caller is missing or has invalid credentials."""
+
+
+class ServiceUnavailableError(AppError):
+    """Required dependency unavailable (e.g. Redis in production)."""

@@ -10,6 +10,7 @@ class SuperAdminRepository(BaseRepository[SuperAdmin]):
         super().__init__(session, SuperAdmin)
 
     async def get_by_email(self, email: str) -> SuperAdmin | None:
+        self._ensure_rls_context()
         stmt = select(SuperAdmin).where(SuperAdmin.email == email.lower())
         result = await self._session.scalars(stmt)
         return result.first()

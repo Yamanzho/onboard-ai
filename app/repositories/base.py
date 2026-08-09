@@ -7,6 +7,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import Base
+from app.db.rls_guard import assert_rls_context
 
 ModelT = TypeVar("ModelT", bound=Base)
 
@@ -19,22 +20,30 @@ class BaseRepository(Generic[ModelT]):
     """Generic async CRUD repository.
 
     Does not commit transactions — the caller owns the unit of work.
+    Requires an established UoW RLS mode (tenant/platform/auth/session).
     """
 
     def __init__(self, session: AsyncSession, model: type[ModelT]) -> None:
         self._session = session
         self._model = model
 
+    def _ensure_rls_context(self) -> None:
+        """Fail fast when UnitOfWork has not entered an RLS mode."""
+        assert_rls_context(self._session)
+
     async def create(self, entity: ModelT) -> ModelT:
+        self._ensure_rls_context()
         self._session.add(entity)
         await self._session.flush()
         await self._session.refresh(entity)
         return entity
 
     async def get_by_id(self, entity_id: uuid.UUID) -> ModelT | None:
+        self._ensure_rls_context()
         return await self._session.get(self._model, entity_id)
 
     async def list(self, *, offset: int = 0, limit: int = _DEFAULT_LIST_LIMIT) -> list[ModelT]:
+        self._ensure_rls_context()
         stmt = self._list_statement(offset=offset, limit=limit)
         result = await self._session.scalars(stmt)
         return list(result.all())

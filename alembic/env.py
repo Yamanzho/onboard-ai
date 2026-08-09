@@ -1,6 +1,7 @@
 """Alembic environment configuration."""
 
 from logging.config import fileConfig
+import os
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -11,7 +12,9 @@ from app.db.models import (  # noqa: F401 — register models on Base.metadata
     AIConversation,
     Assignment,
     Company,
+    CompanySubscription,
     Employee,
+    EmployeeInvite,
     KnowledgeArticle,
     KnowledgeArticleLink,
     KnowledgeArticleTag,
@@ -21,11 +24,10 @@ from app.db.models import (  # noqa: F401 — register models on Base.metadata
     OnboardingProgram,
     PlatformAuditLog,
     Progress,
+    RefreshSession,
     Step,
     SubscriptionHistoryEvent,
     SuperAdmin,
-    CompanySubscription,
-    EmployeeInvite,
 )
 
 config = context.config
@@ -37,9 +39,18 @@ target_metadata = Base.metadata
 
 
 def get_url() -> str:
-    """Sync URL for Alembic (asyncpg -> psycopg)."""
+    """Sync URL for Alembic (asyncpg -> psycopg).
+
+    Prefer MIGRATION_DATABASE_URL (onboard_owner). Fall back to DATABASE_URL
+    only for local transition when the migrator URL is unset.
+    """
     settings = get_settings()
-    return settings.database_url.replace("+asyncpg", "+psycopg")
+    raw = (
+        os.environ.get("MIGRATION_DATABASE_URL")
+        or settings.migration_database_url
+        or settings.database_url
+    )
+    return raw.replace("+asyncpg", "+psycopg")
 
 
 def run_migrations_offline() -> None:

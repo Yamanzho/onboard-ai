@@ -22,10 +22,22 @@ This starts **PostgreSQL**, **Redis**, **API** (migrations + demo seed), **Admin
 | Service   | URL |
 |-----------|-----|
 | Admin UI  | http://localhost:3000 |
-| API       | http://localhost:8000 |
-| Health    | http://localhost:8000/health |
-| Swagger   | http://localhost:8000/docs |
+| API (local/dev) | http://localhost:8000 — not published with `docker-compose.prod.yml` |
+| Health (via nginx) | http://localhost:3000/health |
+| Health (direct, local) | http://localhost:8000/health |
+| Swagger (local/dev) | http://localhost:8000/docs |
 | Bot webhook port (server mode) | http://localhost:8081/webhook |
+
+Production-style Compose (immutable images; API/DB/Redis internal-only; frontend on `127.0.0.1`; Redis/Postgres passwords required; non-root API/bot):
+
+```bash
+# Set REDIS_PASSWORD + POSTGRES_PASSWORD + ONBOARD_*_PASSWORD + strong SECRET_KEY
+# + SUPER_ADMIN_PASSWORD in .env first (see .env.example / DEPLOYMENT.md).
+# Placeholders and defaults are rejected in production.
+# Put a TLS terminator in front of 127.0.0.1:3000 (see DEPLOYMENT.md §5.3).
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+Details: [DEPLOYMENT.md](DEPLOYMENT.md). Postgres password rotation on an existing volume: [docs/runbooks/postgres-password-rotation.md](docs/runbooks/postgres-password-rotation.md).
 
 ### Demo login (seeded automatically)
 
@@ -44,8 +56,6 @@ Stop:
 ```bash
 docker compose down
 ```
-
-More detail: [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 

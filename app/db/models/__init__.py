@@ -13,6 +13,7 @@ from app.db.models.knowledge_tag import KnowledgeTag
 from app.db.models.onboarding_program import OnboardingProgram
 from app.db.models.platform_audit_log import PlatformAuditLog
 from app.db.models.progress import Progress
+from app.db.models.refresh_session import RefreshSession
 from app.db.models.step import Step
 from app.db.models.subscription_history import SubscriptionHistoryEvent
 from app.db.models.super_admin import SuperAdmin
@@ -33,6 +34,7 @@ __all__ = [
     "OnboardingProgram",
     "PlatformAuditLog",
     "Progress",
+    "RefreshSession",
     "Step",
     "SubscriptionHistoryEvent",
     "SuperAdmin",

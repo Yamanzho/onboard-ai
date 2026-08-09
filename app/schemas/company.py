@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.schemas.limits import (
+    MAX_COMPANY_SETTINGS_JSON_BYTES,
+    ensure_json_object_within_limit,
+)
 
 
 class CompanyCreate(BaseModel):
@@ -42,19 +47,35 @@ class CompanyCreate(BaseModel):
     )
     settings: dict[str, Any] = Field(
         default_factory=dict,
-        description="Arbitrary company settings (feature flags, locale, etc.).",
+        description=(
+            "Arbitrary company settings (feature flags, locale, etc.); "
+            f"max {MAX_COMPANY_SETTINGS_JSON_BYTES} serialized UTF-8 bytes."
+        ),
     )
+
+    @field_validator("settings")
+    @classmethod
+    def limit_settings_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        return ensure_json_object_within_limit(
+            value,
+            max_bytes=MAX_COMPANY_SETTINGS_JSON_BYTES,
+            field_name="settings",
+        )
 
 
 class CompanyUpdate(BaseModel):
-    """Partial update payload. At least one field must be provided."""
+    """Partial update payload for the caller's own company profile.
+
+    Tenant activation (``is_active``) is intentionally omitted — lifecycle
+    changes are platform-only via Super Admin APIs.
+    """
 
     model_config = ConfigDict(
         json_schema_extra={
             "examples": [
                 {
                     "name": "Acme Corporation",
-                    "is_active": True,
+                    "timezone": "Europe/Berlin",
                 }
             ]
         }
@@ -79,14 +100,27 @@ class CompanyUpdate(BaseModel):
         max_length=64,
         description="New IANA timezone.",
     )
-    is_active: bool | None = Field(
-        default=None,
-        description="Whether the company tenant is active.",
-    )
     settings: dict[str, Any] | None = Field(
         default=None,
-        description="Replacement settings object.",
+        description=(
+            "Replacement settings object; "
+            f"max {MAX_COMPANY_SETTINGS_JSON_BYTES} serialized UTF-8 bytes."
+        ),
     )
+
+    @field_validator("settings")
+    @classmethod
+    def limit_settings_size(
+        cls,
+        value: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if value is None:
+            return value
+        return ensure_json_object_within_limit(
+            value,
+            max_bytes=MAX_COMPANY_SETTINGS_JSON_BYTES,
+            field_name="settings",
+        )
 
     @model_validator(mode="after")
     def require_at_least_one_field(self) -> "CompanyUpdate":

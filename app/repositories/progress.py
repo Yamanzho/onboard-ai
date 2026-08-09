@@ -18,6 +18,7 @@ class ProgressRepository(BaseRepository[Progress]):
         offset: int = 0,
         limit: int = 1000,
     ) -> list[Progress]:
+        self._ensure_rls_context()
         stmt = self._assignment_list_statement(
             assignment_id,
             offset=offset,
@@ -31,6 +32,7 @@ class ProgressRepository(BaseRepository[Progress]):
         assignment_id: UUID,
         step_id: UUID,
     ) -> Progress | None:
+        self._ensure_rls_context()
         stmt = select(Progress).where(
             Progress.assignment_id == assignment_id,
             Progress.step_id == step_id,
