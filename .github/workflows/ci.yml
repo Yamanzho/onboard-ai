@@ -1,0 +1,127 @@
+# Minimal CI for the production pilot. Dummy secrets only — never live production credentials.
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  # Structural compose validation only. These are not production secrets.
+  SECRET_KEY: compose-test-hmac-secret-key-32chars-min!
+  SUPER_ADMIN_PASSWORD: compose-test-super-admin-ok
+  REDIS_PASSWORD: compose-test-redis-password-not-a-secret
+  POSTGRES_PASSWORD: compose-test-postgres-password-ok
+  ONBOARD_OWNER_PASSWORD: compose-test-owner-password-ok
+  ONBOARD_APP_PASSWORD: compose-test-app-password-ok
+  BOT_SERVICE_TOKEN: compose-test-bot-service-token-32c
+  BOT_COMPANY_ID: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+  INVITE_BASE_URL: https://onboardai.example.test
+
+jobs:
+  backend:
+    name: Backend (pytest + security + ruff)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: onboard
+          POSTGRES_PASSWORD: onboard
+          POSTGRES_DB: onboard_ai
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U onboard -d onboard_ai"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://onboard_app:onboard@localhost:5432/onboard_ai
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://onboard_owner:onboard@localhost:5432/onboard_ai
+      BOOTSTRAP_DATABASE_URL: postgresql://onboard:onboard@localhost:5432/onboard_ai
+      POSTGRES_USER: onboard
+      POSTGRES_PASSWORD: onboard
+      POSTGRES_DB: onboard_ai
+      POSTGRES_HOST: localhost
+      REDIS_URL: redis://localhost:6379/0
+      APP_ENV: development
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install Python dependencies
+        run: pip install -e ".[dev]"
+      - name: Lint (ruff on new CI/readiness/e2e modules)
+        run: >
+          ruff check
+          app/core/readiness.py
+          app/main.py
+          tests/api/test_readiness.py
+          tests/e2e
+          tests/infra/test_alembic_heads.py
+          tests/infra/test_ci_workflow.py
+          tests/conftest.py
+      - name: Migration graph (single Alembic head)
+        run: python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; heads = ScriptDirectory.from_config(Config('alembic.ini')).get_heads(); assert len(heads) == 1, heads"
+      - name: Bootstrap RLS roles + migrate
+        run: |
+          python -m scripts.bootstrap_rls_roles
+          alembic upgrade head
+      - name: Collect security suite (must be non-empty)
+        run: |
+          pytest -m security --collect-only -q | tee /tmp/security-collect.txt
+          test -s /tmp/security-collect.txt
+          grep -E "tenant_isolation|test_rls_adversarial|pentest_adversarial|test_kb_acl|telegram_invite|subscription_entitlement|peer_hr_authz" /tmp/security-collect.txt
+      - name: Dummy env for compose-config tests
+        run: cp .env.example .env
+      - name: Pytest (full suite, including security / e2e / infra)
+        run: pytest -q --tb=short
+      - name: Security tests (explicit marker run)
+        run: pytest -m security -q --tb=short
+
+  frontend:
+    name: Frontend (install, lint, typecheck, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: npm ci
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: TypeScript
+        run: npm run typecheck
+      - name: Build
+        run: npm run build
+
+  infra:
+    name: Infra (compose config + Docker build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dummy env (compose env_file)
+        run: cp .env.example .env
+      - name: Development compose config
+        run: docker compose -f docker-compose.yml config --quiet
+      - name: Production compose config (dummy secrets)
+        env:
+          COMPOSE_PROD: "1"
+        run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+      - name: API image build (no production secrets)
+        run: docker build -t onboard-ai-api:ci .
+      - name: Frontend image build (no production secrets)
+        run: docker build -t onboard-ai-frontend:ci ./frontend

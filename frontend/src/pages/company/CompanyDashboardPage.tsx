@@ -61,6 +61,7 @@ export function CompanyDashboardPage() {
       hr: hr.length,
       activeOnboarding: active.length,
       completionRate,
+      incomplete: new Set(active.map((a) => a.employee_id)).size,
     }
   }, [employees, assignments])
 
@@ -121,7 +122,7 @@ export function CompanyDashboardPage() {
         <LoadingBlock />
       ) : (
         <>
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             <StatCard
               label={t('companyDashboard.employees')}
               value={String(stats.employees)}
@@ -136,6 +137,10 @@ export function CompanyDashboardPage() {
               value={
                 stats.completionRate == null ? t('common.emDash') : `${stats.completionRate}%`
               }
+            />
+            <StatCard
+              label={t('companyDashboard.incomplete')}
+              value={String(stats.incomplete)}
             />
           </div>
 

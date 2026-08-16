@@ -49,3 +49,6 @@ redis_data/
 # Logs
 *.log
 backups/
+
+# AI-7 opt-in embedding cache (may contain hosted vectors; never commit)
+.ai7_embedding_cache/

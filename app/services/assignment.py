@@ -5,10 +5,11 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
-from app.db.enums import AssignmentStatus, EmployeeStatus, ProgressStatus
+from app.db.enums import AssignmentStatus, CompanyAuditAction, EmployeeStatus, ProgressStatus
 from app.db.models.assignment import Assignment
 from app.db.models.progress import Progress
 from app.db.uow import UnitOfWork
+from app.services.company_audit import record_company_audit
 from app.services.tenancy import ensure_same_company
 
 
@@ -26,6 +27,7 @@ class AssignmentService:
         company_id: UUID,
         assigned_by_id: UUID | None = None,
         due_at: datetime | None = None,
+        actor_employee_id: UUID | None = None,
     ) -> Assignment:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -91,6 +93,19 @@ class AssignmentService:
                             status=ProgressStatus.NOT_STARTED.value,
                         ),
                     )
+                await record_company_audit(
+                    uow,
+                    company_id=employee.company_id,
+                    actor_employee_id=actor_employee_id or assigned_by_id,
+                    action=CompanyAuditAction.ASSIGNMENT_CREATED.value,
+                    resource_type="assignment",
+                    resource_id=assignment.id,
+                    summary="Assigned onboarding program",
+                    details={
+                        "employee_id": str(employee_id),
+                        "program_id": str(program_id),
+                    },
+                )
                 await uow.commit()
             except IntegrityError as exc:
                 await uow.rollback()
@@ -104,6 +119,7 @@ class AssignmentService:
         assignment_id: UUID,
         *,
         company_id: UUID,
+        actor_employee_id: UUID | None = None,
     ) -> Assignment:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -125,6 +141,16 @@ class AssignmentService:
                 status=AssignmentStatus.CANCELLED.value,
             )
             assert updated is not None
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.ASSIGNMENT_CHANGED.value,
+                resource_type="assignment",
+                resource_id=assignment_id,
+                summary="Cancelled assignment",
+                details={"status": AssignmentStatus.CANCELLED.value},
+            )
             await uow.commit()
             return updated
 

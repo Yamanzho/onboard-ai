@@ -33,6 +33,9 @@ def _production_settings(**overrides: object) -> Settings:
         "migration_database_url": (
             "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai"
         ),
+        "onboard_owner_password": "unit-test-postgres-password",
+        "onboard_app_password": "unit-test-postgres-password",
+        "invite_base_url": "https://onboardai.example.test",
         **overrides,
     }
     return Settings(_env_file=None, **values)
@@ -52,6 +55,25 @@ def test_production_redis_unavailable_does_not_use_memory_fallback(
             is_rate_limited("prod:login:ip:1.2.3.4", limit=10, window_seconds=60)
 
 
+def test_production_redis_incr_expire_is_atomic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = _production_settings()
+    monkeypatch.setattr("app.core.rate_limit.get_settings", lambda: settings)
+    client = MagicMock()
+    client.ping.return_value = True
+    client.eval.return_value = 1
+    with patch("redis.Redis") as redis_cls:
+        redis_cls.from_url.return_value = client
+        assert is_rate_limited("prod:login:ip:1.2.3.4", limit=10, window_seconds=60) is False
+    client.eval.assert_called()
+    script, numkeys, _key, window = client.eval.call_args.args
+    assert "INCR" in script
+    assert "EXPIRE" in script
+    assert numkeys == 1
+    assert window == 60
+
+
 def test_production_redis_command_failure_does_not_use_memory_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -60,7 +82,7 @@ def test_production_redis_command_failure_does_not_use_memory_fallback(
 
     client = MagicMock()
     client.ping.return_value = True
-    client.incr.side_effect = ConnectionError("broken pipe")
+    client.eval.side_effect = ConnectionError("broken pipe")
 
     with patch("redis.Redis") as redis_cls:
         redis_cls.from_url.return_value = client

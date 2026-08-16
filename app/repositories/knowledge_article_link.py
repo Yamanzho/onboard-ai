@@ -71,3 +71,17 @@ class KnowledgeArticleLinkRepository(BaseRepository[KnowledgeArticleLink]):
         result = await self._session.execute(stmt)
         await self._session.flush()
         return int(result.rowcount or 0)
+
+    async def delete_by_article_id_and_type(
+        self,
+        article_id: UUID,
+        target_type: str,
+    ) -> int:
+        self._ensure_rls_context()
+        stmt = delete(KnowledgeArticleLink).where(
+            KnowledgeArticleLink.article_id == article_id,
+            KnowledgeArticleLink.target_type == target_type,
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return int(result.rowcount or 0)

@@ -8,6 +8,7 @@ import { useArticleMutations } from '../../hooks/useArticles'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
+import { usePrograms } from '../../hooks/usePrograms'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 
@@ -16,6 +17,7 @@ export function ArticleCreatePage() {
   const paths = useWorkspacePaths()
   const { data: categories = [] } = useCategories()
   const { data: tags = [] } = useTags()
+  const { data: programs = [] } = usePrograms()
   const { create } = useArticleMutations()
 
   async function onSubmit(values: ArticleFormValues) {
@@ -27,6 +29,7 @@ export function ArticleCreatePage() {
         category_id: values.category_id || null,
         visibility: values.visibility,
         tag_ids: values.tag_ids,
+        program_ids: values.program_ids,
         change_summary: values.change_summary.trim() || null,
       })
       navigate(paths.article(article.id))
@@ -60,10 +63,12 @@ export function ArticleCreatePage() {
             category_id: '',
             visibility: 'company',
             tag_ids: [],
+            program_ids: [],
             change_summary: t('knowledge.articles.initialDraft'),
           }}
           categories={categories}
           tags={tags}
+          programs={programs}
           submitLabel={t('knowledge.articles.createDraft')}
           pending={create.isPending}
           onSubmit={onSubmit}

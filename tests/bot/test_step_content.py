@@ -31,6 +31,12 @@ def test_render_step_content_body_known_and_empty() -> None:
     assert "score: 3" in text
     assert "nested" not in text
 
+    quiz = render_step_content_body(
+        {"body": "Quiz intro", "questions": [{"id": "q1", "text": "What?"}]}
+    )
+    assert "Quiz intro" in quiz
+    assert "1. What?" in quiz
+
 
 def test_format_step_message_includes_title_description_content() -> None:
     msg = format_step_message(

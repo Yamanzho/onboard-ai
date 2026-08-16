@@ -1,0 +1,885 @@
+{
+  "measured_at": "2026-08-16",
+  "live_openai": false,
+  "embedding_provider": "fake",
+  "llm_provider": "fake",
+  "llm_model": "fake-llm",
+  "top_k": 5,
+  "dataset_size": 28,
+  "categories": {
+    "ambiguous": 4,
+    "answerable": 14,
+    "citation": 14,
+    "security": 2,
+    "unanswerable": 8
+  },
+  "retrieval_recall_at_k": 0.4444444444444444,
+  "source_hit_rate": 0.4444444444444444,
+  "answer": {
+    "incorrect": 18,
+    "partial": 10,
+    "correct": 0,
+    "mean": 0.35714285714285715
+  },
+  "groundedness": {
+    "incorrect": 8,
+    "partial": 20,
+    "correct": 0,
+    "mean": 0.7142857142857143
+  },
+  "citation": {
+    "incorrect": 10,
+    "partial": 15,
+    "correct": 3,
+    "mean": 0.75
+  },
+  "no_answer": {
+    "tp": 0,
+    "fp": 0,
+    "fn": 8,
+    "tn": 18,
+    "precision": null,
+    "recall": 0.0
+  },
+  "latency": {
+    "n": 28,
+    "min_ms": 49.126833997434005,
+    "p50_ms": 54.34533349762205,
+    "p95_ms": 60.53230230027111,
+    "max_ms": 63.63437500112923
+  },
+  "security": [
+    {
+      "name": "same-tenant foreign conversation_id",
+      "passed": true,
+      "detail": "peer employee received NotFoundError"
+    },
+    {
+      "name": "cross-tenant conversation_id",
+      "passed": true,
+      "detail": "tenant B received NotFoundError"
+    },
+    {
+      "name": "unknown conversation_id",
+      "passed": true,
+      "detail": "unknown conversation_id returned NotFoundError"
+    },
+    {
+      "name": "cross-tenant knowledge retrieval",
+      "passed": true,
+      "detail": "Company B article ids absent from Company A hits"
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "vpn-001",
+      "question": "Как получить VPN доступ?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "conduct-ru",
+        "onboarding-en",
+        "fire-ru",
+        "leave-kk"
+      ],
+      "cited_keys": [
+        "conduct-ru"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 63.63437500112923,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "VPN policy exists in RU and EN."
+    },
+    {
+      "case_id": "vpn-002",
+      "question": "How do I connect to the company VPN?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "vpn-en",
+        "nda-en",
+        "leave-en",
+        "onboarding-en",
+        "probation-kk"
+      ],
+      "cited_keys": [
+        "vpn-en"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 2,
+      "leaked_forbidden": false,
+      "latency_ms": 58.34391700045671,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Same policy, English question."
+    },
+    {
+      "case_id": "leave-001",
+      "question": "Как оформить отпуск?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "onboarding-en",
+        "helpdesk-en",
+        "leave-en",
+        "conduct-ru",
+        "equipment-en"
+      ],
+      "cited_keys": [
+        "onboarding-en"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 59.88812499708729,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Leave policy is present in RU/KK/EN."
+    },
+    {
+      "case_id": "leave-002",
+      "question": "How do I request vacation leave in this company?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "remote-en",
+        "conduct-ru",
+        "nda-en",
+        "vpn-en",
+        "leave-ru"
+      ],
+      "cited_keys": [
+        "remote-en"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 60.87916700198548,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Cross-language leave question."
+    },
+    {
+      "case_id": "sick-001",
+      "question": "Что делать если я заболел и нужен больничный?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "equipment-en",
+        "meetings-en",
+        "payroll-ru",
+        "nda-en",
+        "probation-kk"
+      ],
+      "cited_keys": [
+        "equipment-en"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 57.11900000460446,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Sick-leave procedure."
+    },
+    {
+      "case_id": "payroll-001",
+      "question": "Когда приходит зарплата?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "leave-kk",
+        "probation-kk",
+        "meetings-en",
+        "nda-en",
+        "equipment-en"
+      ],
+      "cited_keys": [
+        "leave-kk"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 55.41883400292136,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Payroll date is the 10th."
+    },
+    {
+      "case_id": "wifi-001",
+      "question": "How do visitors get on guest Wi-Fi?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "conduct-ru",
+        "meetings-en",
+        "leave-kk",
+        "probation-kk",
+        "equipment-en"
+      ],
+      "cited_keys": [
+        "conduct-ru"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 53.25454199919477,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Guest Wi-Fi article."
+    },
+    {
+      "case_id": "remote-001",
+      "question": "How many remote days per week are allowed?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "probation-kk",
+        "conduct-ru",
+        "leave-en",
+        "vpn-en"
+      ],
+      "cited_keys": [
+        "probation-kk"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 55.7782079995377,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Remote-work cap."
+    },
+    {
+      "case_id": "helpdesk-001",
+      "question": "Where do I ask IT for help?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "helpdesk-en",
+        "wifi-en",
+        "equipment-en",
+        "leave-kk",
+        "hours-kk"
+      ],
+      "cited_keys": [
+        "helpdesk-en"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 2,
+      "leaked_forbidden": false,
+      "latency_ms": 52.213374998245854,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "IT helpdesk channel."
+    },
+    {
+      "case_id": "fire-001",
+      "question": "Куда бежать при пожарной тревоге?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "conduct-ru",
+        "vpn-en",
+        "meetings-en",
+        "wifi-en",
+        "leave-kk"
+      ],
+      "cited_keys": [
+        "conduct-ru"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 51.56054200051585,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Fire assembly point."
+    },
+    {
+      "case_id": "hours-001",
+      "question": "Жұмыс қай сағатта басталады?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "nda-en",
+        "vpn-en",
+        "equipment-en",
+        "badge-kk",
+        "wifi-en"
+      ],
+      "cited_keys": [
+        "nda-en"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 54.73041699588066,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Office hours in Kazakh."
+    },
+    {
+      "case_id": "probation-001",
+      "question": "Сынақ мерзімі қанша ай?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "payroll-ru",
+        "expenses-ru",
+        "remote-en",
+        "leave-kk",
+        "equipment-en"
+      ],
+      "cited_keys": [
+        "payroll-ru"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 53.006249996542465,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Probation length."
+    },
+    {
+      "case_id": "nda-001",
+      "question": "Can I share the client list with a friend?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "leave-kk",
+        "equipment-en",
+        "nda-en",
+        "sick-ru",
+        "onboarding-en"
+      ],
+      "cited_keys": [
+        "leave-kk"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 53.33791700104484,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Confidentiality forbids sharing client lists."
+    },
+    {
+      "case_id": "expenses-001",
+      "question": "Какие суточные в командировке по Казахстану?",
+      "categories": [
+        "answerable",
+        "citation"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "leave-en",
+        "sick-ru",
+        "meetings-en",
+        "vpn-ru",
+        "hours-kk"
+      ],
+      "cited_keys": [
+        "leave-en"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 54.97054200532148,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Per-diem amount."
+    },
+    {
+      "case_id": "ambiguous-001",
+      "question": "How do I get access?",
+      "categories": [
+        "ambiguous"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "conduct-ru",
+        "nda-en",
+        "vpn-en",
+        "onboarding-en",
+        "fire-ru"
+      ],
+      "cited_keys": [
+        "conduct-ru"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 55.257833999348804,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Underspecified: VPN, guest Wi-Fi, or badge. Production has no clarify mode; any listed source is acceptable."
+    },
+    {
+      "case_id": "ambiguous-002",
+      "question": "What should a new employee do first?",
+      "categories": [
+        "ambiguous"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "conduct-ru",
+        "hours-kk",
+        "expenses-ru",
+        "payroll-ru",
+        "remote-en"
+      ],
+      "cited_keys": [
+        "conduct-ru"
+      ],
+      "correctness": 0,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 56.875832997320686,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Several first-week articles could apply."
+    },
+    {
+      "case_id": "ambiguous-003",
+      "question": "К кому написать?",
+      "categories": [
+        "ambiguous"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "leave-en",
+        "conduct-ru",
+        "leave-ru",
+        "probation-kk",
+        "onboarding-en"
+      ],
+      "cited_keys": [
+        "leave-en"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 1,
+      "leaked_forbidden": false,
+      "latency_ms": 52.276791000622325,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Recipient is unspecified (IT vs HR vs manager)."
+    },
+    {
+      "case_id": "ambiguous-004",
+      "question": "Какие правила нужно знать?",
+      "categories": [
+        "ambiguous"
+      ],
+      "expected_answerable": true,
+      "expected_behavior": "answer_with_citation",
+      "no_answer": false,
+      "retrieval_hit": true,
+      "retrieved_keys": [
+        "conduct-ru",
+        "vpn-en",
+        "payroll-ru",
+        "meetings-en",
+        "vpn-ru"
+      ],
+      "cited_keys": [
+        "conduct-ru"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 2,
+      "leaked_forbidden": false,
+      "latency_ms": 54.25516700051958,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Broad policy question spanning several articles."
+    },
+    {
+      "case_id": "unknown-001",
+      "question": "Какой у компании курс акций завтра?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "vpn-ru",
+        "badge-kk",
+        "onboarding-en",
+        "equipment-en",
+        "helpdesk-en"
+      ],
+      "cited_keys": [
+        "vpn-ru"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 50.863042000855785,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Stock price is not in the KB."
+    },
+    {
+      "case_id": "unknown-002",
+      "question": "How do I bake sourdough bread at home?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "leave-kk",
+        "probation-kk",
+        "conduct-ru",
+        "nda-en",
+        "sick-ru"
+      ],
+      "cited_keys": [
+        "leave-kk"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 49.126833997434005,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Unrelated to company knowledge."
+    },
+    {
+      "case_id": "unknown-003",
+      "question": "Какая зарплата у генерального директора лично?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "nda-en",
+        "fire-ru",
+        "sick-ru",
+        "probation-kk",
+        "equipment-en"
+      ],
+      "cited_keys": [
+        "nda-en"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 51.26570799620822,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Named executive pay is not published."
+    },
+    {
+      "case_id": "unknown-004",
+      "question": "Where does the company park the yacht?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "remote-en",
+        "expenses-ru",
+        "conduct-ru",
+        "payroll-ru",
+        "nda-en"
+      ],
+      "cited_keys": [
+        "remote-en"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 50.04391699912958,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "No yacht article exists."
+    },
+    {
+      "case_id": "unknown-005",
+      "question": "How do I reset my personal Gmail password?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "wifi-en",
+        "conduct-ru",
+        "nda-en",
+        "expenses-ru",
+        "remote-en"
+      ],
+      "cited_keys": [
+        "wifi-en"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 54.43549999472452,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Personal Gmail is outside the company KB."
+    },
+    {
+      "case_id": "unknown-006",
+      "question": "What is the Kubernetes ingress timeout in production?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "fire-ru",
+        "vpn-en",
+        "conduct-ru",
+        "probation-kk",
+        "expenses-ru"
+      ],
+      "cited_keys": [
+        "fire-ru"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 53.92591700365301,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Infra timeouts are not in the onboarding KB."
+    },
+    {
+      "case_id": "unknown-007",
+      "question": "Как получить туристическую визу в Японию?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "nda-en",
+        "sick-ru",
+        "probation-kk",
+        "fire-ru",
+        "conduct-ru"
+      ],
+      "cited_keys": [
+        "nda-en"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 55.457540998759214,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Tourist visas are not company policy."
+    },
+    {
+      "case_id": "unknown-008",
+      "question": "Криптобиржада аккаунтты қалай ашамын?",
+      "categories": [
+        "unanswerable"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_answer",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "equipment-en",
+        "conduct-ru",
+        "payroll-ru",
+        "leave-en",
+        "onboarding-en"
+      ],
+      "cited_keys": [
+        "equipment-en"
+      ],
+      "correctness": 0,
+      "groundedness": 0,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 54.62887499743374,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Crypto-exchange signup is not in the KB."
+    },
+    {
+      "case_id": "security-001",
+      "question": "What is Company B annual bonus formula and the Northwind Q4 target payout?",
+      "categories": [
+        "security"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_leak",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "conduct-ru",
+        "hours-kk",
+        "meetings-en",
+        "leave-kk"
+      ],
+      "cited_keys": [
+        "conduct-ru"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 53.842624998651445,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "Company B bonus article must never appear for a Company A employee."
+    },
+    {
+      "case_id": "security-002",
+      "question": "What is employee B's private bonus and salary band?",
+      "categories": [
+        "security"
+      ],
+      "expected_answerable": false,
+      "expected_behavior": "no_leak",
+      "no_answer": false,
+      "retrieval_hit": false,
+      "retrieved_keys": [
+        "wifi-en",
+        "payroll-ru",
+        "hours-kk",
+        "sick-ru",
+        "meetings-en"
+      ],
+      "cited_keys": [
+        "wifi-en"
+      ],
+      "correctness": 1,
+      "groundedness": 1,
+      "citation": 0,
+      "leaked_forbidden": false,
+      "latency_ms": 52.90545900061261,
+      "answer_preview": "According to the knowledge base [S1].",
+      "notes": "No employee-private compensation article exists for tenant A."
+    }
+  ],
+  "limitations": [
+    "Small evaluation sample; results are directional and not statistically representative.",
+    "P95 latency is not statistically meaningful at this sample size.",
+    "FakeEmbeddingProvider is a hash, not a semantic embedding model.",
+    "FakeLLMProvider emits a citation stub and is not a factual-answer quality signal for production gpt-4o-mini.",
+    "Live OpenAI numbers appear only when that path actually ran.",
+    "Production top_k remains 5; min_score remains unset."
+  ],
+  "findings": [
+    "8 unanswerable questions received an answer (false-negative no-answer). Without a production min_score, nearest-neighbor hits still reach the LLM.",
+    "Recall@5 is 0.444 on this dataset. Fake hash embeddings are not a semantic quality signal.",
+    "No case scored fully correct on required facts. FakeLLM is a citation stub; live OpenAI is required for factual-answer measurement."
+  ],
+  "security_passed": true,
+  "live_openai_status": "NOT MEASURED"
+}

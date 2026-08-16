@@ -20,3 +20,22 @@ class ArticleVersionResponse(BaseModel):
     published_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ArticleVersionSummary(BaseModel):
+    """Version metadata without body (history list)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    article_id: UUID
+    version: int
+    title: str
+    change_summary: str | None = None
+    created_by_id: UUID | None = None
+    published_at: datetime | None = None
+    created_at: datetime
+
+
+class ArticleVersionListResponse(BaseModel):
+    items: list[ArticleVersionSummary]

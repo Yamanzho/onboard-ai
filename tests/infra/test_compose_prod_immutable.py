@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -64,15 +66,7 @@ def test_dev_compose_keeps_source_bind_mount_and_entrypoint() -> None:
 
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_prod_compose_has_no_source_bind_mounts() -> None:
-    env = {
-        "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-        "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-        "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-        "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-        "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-        "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
-    }
-    cfg = _compose_config(prod=True, env=env)
+    cfg = _compose_config(prod=True, env=COMPOSE_PROD_SECRETS)
     for name in ("api", "bot"):
         binds = _bind_mounts(cfg["services"][name])
         assert binds == [], f"production {name} must not bind-mount host source code"
@@ -81,12 +75,7 @@ def test_prod_compose_has_no_source_bind_mounts() -> None:
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_prod_compose_forces_production_env_for_no_reload() -> None:
     env = {
-        "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-        "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-        "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-        "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-        "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-        "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
+        **COMPOSE_PROD_SECRETS,
         # Ensure host .env cannot keep development / reload path.
         "APP_ENV": "development",
         "DEBUG": "true",
@@ -110,6 +99,10 @@ def test_entrypoint_api_reload_only_outside_production() -> None:
     script = (ROOT / "docker" / "entrypoint-api.sh").read_text(encoding="utf-8")
     assert 'if [ "${APP_ENV_VALUE}" = "production" ]; then' in script
     assert "--workers" in script
+
+    assert "SEED_DEMO=true is forbidden when APP_ENV=production" in script
+    assert 'APP_ENV_VALUE" = "production"' in script
+    assert 'SEED_DEMO:-false}" = "true"' in script
 
     reload_lines = [
         line.strip()

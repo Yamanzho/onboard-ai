@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { t } from '../i18n'
@@ -54,10 +55,22 @@ export function AppShell({
   onLogout,
   header,
 }: AppShellProps) {
+  const [navOpen, setNavOpen] = useState(false)
+
   return (
     <div className="flex min-h-screen">
+      {navOpen ? (
+        <button
+          type="button"
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          aria-label={t('common.closeMenu')}
+          onClick={() => setNavOpen(false)}
+        />
+      ) : null}
       <aside
-        className={`flex w-60 shrink-0 flex-col text-slate-200 ${SIDEBAR_BG[accent]}`}
+        className={`fixed inset-y-0 left-0 z-40 flex w-60 shrink-0 flex-col text-slate-200 transition-transform md:static md:translate-x-0 ${SIDEBAR_BG[accent]} ${
+          navOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
       >
         <div className={`border-b px-5 py-5 ${BORDER[accent]}`}>
           <p
@@ -76,6 +89,7 @@ export function AppShell({
               key={`${item.path}:${item.labelKey}`}
               to={item.path}
               end={item.path === '/company' || item.path === '/hr' || item.path === '/employee' || item.path === '/platform'}
+              onClick={() => setNavOpen(false)}
               className={({ isActive }) =>
                 `rounded-md px-3 py-2 text-sm transition ${
                   isActive
@@ -103,8 +117,19 @@ export function AppShell({
         </div>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-white px-4 py-3 md:hidden">
+          <button
+            type="button"
+            className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-sm"
+            aria-label={t('common.openMenu')}
+            onClick={() => setNavOpen(true)}
+          >
+            {t('common.menu')}
+          </button>
+          <p className="truncate text-sm font-semibold">{brandLabel}</p>
+        </div>
         {header}
-        <main className="flex-1 overflow-auto bg-[var(--color-bg)] p-6 md:p-8">
+        <main className="flex-1 overflow-auto bg-[var(--color-bg)] p-4 md:p-8">
           <Outlet />
         </main>
       </div>

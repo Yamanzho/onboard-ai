@@ -1,9 +1,9 @@
+import logging
 from collections.abc import Callable
 from datetime import date
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
-import logging
 
 from sqlalchemy.exc import IntegrityError
 
@@ -15,9 +15,10 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.security import hash_password, verify_employee_password, verify_password
-from app.db.enums import EmployeeRole, EmployeeStatus
+from app.db.enums import CompanyAuditAction, EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
+from app.services.company_audit import record_company_audit
 from app.services.email import InviteEmailResult
 from app.services.platform_management import InviteService
 from app.services.refresh_session import SUBJECT_EMPLOYEE
@@ -58,6 +59,7 @@ class EmployeeService:
         role: str = EmployeeRole.EMPLOYEE.value,
         status: str = EmployeeStatus.INVITED.value,
         hired_at: date | None = None,
+        actor_employee_id: UUID | None = None,
     ) -> tuple[Employee, InviteEmailResult | None]:
         self._validate_role(role)
         self._validate_status(status)
@@ -107,6 +109,16 @@ class EmployeeService:
                         hired_at=hired_at,
                     ),
                 )
+                await record_company_audit(
+                    uow,
+                    company_id=company_id,
+                    actor_employee_id=actor_employee_id,
+                    action=CompanyAuditAction.EMPLOYEE_CREATED.value,
+                    resource_type="employee",
+                    resource_id=employee.id,
+                    summary=f"Created employee {full_name}",
+                    details={"role": role, "status": status},
+                )
                 await uow.commit()
             except IntegrityError as exc:
                 await uow.rollback()
@@ -124,6 +136,19 @@ class EmployeeService:
                 company_name=company_name,
                 use_platform_rls=True,
             )
+            async with self._uow_factory() as uow:
+                await uow.enter_tenant(company_id)
+                await record_company_audit(
+                    uow,
+                    company_id=company_id,
+                    actor_employee_id=actor_employee_id,
+                    action=CompanyAuditAction.INVITE_CREATED.value,
+                    resource_type="employee",
+                    resource_id=employee.id,
+                    summary=f"Sent invite to {full_name}",
+                    details={"role": role, "delivery": delivery.delivery},
+                )
+                await uow.commit()
         return employee, delivery
 
     async def get_employee(
@@ -300,6 +325,7 @@ class EmployeeService:
         *,
         company_id: UUID,
         actor_role: str,
+        actor_employee_id: UUID | None = None,
         **values: Any,
     ) -> Employee:
         forbidden = {"id", "company_id", "created_at", "password_hash"}
@@ -341,15 +367,33 @@ class EmployeeService:
                 updated = await uow.employees.update(employee_id, **values)
                 if updated is None:
                     raise NotFoundError(f"Employee {employee_id} not found")
-                # Archive / block: drop this employee's refresh sessions only.
-                if values.get("status") == EmployeeStatus.ARCHIVED.value:
+                archived = values.get("status") == EmployeeStatus.ARCHIVED.value
+                await record_company_audit(
+                    uow,
+                    company_id=company_id,
+                    actor_employee_id=actor_employee_id,
+                    action=(
+                        CompanyAuditAction.EMPLOYEE_ARCHIVED.value
+                        if archived
+                        else CompanyAuditAction.EMPLOYEE_UPDATED.value
+                    ),
+                    resource_type="employee",
+                    resource_id=employee_id,
+                    summary=(
+                        f"Archived employee {employee.full_name}"
+                        if archived
+                        else f"Updated employee {employee.full_name}"
+                    ),
+                    details={"fields": sorted(str(key) for key in values)},
+                )
+                if archived:
                     await uow.enter_session_bootstrap()
                     await uow.refresh_sessions.revoke_all_for_subject(
                         subject_type=SUBJECT_EMPLOYEE,
                         subject_id=employee_id,
                     )
                 await uow.commit()
-                if values.get("status") == EmployeeStatus.ARCHIVED.value:
+                if archived:
                     _logger.info(
                         "employee_archived employee_id=%s company_id=%s actor_role=%s",
                         employee_id,
@@ -484,6 +528,7 @@ class EmployeeService:
         employee_id: UUID,
         company_id: UUID,
         actor_role: str,
+        actor_employee_id: UUID | None = None,
     ) -> InviteEmailResult:
         """Re-issue invite for an INVITED employee (new token; prior unused invalidated)."""
         async with self._uow_factory() as uow:
@@ -516,6 +561,19 @@ class EmployeeService:
             company_name=company_name,
             use_platform_rls=True,
         )
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.INVITE_RESENT.value,
+                resource_type="employee",
+                resource_id=employee_id,
+                summary=f"Resent invite to {snapshot.full_name}",
+                details={"delivery": delivery.delivery},
+            )
+            await uow.commit()
         _logger.info(
             "invite_resent employee_id=%s company_id=%s actor_role=%s delivery=%s",
             employee_id,
@@ -540,6 +598,7 @@ class EmployeeService:
         *,
         company_id: UUID,
         actor_role: str,
+        actor_employee_id: UUID | None = None,
     ) -> None:
         """Archive (soft-delete) an employee — preserve assignments/history."""
         async with self._uow_factory() as uow:
@@ -578,6 +637,15 @@ class EmployeeService:
             )
             if updated is None:
                 raise NotFoundError(f"Employee {employee_id} not found")
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.EMPLOYEE_ARCHIVED.value,
+                resource_type="employee",
+                resource_id=employee_id,
+                summary=f"Archived employee {employee.full_name}",
+            )
             await uow.enter_session_bootstrap()
             await uow.refresh_sessions.revoke_all_for_subject(
                 subject_type=SUBJECT_EMPLOYEE,

@@ -37,13 +37,16 @@ _APP_TABLES = (
     "knowledge_article_versions",
     "knowledge_article_tags",
     "knowledge_article_links",
+    "knowledge_article_chunks",
     "ai_conversations",
+    "ai_messages",
     "company_subscriptions",
     "subscription_history_events",
     "employee_invites",
     "refresh_sessions",
     "super_admins",
     "platform_audit_logs",
+    "company_audit_logs",
 )
 
 
@@ -124,6 +127,8 @@ async def bootstrap() -> None:
         await conn.execute("ALTER SCHEMA app OWNER TO onboard_owner")
         await conn.execute("GRANT USAGE ON SCHEMA app TO onboard_app")
         await conn.execute("GRANT USAGE ON SCHEMA app TO PUBLIC")
+        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+        await conn.execute("GRANT USAGE ON TYPE vector TO onboard_app")
 
         for table in _APP_TABLES:
             exists = await conn.fetchval("SELECT to_regclass($1)", f"public.{table}")

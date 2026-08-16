@@ -8,6 +8,7 @@ import {
 } from '../../components/common/PageHeader'
 import { AssignmentStatusBadge } from '../../components/assignments/AssignmentStatusBadge'
 import { EmployeeStatusBadge } from '../../components/employees/EmployeeBadges'
+import { useOnboardingAnalytics } from '../../hooks/useAnalytics'
 import { useAssignments } from '../../hooks/useAssignments'
 import { useAuth } from '../../hooks/useAuth'
 import { useEmployees } from '../../hooks/useEmployees'
@@ -31,6 +32,11 @@ export function HrDashboardPage() {
   const { user } = useAuth()
   const paths = useWorkspacePaths()
   const {
+    data: analytics,
+    isLoading: analyticsLoading,
+    error: analyticsError,
+  } = useOnboardingAnalytics()
+  const {
     data: employees = [],
     isLoading: employeesLoading,
     error: employeesError,
@@ -52,19 +58,10 @@ export function HrDashboardPage() {
   )
 
   const stats = useMemo(() => {
-    const invited = staff.filter((e) => e.status === 'invited').length
-    const active = assignments.filter(isActiveAssignment).length
-    const completed = assignments.filter((a) => a.status === 'completed')
-    const countable = assignments.filter((a) => a.status !== 'cancelled')
-    const completion =
-      countable.length === 0
-        ? null
-        : Math.round((completed.length / countable.length) * 100)
+    const active = assignments.filter(isActiveAssignment)
     return {
       employees: staff.length,
-      invited,
-      activeOnboarding: active,
-      completion,
+      activeOnboarding: active.length,
     }
   }, [staff, assignments])
 
@@ -104,11 +101,13 @@ export function HrDashboardPage() {
     return (id: string) => map.get(id) ?? id.slice(0, 8)
   }, [programs])
 
-  const loading = employeesLoading || programsLoading || assignmentsLoading
+  const loading =
+    employeesLoading || programsLoading || assignmentsLoading || analyticsLoading
   const errorMessage =
     (employeesError instanceof Error && employeesError.message) ||
     (programsError instanceof Error && programsError.message) ||
     (assignmentsError instanceof Error && assignmentsError.message) ||
+    (analyticsError instanceof Error && analyticsError.message) ||
     null
 
   return (
@@ -131,23 +130,93 @@ export function HrDashboardPage() {
           <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard
               label={t('hrDashboard.employees')}
-              value={String(stats.employees)}
-            />
-            <StatCard
-              label={t('hrDashboard.invited')}
-              value={String(stats.invited)}
+              value={String(analytics?.total_employees ?? stats.employees)}
             />
             <StatCard
               label={t('hrDashboard.activeOnboarding')}
-              value={String(stats.activeOnboarding)}
+              value={String(analytics?.active_onboarding ?? stats.activeOnboarding)}
+            />
+            <StatCard
+              label={t('hrDashboard.completedOnboarding')}
+              value={String(analytics?.completed_onboarding ?? 0)}
             />
             <StatCard
               label={t('hrDashboard.completion')}
               value={
-                stats.completion == null ? t('common.emDash') : `${stats.completion}%`
+                analytics?.completion_rate == null
+                  ? t('common.emDash')
+                  : `${Math.round(analytics.completion_rate * 100)}%`
               }
             />
+            <StatCard
+              label={t('hrDashboard.averageProgress')}
+              value={
+                analytics?.average_progress == null
+                  ? t('common.emDash')
+                  : `${Math.round(analytics.average_progress)}%`
+              }
+            />
+            <StatCard
+              label={t('hrDashboard.notStarted')}
+              value={String(analytics?.employees_not_started ?? 0)}
+            />
+            <StatCard
+              label={t('hrDashboard.inProgressEmployees')}
+              value={String(analytics?.employees_in_progress ?? 0)}
+            />
+            <StatCard
+              label={t('hrDashboard.completedEmployees')}
+              value={String(analytics?.employees_completed ?? 0)}
+            />
           </div>
+
+          {analytics?.by_program && analytics.by_program.length > 0 ? (
+            <section className="mb-6 overflow-x-auto rounded-lg border border-[var(--color-border)] bg-white">
+              <h2 className="px-4 pt-4 text-sm font-semibold">
+                {t('hrDashboard.byProgram')}
+              </h2>
+              <table className="mt-2 min-w-full text-left text-sm">
+                <thead className="bg-slate-50 text-xs uppercase text-[var(--color-muted)]">
+                  <tr>
+                    <th className="px-4 py-2">{t('hrDashboard.program')}</th>
+                    <th className="px-4 py-2">{t('hrDashboard.assigned')}</th>
+                    <th className="px-4 py-2">{t('hrDashboard.completedOnboarding')}</th>
+                    <th className="px-4 py-2">{t('hrDashboard.completion')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-[var(--color-border)]">
+                  {analytics.by_program.map((row) => (
+                    <tr key={row.program_id}>
+                      <td className="px-4 py-2">{row.title}</td>
+                      <td className="px-4 py-2">{row.assigned}</td>
+                      <td className="px-4 py-2">{row.completed}</td>
+                      <td className="px-4 py-2">
+                        {row.completion_rate == null
+                          ? t('common.emDash')
+                          : `${Math.round(row.completion_rate * 100)}%`}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </section>
+          ) : null}
+
+          {analytics?.completed_over_time && analytics.completed_over_time.length > 0 ? (
+            <section className="mb-6 rounded-lg border border-[var(--color-border)] bg-white p-4">
+              <h2 className="mb-2 text-sm font-semibold">
+                {t('hrDashboard.overTime')}
+              </h2>
+              <ul className="space-y-1 text-sm text-[var(--color-muted)]">
+                {analytics.completed_over_time.map((point) => (
+                  <li key={point.date} className="flex justify-between">
+                    <span>{point.date}</span>
+                    <span>{point.count}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
 
           <div className="grid gap-6 lg:grid-cols-3">
             <section className="rounded-lg border border-[var(--color-border)] bg-white p-4">

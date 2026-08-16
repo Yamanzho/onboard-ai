@@ -29,6 +29,9 @@ function validate(values: StepFormValues): string | null {
       return t('programs.steps.validation.minutesInvalid')
     }
   }
+  if (values.step_type === 'quiz' && !values.content_questions.trim()) {
+    return t('programs.steps.validation.questionsRequired')
+  }
   return null
 }
 
@@ -141,6 +144,46 @@ export function StepForm({
           placeholder={t('programs.steps.contentPlaceholder')}
         />
       </div>
+
+      {values.step_type === 'task' ? (
+        <div>
+          <Label htmlFor="step-url">{t('programs.steps.taskUrl')}</Label>
+          <Input
+            id="step-url"
+            type="url"
+            value={values.content_url}
+            onChange={(e) =>
+              setValues({ ...values, content_url: e.target.value })
+            }
+            placeholder={t('programs.steps.taskUrlPlaceholder')}
+          />
+        </div>
+      ) : null}
+
+      {values.step_type === 'quiz' ? (
+        <div>
+          <Label htmlFor="step-questions">{t('programs.steps.questions')}</Label>
+          <Textarea
+            id="step-questions"
+            rows={5}
+            value={values.content_questions}
+            onChange={(e) =>
+              setValues({ ...values, content_questions: e.target.value })
+            }
+            placeholder={t('programs.steps.questionsPlaceholder')}
+            required
+          />
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {t('programs.steps.questionsHint')}
+          </p>
+        </div>
+      ) : null}
+
+      {values.step_type === 'ack' ? (
+        <p className="text-xs text-[var(--color-muted)]">
+          {t('programs.steps.ackHint')}
+        </p>
+      ) : null}
 
       <label className="flex items-center gap-2 text-sm">
         <input

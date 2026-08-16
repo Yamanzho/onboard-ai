@@ -11,21 +11,14 @@ from pathlib import Path
 
 import pytest
 
+from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS as _COMPOSE_SECRETS
+
 ROOT = Path(__file__).resolve().parents[2]
 DOCKERFILE = ROOT / "Dockerfile"
 COMPOSE_PROD = ROOT / "docker-compose.prod.yml"
 DEPLOYMENT = ROOT / "DEPLOYMENT.md"
 NGINX_PROD = ROOT / "frontend" / "nginx.prod.conf"
 AUTH_COOKIES = ROOT / "app" / "core" / "auth_cookies.py"
-
-_COMPOSE_SECRETS = {
-    "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-    "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-    "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-    "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-    "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-    "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
-}
 
 
 def _compose_available() -> bool:
@@ -106,6 +99,7 @@ def test_prod_compose_fail_closed_network_surface() -> None:
     api_env = api.get("environment") or {}
     assert api_env.get("APP_ENV") == "production"
     assert str(api_env.get("DEBUG")).lower() in {"false", "0"}
+    assert str(api_env.get("SEED_DEMO")).lower() in {"false", "0"}
     assert str(api_env.get("TRUST_PROXY_HEADERS")).lower() in {"true", "1"}
 
     fe_ports = frontend.get("ports") or []

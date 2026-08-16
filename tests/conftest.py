@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 import app.db.session as db_session
 from app.api import deps as api_deps
+from app.core.ai_constants import KB_CHUNK_VECTOR_DIMENSION
 from app.core.auth_cookies import (
     ACCESS_COOKIE,
     REFRESH_COOKIE,
@@ -29,6 +31,22 @@ from app.services.knowledge.category_service import CategoryService
 from app.services.knowledge.tag_service import TagService
 
 
+@pytest.fixture(autouse=True)
+def telegram_conversation_store():
+    """Keep Telegram conversation pointers off live Redis during tests."""
+    from app.bot.services.ai_conversation import (
+        MemoryRedisClient,
+        TelegramConversationStore,
+        reset_telegram_conversation_store_for_tests,
+    )
+    import app.bot.services.ai_conversation as store_mod
+
+    store = TelegramConversationStore(redis_client=MemoryRedisClient())
+    store_mod._store = store
+    yield store
+    reset_telegram_conversation_store_for_tests()
+
+
 @pytest.fixture(scope="session", autouse=True)
 async def _bind_engine_to_session_loop() -> AsyncIterator[None]:
     """Recreate the global async engine on pytest-asyncio's session loop.
@@ -43,6 +61,10 @@ async def _bind_engine_to_session_loop() -> AsyncIterator[None]:
     settings.invite_preview_rate_limit = 0
     settings.invite_accept_rate_limit = 0
     settings.refresh_rate_limit = 0
+    settings.ai_chat_rate_limit = 0
+    settings.ai_embedding_provider = "fake"
+    settings.ai_embedding_dimension = KB_CHUNK_VECTOR_DIMENSION
+    settings.ai_llm_provider = "fake"
 
     await db_session.engine.dispose()
     engine = create_async_engine(
@@ -59,6 +81,8 @@ async def _bind_engine_to_session_loop() -> AsyncIterator[None]:
 
     # Clear cached service singletons so they pick up the rebound session factory.
     api_deps.get_article_service.cache_clear()
+    api_deps.get_chunk_indexer.cache_clear()
+    api_deps.get_ai_chat_service.cache_clear()
     api_deps.get_category_service.cache_clear()
     api_deps.get_tag_service.cache_clear()
     api_deps.get_employee_service.cache_clear()
@@ -85,6 +109,10 @@ def _keep_auth_rate_limits_disabled() -> None:
     settings.invite_preview_rate_limit = 0
     settings.invite_accept_rate_limit = 0
     settings.refresh_rate_limit = 0
+    settings.ai_chat_rate_limit = 0
+    settings.ai_embedding_provider = "fake"
+    settings.ai_embedding_dimension = KB_CHUNK_VECTOR_DIMENSION
+    settings.ai_llm_provider = "fake"
 
 
 def _uow_factory() -> UnitOfWork:
@@ -178,6 +206,19 @@ async def employee_a(company_a: Company) -> Employee:
 
 
 @pytest.fixture
+async def admin_b(company_b: Company) -> Employee:
+    return await _create_employee(company_id=company_b.id, role=EmployeeRole.ADMIN.value)
+
+
+@pytest.fixture
+async def employee_b(company_b: Company) -> Employee:
+    return await _create_employee(
+        company_id=company_b.id,
+        role=EmployeeRole.EMPLOYEE.value,
+    )
+
+
+@pytest.fixture
 def article_service() -> ArticleService:
     return ArticleService(uow_factory=_uow_factory)
 
@@ -224,3 +265,51 @@ def sa_tokens_from_response(response) -> dict[str, str]:
     assert access, "expected onboard_sa_access cookie"
     assert refresh, "expected onboard_sa_refresh cookie"
     return {"access_token": access, "refresh_token": refresh}
+
+
+_SECURITY_PATH_HINTS = (
+    "/tests/security/",
+    "pentest",
+    "_acl",
+    "peer_hr_authz",
+    "telegram_invite",
+    "invite_active_takeover",
+    "subscription_entitlement",
+    "public_gate",
+    "session_hardening",
+    "cookie_auth",
+    "tenant_isolation",
+    "security_hardening",
+    "trust_proxy",
+    "production_secrets",
+    "rate_limit_production",
+    "ai_chat",
+    "rls",
+)
+
+_TELEGRAM_PATH_HINTS = (
+    "/tests/bot/",
+    "telegram",
+    "bot_login",
+    "redis_storage",
+)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Auto-mark tests from path so CI can filter the matrix without touching every file."""
+    for item in items:
+        path = Path(str(item.path)).as_posix()
+        lowered = path.lower()
+        if "/tests/api/" in path:
+            item.add_marker(pytest.mark.api)
+        if "/tests/core/" in path or "/tests/knowledge/" in path or "/tests/ai/" in path:
+            item.add_marker(pytest.mark.unit)
+        if "/tests/e2e/" in path:
+            item.add_marker(pytest.mark.integration)
+        if "/tests/infra/" in path:
+            item.add_marker(pytest.mark.infra)
+        if any(hint in lowered for hint in _SECURITY_PATH_HINTS):
+            item.add_marker(pytest.mark.security)
+        if any(hint in lowered for hint in _TELEGRAM_PATH_HINTS):
+            item.add_marker(pytest.mark.telegram)
+

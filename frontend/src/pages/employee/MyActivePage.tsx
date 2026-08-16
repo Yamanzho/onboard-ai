@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { useQueries } from '@tanstack/react-query'
 import {
   EmptyState,
@@ -7,6 +8,7 @@ import {
 } from '../../components/common/PageHeader'
 import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
+import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { isActiveAssignment } from '../../lib/progressUtils'
 import * as assignmentsApi from '../../services/assignmentsApi'
@@ -25,6 +27,7 @@ function formatDate(value: string | null | undefined) {
 
 export function MyActivePage() {
   const { user } = useAuth()
+  const paths = useWorkspacePaths()
   const {
     data: assignments = [],
     isLoading,
@@ -100,6 +103,12 @@ export function MyActivePage() {
                     {t('employeePortal.deadline')}: {formatDate(a.due_at)}
                   </p>
                 ) : null}
+                <Link
+                  to={paths.path('/onboarding')}
+                  className="mt-2 inline-block text-sm text-[var(--color-accent)]"
+                >
+                  {t('employeeDashboard.continue')}
+                </Link>
               </li>
             )
           })}

@@ -24,6 +24,9 @@ def _production_settings(**overrides: object) -> Settings:
         "migration_database_url": (
             "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai"
         ),
+        "onboard_owner_password": "unit-test-postgres-password",
+        "onboard_app_password": "unit-test-postgres-password",
+        "invite_base_url": "https://onboardai.example.test",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

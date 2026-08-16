@@ -150,7 +150,8 @@ async def test_catalog_force_rls_enabled(app_role_session: AsyncSession) -> None
             text(
                 "SELECT relname, relrowsecurity, relforcerowsecurity "
                 "FROM pg_class WHERE relname IN ('employees', 'refresh_sessions', "
-                "'employee_invites', 'companies') ORDER BY 1"
+                "'employee_invites', 'companies', 'company_audit_logs', "
+                "'knowledge_article_chunks') ORDER BY 1"
             )
         )
     ).all()
@@ -535,6 +536,45 @@ async def test_auth_pin_then_tenant_escalation_for_company(
         company = await uow.companies.get_by_id(company_a.id)
         assert company is not None
         assert company.id == company_a.id
+
+
+@pytest.mark.asyncio
+async def test_company_audit_logs_are_tenant_isolated(
+    company_a: Company,
+    company_b: Company,
+    app_role_session: AsyncSession,
+) -> None:
+    await _set_tenant(app_role_session, company_a.id)
+    await app_role_session.execute(
+        text(
+            "INSERT INTO company_audit_logs "
+            "(id, company_id, action, resource_type, details, summary, "
+            "created_at, updated_at) VALUES "
+            "(gen_random_uuid(), :cid, 'employee.created', 'employee', "
+            "'{}'::jsonb, 'rls probe', now(), now())"
+        ),
+        {"cid": company_a.id},
+    )
+    await app_role_session.commit()
+
+    await _set_tenant(app_role_session, company_b.id)
+    hidden = (
+        await app_role_session.execute(
+            text("SELECT id FROM company_audit_logs WHERE company_id = :cid"),
+            {"cid": company_a.id},
+        )
+    ).first()
+    assert hidden is None
+
+    await _set_tenant(app_role_session, company_a.id)
+    visible = (
+        await app_role_session.execute(
+            text("SELECT summary FROM company_audit_logs WHERE company_id = :cid"),
+            {"cid": company_a.id},
+        )
+    ).first()
+    assert visible is not None
+    assert visible[0] == "rls probe"
 
 
 @pytest.mark.asyncio

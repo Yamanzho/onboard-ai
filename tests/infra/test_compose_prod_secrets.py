@@ -10,17 +10,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS as _COMPOSE_SECRETS
 
-# Deterministic compose-test values — not real credentials.
-_COMPOSE_SECRETS = {
-    "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-    "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-    "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-    "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-    "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-    "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
-}
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _compose_available() -> bool:
@@ -62,8 +54,13 @@ def test_prod_compose_passes_with_required_secrets() -> None:
     cfg = _compose_config(prod=True, env=_COMPOSE_SECRETS)
     api_env = cfg["services"]["api"].get("environment") or {}
     assert api_env.get("APP_ENV") == "production"
+    assert str(api_env.get("DEBUG")).lower() in {"false", "0"}
+    assert str(api_env.get("SEED_DEMO")).lower() in {"false", "0"}
     assert api_env.get("SECRET_KEY") == _COMPOSE_SECRETS["SECRET_KEY"]
     assert api_env.get("SUPER_ADMIN_PASSWORD") == _COMPOSE_SECRETS["SUPER_ADMIN_PASSWORD"]
+    assert api_env.get("BOT_SERVICE_TOKEN") == _COMPOSE_SECRETS["BOT_SERVICE_TOKEN"]
+    assert api_env.get("BOT_COMPANY_ID") == _COMPOSE_SECRETS["BOT_COMPANY_ID"]
+    assert api_env.get("INVITE_BASE_URL") == _COMPOSE_SECRETS["INVITE_BASE_URL"]
     assert _COMPOSE_SECRETS["REDIS_PASSWORD"] in str(api_env.get("REDIS_URL", ""))
 
 
@@ -77,6 +74,9 @@ def test_prod_compose_passes_with_required_secrets() -> None:
         "POSTGRES_PASSWORD",
         "ONBOARD_OWNER_PASSWORD",
         "ONBOARD_APP_PASSWORD",
+        "BOT_SERVICE_TOKEN",
+        "BOT_COMPANY_ID",
+        "INVITE_BASE_URL",
     ],
 )
 def test_prod_compose_fails_when_critical_secret_missing(missing_key: str) -> None:

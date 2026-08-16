@@ -28,8 +28,24 @@ export interface Article {
   created_by_id: string | null
   current_version: ArticleVersion | null
   tags: Tag[]
+  program_ids?: string[]
   created_at: string
   updated_at: string
+}
+
+export interface ArticleVersionSummary {
+  id: string
+  article_id: string
+  version: number
+  title: string
+  change_summary: string | null
+  created_by_id: string | null
+  published_at: string | null
+  created_at: string
+}
+
+export interface ArticleVersionListResponse {
+  items: ArticleVersionSummary[]
 }
 
 export interface ArticleListResponse {
@@ -45,6 +61,7 @@ export interface ArticleCreate {
   visibility?: KnowledgeVisibility
   tag_ids?: string[]
   change_summary?: string | null
+  program_ids?: string[]
 }
 
 export interface ArticleUpdate {
@@ -55,6 +72,7 @@ export interface ArticleUpdate {
   visibility?: KnowledgeVisibility
   tag_ids?: string[]
   change_summary?: string | null
+  program_ids?: string[]
 }
 
 export interface ArticleListParams {
@@ -62,6 +80,7 @@ export interface ArticleListParams {
   status?: string
   category_id?: string
   tag_id?: string
+  q?: string
   offset?: number
   limit?: number
 }

@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -53,15 +55,7 @@ def test_dev_compose_keeps_localhost_redis_without_requirepass() -> None:
 
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_prod_compose_requires_redis_password_and_hides_ports() -> None:
-    env = {
-        "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-        "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-        "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-        "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-        "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-        "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
-    }
-    cfg = _compose_config(prod=True, env=env)
+    cfg = _compose_config(prod=True, env=COMPOSE_PROD_SECRETS)
     api = cfg["services"]["api"]
     bot = cfg["services"]["bot"]
     redis = cfg["services"]["redis"]
@@ -88,13 +82,7 @@ def test_prod_compose_requires_redis_password_and_hides_ports() -> None:
 
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_prod_compose_fails_without_redis_password() -> None:
-    env = {**os.environ}
-    env["SECRET_KEY"] = "compose-test-hmac-secret-key-32chars-min!"
-    env["SUPER_ADMIN_PASSWORD"] = "compose-test-super-admin-ok"
-    env["POSTGRES_PASSWORD"] = "compose-test-postgres-password-ok"
-    env.pop("REDIS_PASSWORD", None)
-    # Ensure compose interpolation does not pick a blank from the project .env
-    # by forcing an empty value (Compose `:?` should still error on empty).
+    env = {**os.environ, **COMPOSE_PROD_SECRETS}
     env["REDIS_PASSWORD"] = ""
     cmd = [
         "docker",

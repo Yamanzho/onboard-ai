@@ -1,4 +1,5 @@
 from app.repositories.ai_conversation import AIConversationRepository
+from app.repositories.ai_message import AIMessageRepository
 from app.repositories.assignment import AssignmentRepository
 from app.repositories.company import CompanyRepository
 from app.repositories.employee import EmployeeRepository
@@ -13,6 +14,7 @@ from app.repositories.step import StepRepository
 
 __all__ = [
     "AIConversationRepository",
+    "AIMessageRepository",
     "AssignmentRepository",
     "CompanyRepository",
     "EmployeeRepository",

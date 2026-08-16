@@ -1,13 +1,19 @@
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, cast, exists, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import REGCONFIG
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models.knowledge_article import KnowledgeArticle
 from app.db.models.knowledge_article_link import KnowledgeArticleLink
 from app.db.models.knowledge_article_tag import KnowledgeArticleTag
+from app.db.models.knowledge_article_version import KnowledgeArticleVersion
+from app.db.models.knowledge_category import KnowledgeCategory
+from app.db.models.knowledge_tag import KnowledgeTag
 from app.repositories.base import _MAX_LIST_LIMIT, BaseRepository
+
+_MAX_SEARCH_Q = 200
 
 
 class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
@@ -36,6 +42,7 @@ class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
         status: str | None = None,
         category_id: UUID | None = None,
         tag_id: UUID | None = None,
+        q: str | None = None,
         target_type: str | None = None,
         target_id: UUID | None = None,
         offset: int = 0,
@@ -48,6 +55,7 @@ class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
             status=status,
             category_id=category_id,
             tag_id=tag_id,
+            q=q,
             target_type=target_type,
             target_id=target_id,
             offset=offset,
@@ -70,6 +78,7 @@ class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
         status: str | None,
         category_id: UUID | None,
         tag_id: UUID | None,
+        q: str | None,
         target_type: str | None,
         target_id: UUID | None,
         offset: int,
@@ -102,9 +111,64 @@ class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
                 KnowledgeArticleLink.target_type == target_type,
                 KnowledgeArticleLink.target_id == target_id,
             )
+        if q:
+            stmt = self._apply_search(stmt, q)
 
         return (
             stmt.order_by(KnowledgeArticle.created_at.desc())
             .offset(offset)
             .limit(limit)
+        )
+
+    @staticmethod
+    def _escape_like(value: str) -> str:
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+    def _apply_search(
+        self,
+        stmt: Select[tuple[KnowledgeArticle]],
+        q: str,
+    ) -> Select[tuple[KnowledgeArticle]]:
+        needle = q.strip()[:_MAX_SEARCH_Q]
+        if not needle:
+            return stmt
+        pattern = f"%{self._escape_like(needle)}%"
+        # PostgreSQL to_tsvector/plainto_tsquery require regconfig, not varchar.
+        config = cast(literal("simple"), REGCONFIG)
+        search_vector = func.to_tsvector(
+            config,
+            func.concat(
+                func.coalesce(KnowledgeArticleVersion.title, ""),
+                literal(" "),
+                func.coalesce(KnowledgeArticleVersion.body, ""),
+            ),
+        )
+        tsquery = func.plainto_tsquery(config, needle)
+        tag_match = exists(
+            select(1)
+            .select_from(KnowledgeArticleTag)
+            .join(KnowledgeTag, KnowledgeTag.id == KnowledgeArticleTag.tag_id)
+            .where(
+                KnowledgeArticleTag.article_id == KnowledgeArticle.id,
+                KnowledgeTag.name.ilike(pattern, escape="\\"),
+            )
+        )
+        return (
+            stmt.join(
+                KnowledgeArticleVersion,
+                KnowledgeArticle.current_version_id == KnowledgeArticleVersion.id,
+            )
+            .outerjoin(
+                KnowledgeCategory,
+                KnowledgeArticle.category_id == KnowledgeCategory.id,
+            )
+            .where(
+                or_(
+                    search_vector.op("@@")(tsquery),
+                    KnowledgeArticleVersion.title.ilike(pattern, escape="\\"),
+                    KnowledgeArticleVersion.body.ilike(pattern, escape="\\"),
+                    KnowledgeCategory.name.ilike(pattern, escape="\\"),
+                    tag_match,
+                )
+            )
         )

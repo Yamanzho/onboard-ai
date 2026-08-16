@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, Index, String, text
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy import CheckConstraint, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -13,26 +12,26 @@ from app.db.enums import ConversationStatus
 from app.db.mixins import TimestampMixin
 
 if TYPE_CHECKING:
-    from app.db.models.assignment import Assignment
+    from app.db.models.ai_message import AIMessage
     from app.db.models.company import Company
     from app.db.models.employee import Employee
 
 
 class AIConversation(Base, TimestampMixin):
+    """Employee-owned AI chat thread. Storage only — not KB authorization."""
+
     __tablename__ = "ai_conversations"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('active', 'closed')",
+            "status IN ('active', 'archived')",
             name="ck_ai_conversations_status",
         ),
-        Index("ix_ai_conversations_company_id_created_at", "company_id", "created_at"),
-        Index("ix_ai_conversations_employee_id_status", "employee_id", "status"),
         Index(
-            "ix_ai_conversations_assignment_id",
-            "assignment_id",
-            postgresql_where=text("assignment_id IS NOT NULL"),
+            "ix_ai_conversations_company_id_employee_id_updated_at",
+            "company_id",
+            "employee_id",
+            "updated_at",
         ),
-        Index("ix_ai_conversations_telegram_chat_id_status", "telegram_chat_id", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -52,24 +51,19 @@ class AIConversation(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    assignment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("assignments.id", ondelete="SET NULL"),
-        nullable=True,
-    )
-    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    title: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         String(32),
         nullable=False,
         default=ConversationStatus.ACTIVE.value,
     )
-    messages: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
-    meta: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
-    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     company: Mapped[Company] = relationship(back_populates="ai_conversations")
     employee: Mapped[Employee] = relationship(back_populates="ai_conversations")
-    assignment: Mapped[Optional[Assignment]] = relationship(back_populates="ai_conversations")
+    messages: Mapped[list[AIMessage]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self) -> str:
         return f"<AIConversation id={self.id} status={self.status!r}>"

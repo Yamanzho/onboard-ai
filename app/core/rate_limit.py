@@ -97,12 +97,19 @@ def is_rate_limited(key: str, *, limit: int, window_seconds: int) -> bool:
     return _memory_is_limited(key, limit=limit, window_seconds=window_seconds)
 
 
+_INCR_EXPIRE_LUA = """
+local n = redis.call('INCR', KEYS[1])
+if n == 1 or redis.call('TTL', KEYS[1]) < 0 then
+  redis.call('EXPIRE', KEYS[1], tonumber(ARGV[1]))
+end
+return n
+"""
+
+
 def _redis_is_limited(redis, key: str, *, limit: int, window_seconds: int) -> bool:
     redis_key = f"rate_limit:{key}"
     try:
-        count = redis.incr(redis_key)
-        if count == 1:
-            redis.expire(redis_key, window_seconds)
+        count = redis.eval(_INCR_EXPIRE_LUA, 1, redis_key, int(window_seconds))
         return int(count) > limit
     except Exception:
         if get_settings().is_production:

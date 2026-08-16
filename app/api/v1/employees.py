@@ -62,6 +62,7 @@ async def create_employee(
         role=payload.role,
         status=payload.status,
         hired_at=payload.hired_at,
+        actor_employee_id=current_user.id,
     )
     response = EmployeeResponse.model_validate(employee)
     if delivery is not None:
@@ -170,6 +171,7 @@ async def update_employee(
         employee_id,
         company_id=current_user.company_id,
         actor_role=current_user.role,
+        actor_employee_id=current_user.id,
         **payload.model_dump(exclude_unset=True),
     )
     return EmployeeResponse.model_validate(employee)
@@ -235,6 +237,7 @@ async def resend_employee_invite(
         employee_id=employee_id,
         company_id=current_user.company_id,
         actor_role=current_user.role,
+        actor_employee_id=current_user.id,
     )
     employee = await service.get_employee(
         employee_id,
@@ -280,5 +283,6 @@ async def delete_employee(
         employee_id,
         company_id=current_user.company_id,
         actor_role=current_user.role,
+        actor_employee_id=current_user.id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)

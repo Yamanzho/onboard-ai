@@ -66,6 +66,38 @@ async def cmd_start(
         )
         return
 
+    if message.from_user is not None:
+        try:
+            employee = await api.find_employee_by_telegram(message.from_user.id)
+        except OnboardApiError as exc:
+            if exc.status_code == 403:
+                await message.answer(
+                    "Ваш аккаунт архивирован. Обратитесь к HR.",
+                    reply_markup=main_menu_keyboard(),
+                )
+                return
+            await message.answer(
+                "Не удалось связаться с сервером. Попробуйте позже — "
+                "отправьте /start ещё раз.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        if employee is None:
+            await message.answer(
+                "Вы ещё не добавлены в OnboardAI.\n"
+                "Попросите HR прислать персональную ссылку-приглашение "
+                "и откройте её в Telegram.",
+                reply_markup=main_menu_keyboard(),
+            )
+            return
+        display_name = escape(employee.full_name or name)
+        await message.answer(
+            f"С возвращением, {display_name}!\n\n"
+            "Выберите раздел в меню:",
+            reply_markup=main_menu_keyboard(),
+        )
+        return
+
     await message.answer(
         f"Привет, {escape(name)}!\n\n"
         "Я бот OnboardAI — помогу пройти онбординг.\n"

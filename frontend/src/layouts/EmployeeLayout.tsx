@@ -19,7 +19,7 @@ export function EmployeeLayout() {
       userMeta={`${t(displayRoleLabelKey(user?.role))} · ${user?.email ?? user?.id ?? ''}`}
       onLogout={logout}
       header={
-        <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-white px-6 py-3">
+        <header className="hidden items-center justify-between border-b border-[var(--color-border)] bg-white px-6 py-3 md:flex">
           <div>
             <p className="text-sm font-semibold text-[var(--color-text)]">
               {t('workspace.employee')}

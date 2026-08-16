@@ -24,4 +24,8 @@ ERROR_RESPONSES = {
         "model": ErrorResponse,
         "description": "Unexpected server error",
     },
+    status.HTTP_503_SERVICE_UNAVAILABLE: {
+        "model": ErrorResponse,
+        "description": "Required dependency unavailable",
+    },
 }

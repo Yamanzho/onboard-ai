@@ -23,6 +23,9 @@ def _production_settings(**overrides: object) -> Settings:
         "migration_database_url": (
             "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai"
         ),
+        "onboard_owner_password": "unit-test-postgres-password",
+        "onboard_app_password": "unit-test-postgres-password",
+        "invite_base_url": "https://onboardai.example.test",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
@@ -45,12 +48,12 @@ def test_redis_url_has_password(url: str, expected: bool) -> None:
 
 
 def test_production_rejects_redis_url_without_password() -> None:
-    with pytest.raises(ValidationError, match="REDIS_URL must include a non-empty password"):
+    with pytest.raises(ValidationError, match="REDIS_URL must include a strong non-empty password"):
         _production_settings(redis_url="redis://redis:6379/0")
 
 
 def test_production_rejects_empty_redis_password() -> None:
-    with pytest.raises(ValidationError, match="REDIS_URL must include a non-empty password"):
+    with pytest.raises(ValidationError, match="REDIS_URL must include a strong non-empty password"):
         _production_settings(redis_url="redis://:@redis:6379/0")
 
 

@@ -3,12 +3,19 @@ const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.repl
 export class ApiError extends Error {
   status: number
   detail: unknown
+  retryAfterSeconds: number | null
 
-  constructor(status: number, detail: unknown, message?: string) {
+  constructor(
+    status: number,
+    detail: unknown,
+    message?: string,
+    retryAfterSeconds: number | null = null,
+  ) {
     super(message ?? `Request failed with status ${status}`)
     this.name = 'ApiError'
     this.status = status
     this.detail = detail
+    this.retryAfterSeconds = retryAfterSeconds
   }
 }
 
@@ -19,6 +26,24 @@ type RequestOptions = Omit<RequestInit, 'body'> & {
 }
 
 let refreshPromise: Promise<boolean> | null = null
+let tenantUnauthorizedHandler: (() => void) | null = null
+let platformUnauthorizedHandler: (() => void) | null = null
+
+export function setTenantUnauthorizedHandler(handler: (() => void) | null) {
+  tenantUnauthorizedHandler = handler
+}
+
+export function setPlatformUnauthorizedHandler(handler: (() => void) | null) {
+  platformUnauthorizedHandler = handler
+}
+
+function notifyUnauthorized(path: string) {
+  if (path.includes('/super-admin')) {
+    platformUnauthorizedHandler?.()
+    return
+  }
+  tenantUnauthorizedHandler?.()
+}
 
 async function refreshAccessToken(): Promise<boolean> {
   const res = await fetch(`${API_BASE}/api/v1/auth/refresh`, {
@@ -39,6 +64,14 @@ function ensureRefresh(): Promise<boolean> {
   return refreshPromise
 }
 
+function parseRetryAfterSeconds(res: Response): number | null {
+  const raw = res.headers.get('Retry-After')
+  if (!raw) return null
+  const seconds = Number.parseInt(raw, 10)
+  if (Number.isFinite(seconds) && seconds > 0) return seconds
+  return null
+}
+
 async function parseError(res: Response): Promise<ApiError> {
   let detail: unknown = null
   try {
@@ -53,7 +86,7 @@ async function parseError(res: Response): Promise<ApiError> {
     typeof (detail as { detail: unknown }).detail === 'string'
       ? (detail as { detail: string }).detail
       : `Request failed with status ${res.status}`
-  return new ApiError(res.status, detail, message)
+  return new ApiError(res.status, detail, message, parseRetryAfterSeconds(res))
 }
 
 export async function apiRequest<T>(
@@ -91,7 +124,11 @@ export async function apiRequest<T>(
   }
 
   if (!res.ok) {
-    throw await parseError(res)
+    const error = await parseError(res)
+    if (res.status === 401 && auth) {
+      notifyUnauthorized(path)
+    }
+    throw error
   }
 
   if (res.status === 204) {

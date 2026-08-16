@@ -5,6 +5,8 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
+from app.services.step_content import parse_questions
+
 # Telegram Bot API hard limit for message text.
 _TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _SAFE_MESSAGE_LENGTH = 3900
@@ -34,6 +36,14 @@ def render_step_content_body(content: dict[str, Any] | None) -> str:
         if isinstance(value, str) and value.strip():
             parts.append(value.strip())
             consumed.add(key)
+
+    questions = parse_questions(content)
+    if questions:
+        consumed.add("questions")
+        q_lines = ["Вопросы:"]
+        for index, question in enumerate(questions, start=1):
+            q_lines.append(f"{index}. {question['text']}")
+        parts.append("\n".join(q_lines))
 
     for key, value in content.items():
         if key in consumed:

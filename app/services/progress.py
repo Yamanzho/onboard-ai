@@ -4,9 +4,10 @@ from typing import Any
 from uuid import UUID
 
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
-from app.db.enums import AssignmentStatus, ProgressStatus
+from app.db.enums import AssignmentStatus, ProgressStatus, StepType
 from app.db.models.progress import Progress
 from app.db.uow import UnitOfWork
+from app.services.step_content import score_quiz, validate_completion_payload
 from app.services.tenancy import ensure_same_company
 
 _DONE_STATUSES = {
@@ -49,6 +50,7 @@ class ProgressService:
                 raise NotFoundError(f"Step {step_id} not found")
             if step.program_id != assignment.program_id:
                 raise ValidationError("Step does not belong to the assigned program")
+            validate_completion_payload(step.step_type, step.content, payload)
 
             progress = await uow.progress.get_by_assignment_and_step(assignment_id, step_id)
             if progress is None:
@@ -63,8 +65,16 @@ class ProgressService:
                 "status": ProgressStatus.COMPLETED.value,
                 "completed_at": now,
             }
-            if payload is not None:
-                values["payload"] = payload
+            stored_payload: dict[str, Any] | None = (
+                dict(payload) if isinstance(payload, dict) else payload
+            )
+            if step.step_type == StepType.QUIZ.value:
+                stored_payload = dict(stored_payload) if stored_payload else {}
+                quiz_score = score_quiz(step.content, stored_payload.get("answers"))
+                if quiz_score is not None:
+                    stored_payload["quiz_score"] = quiz_score
+            if stored_payload is not None:
+                values["payload"] = stored_payload
             if progress.started_at is None:
                 values["started_at"] = now
 

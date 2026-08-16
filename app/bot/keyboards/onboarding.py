@@ -5,12 +5,16 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 COMPLETE_CALLBACK_PREFIX = "progress:complete:"
 
 
-def complete_step_keyboard(progress_id: UUID) -> InlineKeyboardMarkup:
+def complete_step_keyboard(
+    progress_id: UUID,
+    *,
+    label: str = "✅ Выполнено",
+) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Выполнено",
+                    text=label,
                     callback_data=f"{COMPLETE_CALLBACK_PREFIX}{progress_id}",
                 )
             ]

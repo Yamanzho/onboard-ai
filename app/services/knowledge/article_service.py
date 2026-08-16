@@ -7,6 +7,7 @@ from uuid import UUID
 from app.core.exceptions import NotFoundError, ValidationError
 from app.db.enums import (
     AssignmentStatus,
+    CompanyAuditAction,
     EmployeeRole,
     KnowledgeArticleStatus,
     KnowledgeBodyFormat,
@@ -14,9 +15,12 @@ from app.db.enums import (
     KnowledgeVisibility,
 )
 from app.db.models.knowledge_article import KnowledgeArticle
+from app.db.models.knowledge_article_link import KnowledgeArticleLink
 from app.db.models.knowledge_article_version import KnowledgeArticleVersion
 from app.db.models.knowledge_tag import KnowledgeTag
 from app.db.uow import UnitOfWork
+from app.services.ai.indexer import KnowledgeChunkIndexer
+from app.services.company_audit import record_company_audit
 from app.services.tenancy import ensure_same_company
 
 _ALLOWED_VISIBILITIES = {item.value for item in KnowledgeVisibility}
@@ -48,8 +52,13 @@ _ASSIGNMENT_STATUSES_GRANTING_PROGRAM_KB = frozenset(
 class ArticleService:
     """Application service for knowledge article lifecycle and versioning."""
 
-    def __init__(self, uow_factory: Callable[[], UnitOfWork] | None = None) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork] | None = None,
+        chunk_indexer: KnowledgeChunkIndexer | None = None,
+    ) -> None:
         self._uow_factory = uow_factory or UnitOfWork
+        self._chunk_indexer = chunk_indexer
 
     async def create_article(
         self,
@@ -64,6 +73,7 @@ class ArticleService:
         tag_ids: list[UUID] | None = None,
         change_summary: str | None = None,
         created_by_id: UUID | None = None,
+        program_ids: list[UUID] | None = None,
     ) -> KnowledgeArticle:
         ensure_same_company(
             resource_company_id=company_id,
@@ -115,6 +125,22 @@ class ArticleService:
             # otherwise assignment triggers a sync lazy-load (MissingGreenlet).
             await uow.session.refresh(updated, attribute_names=["tags"])
             updated.tags = tags
+            await self._replace_program_links(
+                uow,
+                article_id=updated.id,
+                company_id=company_id,
+                program_ids=program_ids or [],
+            )
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=created_by_id,
+                action=CompanyAuditAction.ARTICLE_CREATED.value,
+                resource_type="kb_article",
+                resource_id=updated.id,
+                summary=f"Created article {title!r}",
+                details={"status": KnowledgeArticleStatus.DRAFT.value},
+            )
             await uow.session.flush()
             await uow.commit()
 
@@ -217,20 +243,38 @@ class ArticleService:
         status: str | None = None,
         category_id: UUID | None = None,
         tag_id: UUID | None = None,
+        q: str | None = None,
         offset: int = 0,
         limit: int = 100,
+        actor_role: str | None = None,
+        actor_employee_id: UUID | None = None,
     ) -> list[KnowledgeArticle]:
         ensure_same_company(
             resource_company_id=company_id,
             actor_company_id=actor_company_id,
             not_found_message=f"Company {company_id} not found",
         )
+        is_employee_reader = (
+            actor_role is not None and actor_role not in _KB_MANAGEMENT_ROLES
+        )
+        if is_employee_reader:
+            # Employees may only enumerate published articles they are allowed to read.
+            status = KnowledgeArticleStatus.PUBLISHED.value
+
         if status is not None:
             allowed = {item.value for item in KnowledgeArticleStatus}
             if status not in allowed:
                 raise ValidationError(
                     f"Invalid article status {status!r}; allowed: {sorted(allowed)}"
                 )
+
+        search_q = None
+        if q is not None:
+            search_q = q.strip()
+            if len(search_q) > 200:
+                raise ValidationError("Search query must be at most 200 characters")
+            if not search_q:
+                search_q = None
 
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -243,10 +287,21 @@ class ArticleService:
                 status=status,
                 category_id=category_id,
                 tag_id=tag_id,
+                q=search_q,
                 offset=offset,
                 limit=limit,
                 with_relations=True,
             )
+            if is_employee_reader:
+                visible: list[KnowledgeArticle] = []
+                for article in articles:
+                    if await self._employee_may_list_article(
+                        uow,
+                        article,
+                        actor_employee_id=actor_employee_id,
+                    ):
+                        visible.append(article)
+                return visible
             return articles
 
     async def update_article(
@@ -268,7 +323,9 @@ class ArticleService:
         extra = forbidden.intersection(values)
         if extra:
             raise ValidationError(f"Cannot update fields via update_article: {sorted(extra)}")
-        if not values:
+        program_ids_provided = "program_ids" in values
+        program_ids = values.pop("program_ids", None)
+        if not values and not program_ids_provided:
             raise ValidationError("At least one field must be provided for update")
 
         visibility = values.get("visibility")
@@ -317,6 +374,24 @@ class ArticleService:
                 else:
                     raise ValidationError("tag_ids must be a list of UUIDs")
 
+            if program_ids_provided:
+                if program_ids is None:
+                    await self._replace_program_links(
+                        uow,
+                        article_id=article.id,
+                        company_id=company_id,
+                        program_ids=[],
+                    )
+                elif isinstance(program_ids, list):
+                    await self._replace_program_links(
+                        uow,
+                        article_id=article.id,
+                        company_id=company_id,
+                        program_ids=program_ids,
+                    )
+                else:
+                    raise ValidationError("program_ids must be a list of UUIDs")
+
             if content_touched:
                 current = article.current_version
                 if current is None:
@@ -350,19 +425,37 @@ class ArticleService:
                 )
                 article.current_version_id = version.id
 
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=created_by_id,
+                action=CompanyAuditAction.ARTICLE_UPDATED.value,
+                resource_type="kb_article",
+                resource_id=article.id,
+                summary="Updated knowledge article",
+                details={"content_changed": content_touched},
+            )
             await uow.session.flush()
             await uow.commit()
 
             uow.session.expire(article, ["current_version", "tags", "category", "links"])
             loaded = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             assert loaded is not None
-            return loaded
+        # Draft edits are a no-op in the helper. A new current version of an
+        # already-published article is indexed after this commit.
+        if content_touched:
+            await self._index_published_after_commit(
+                loaded,
+                actor_company_id=company_id,
+            )
+        return loaded
 
     async def publish_article(
         self,
         article_id: UUID,
         *,
         company_id: UUID,
+        actor_employee_id: UUID | None = None,
     ) -> KnowledgeArticle:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -390,6 +483,15 @@ class ArticleService:
             if article.current_version.published_at is None:
                 article.current_version.published_at = datetime.now(UTC)
 
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.ARTICLE_PUBLISHED.value,
+                resource_type="kb_article",
+                resource_id=article.id,
+                summary="Published knowledge article",
+            )
             await uow.session.flush()
             await uow.commit()
 
@@ -399,13 +501,20 @@ class ArticleService:
             )
             loaded = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             assert loaded is not None
-            return loaded
+        # Post-commit derived index (separate UoW). Failure is raised so
+        # callers cannot observe a silent stale vector index.
+        await self._index_published_after_commit(
+            loaded,
+            actor_company_id=company_id,
+        )
+        return loaded
 
     async def archive_article(
         self,
         article_id: UUID,
         *,
         company_id: UUID,
+        actor_employee_id: UUID | None = None,
     ) -> KnowledgeArticle:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -426,12 +535,193 @@ class ArticleService:
                 )
 
             article.status = KnowledgeArticleStatus.ARCHIVED.value
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.ARTICLE_ARCHIVED.value,
+                resource_type="kb_article",
+                resource_id=article.id,
+                summary="Archived knowledge article",
+            )
             await uow.session.flush()
             await uow.commit()
 
             loaded = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             assert loaded is not None
             return loaded
+
+    async def list_versions(
+        self,
+        article_id: UUID,
+        *,
+        company_id: UUID,
+        actor_role: str,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> list[KnowledgeArticleVersion]:
+        await self._require_management_article(
+            article_id,
+            company_id=company_id,
+            actor_role=actor_role,
+        )
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            return await uow.knowledge_article_versions.list_by_article_id(
+                article_id,
+                offset=offset,
+                limit=limit,
+            )
+
+    async def get_version(
+        self,
+        article_id: UUID,
+        version: int,
+        *,
+        company_id: UUID,
+        actor_role: str,
+    ) -> KnowledgeArticleVersion:
+        await self._require_management_article(
+            article_id,
+            company_id=company_id,
+            actor_role=actor_role,
+        )
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            row = await uow.knowledge_article_versions.get_by_article_and_version(
+                article_id,
+                version,
+            )
+            if row is None:
+                raise NotFoundError(
+                    f"Knowledge article {article_id} version {version} not found"
+                )
+            return row
+
+    async def restore_version(
+        self,
+        article_id: UUID,
+        version: int,
+        *,
+        company_id: UUID,
+        actor_role: str,
+        actor_employee_id: UUID | None = None,
+    ) -> KnowledgeArticle:
+        snapshot = await self.get_version(
+            article_id,
+            version,
+            company_id=company_id,
+            actor_role=actor_role,
+        )
+        return await self.update_article(
+            article_id,
+            company_id=company_id,
+            created_by_id=actor_employee_id,
+            title=snapshot.title,
+            body=snapshot.body,
+            body_format=snapshot.body_format,
+            change_summary=f"Restored from version {version}",
+        )
+
+    @property
+    def _indexer(self) -> KnowledgeChunkIndexer:
+        if self._chunk_indexer is None:
+            self._chunk_indexer = KnowledgeChunkIndexer(uow_factory=self._uow_factory)
+        return self._chunk_indexer
+
+    async def _index_published_after_commit(
+        self,
+        article: KnowledgeArticle,
+        *,
+        actor_company_id: UUID,
+    ) -> None:
+        """Sync pgvector after a committed KB write.
+
+        No-op for draft/archived. Historical chunks of other versions are not
+        mutated. Indexing uses the authenticated tenant, never a client-supplied
+        company_id as RLS authority.
+        """
+        if article.status != KnowledgeArticleStatus.PUBLISHED.value:
+            return
+        version_id = article.current_version_id
+        if version_id is None:
+            return
+        await self._indexer.index_published_version(
+            actor_company_id=actor_company_id,
+            article_id=article.id,
+            version_id=version_id,
+            company_id=article.company_id,
+        )
+
+    async def _require_management_article(
+        self,
+        article_id: UUID,
+        *,
+        company_id: UUID,
+        actor_role: str,
+    ) -> KnowledgeArticle:
+        if actor_role not in _KB_MANAGEMENT_ROLES:
+            raise NotFoundError(f"Knowledge article {article_id} not found")
+        return await self.get_article(
+            article_id,
+            company_id=company_id,
+            actor_role=actor_role,
+        )
+
+    async def _employee_may_list_article(
+        self,
+        uow: UnitOfWork,
+        article: KnowledgeArticle,
+        *,
+        actor_employee_id: UUID | None,
+    ) -> bool:
+        if article.status != KnowledgeArticleStatus.PUBLISHED.value:
+            return False
+        if article.visibility == KnowledgeVisibility.COMPANY.value:
+            return True
+        if article.visibility == KnowledgeVisibility.PROGRAM.value:
+            if actor_employee_id is None:
+                return False
+            return await self._employee_may_read_program_article(
+                uow,
+                article,
+                actor_employee_id=actor_employee_id,
+            )
+        return False
+
+    async def _replace_program_links(
+        self,
+        uow: UnitOfWork,
+        *,
+        article_id: UUID,
+        company_id: UUID,
+        program_ids: list[UUID],
+    ) -> None:
+        unique_ids = list(dict.fromkeys(program_ids))
+        for program_id in unique_ids:
+            if not isinstance(program_id, UUID):
+                raise ValidationError("program_ids must be a list of UUIDs")
+            program = await uow.onboarding_programs.get_by_id(program_id)
+            if program is None:
+                raise NotFoundError(f"Onboarding program {program_id} not found")
+            ensure_same_company(
+                resource_company_id=program.company_id,
+                actor_company_id=company_id,
+                not_found_message=f"Onboarding program {program_id} not found",
+            )
+        await uow.knowledge_article_links.delete_by_article_id_and_type(
+            article_id,
+            KnowledgeLinkTargetType.PROGRAM.value,
+        )
+        for program_id in unique_ids:
+            await uow.knowledge_article_links.create(
+                KnowledgeArticleLink(
+                    company_id=company_id,
+                    article_id=article_id,
+                    target_type=KnowledgeLinkTargetType.PROGRAM.value,
+                    target_id=program_id,
+                ),
+            )
 
     async def _require_category(
         self,

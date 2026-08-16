@@ -6,12 +6,12 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import (
-    Settings,
-    _is_missing_or_weak_secret,
-    _WEAK_SECRET_KEYS,
-    _WEAK_SUPER_ADMIN_PASSWORDS,
     _MIN_SECRET_KEY_LEN,
     _MIN_SUPER_ADMIN_PASSWORD_LEN,
+    _WEAK_SECRET_KEYS,
+    _WEAK_SUPER_ADMIN_PASSWORDS,
+    Settings,
+    _is_missing_or_weak_secret,
 )
 
 # Deterministic unit-test values — not production credentials.
@@ -34,6 +34,9 @@ def _production_settings(**overrides: object) -> Settings:
         "redis_url": _STRONG_REDIS_URL,
         "database_url": _STRONG_DATABASE_URL,
         "migration_database_url": "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai",
+        "onboard_owner_password": "unit-test-postgres-password",
+        "onboard_app_password": "unit-test-postgres-password",
+        "invite_base_url": "https://onboardai.example.test",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
@@ -115,7 +118,7 @@ def test_production_accepts_strong_super_admin_password() -> None:
 
 
 def test_production_rejects_redis_without_auth() -> None:
-    with pytest.raises(ValidationError, match="REDIS_URL must include a non-empty password"):
+    with pytest.raises(ValidationError, match="REDIS_URL must include a strong non-empty password"):
         _production_settings(redis_url="redis://redis:6379/0")
 
 
@@ -175,3 +178,58 @@ def test_helper_detects_placeholder_and_weak() -> None:
         weak_values=_WEAK_SUPER_ADMIN_PASSWORDS,
         min_length=_MIN_SUPER_ADMIN_PASSWORD_LEN,
     )
+
+
+def test_production_rejects_bot_service_token_placeholder() -> None:
+    with pytest.raises(ValidationError, match="BOT_SERVICE_TOKEN is missing or too weak"):
+        _production_settings(
+            bot_service_token="<generate-a-strong-bot-service-token>",
+            bot_company_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+
+def test_production_rejects_short_bot_service_token() -> None:
+    with pytest.raises(ValidationError, match="BOT_SERVICE_TOKEN is missing or too weak"):
+        _production_settings(
+            bot_service_token="too-short-to-be-valid",
+            bot_company_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+
+def test_production_rejects_demo_seed_bot_company_id() -> None:
+    with pytest.raises(ValidationError, match="demo seed company id"):
+        _production_settings(
+            bot_service_token="unit-test-bot-service-token-32chars",
+            bot_company_id="11111111-1111-4111-8111-111111111111",
+        )
+
+
+def test_production_requires_bot_service_token_when_bot_token_set() -> None:
+    with pytest.raises(ValidationError, match="BOT_SERVICE_TOKEN is required when BOT_TOKEN"):
+        _production_settings(
+            bot_token="123:AA-telegram-bot-token",
+            bot_service_token="",
+            bot_company_id="",
+        )
+
+
+def test_production_rejects_http_invite_base_url() -> None:
+    with pytest.raises(ValidationError, match="INVITE_BASE_URL must use https"):
+        _production_settings(invite_base_url="http://localhost:3000")
+
+
+def test_production_rejects_weak_onboard_app_password() -> None:
+    with pytest.raises(ValidationError, match="ONBOARD_APP_PASSWORD is missing or too weak"):
+        _production_settings(onboard_app_password="onboard")
+
+
+def test_production_error_does_not_echo_bot_service_token() -> None:
+    token = "<generate-a-strong-bot-service-token>"
+    with pytest.raises(ValidationError) as exc_info:
+        _production_settings(
+            bot_service_token=token,
+            bot_company_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+    err = str(exc_info.value)
+    assert token not in err
+    assert "BOT_SERVICE_TOKEN is missing or too weak" in err

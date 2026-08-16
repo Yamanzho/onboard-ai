@@ -59,7 +59,12 @@ class ProgressStatus(StrEnum):
 
 class ConversationStatus(StrEnum):
     ACTIVE = "active"
-    CLOSED = "closed"
+    ARCHIVED = "archived"
+
+
+class AIMessageRole(StrEnum):
+    USER = "user"
+    ASSISTANT = "assistant"
 
 
 class KnowledgeArticleStatus(StrEnum):
@@ -124,3 +129,23 @@ class PlatformAuditAction(StrEnum):
     USER_BLOCKED = "user.blocked"
     USER_INVITED = "user.invited"
     SETTINGS_UPDATED = "settings.updated"
+
+
+class CompanyAuditAction(StrEnum):
+    """Tenant-scoped HR/Admin actions. Never store tokens or passwords in details."""
+
+    EMPLOYEE_CREATED = "employee.created"
+    EMPLOYEE_UPDATED = "employee.updated"
+    EMPLOYEE_ARCHIVED = "employee.archived"
+    INVITE_CREATED = "invite.created"
+    INVITE_RESENT = "invite.resent"
+    INVITE_ACCEPTED = "invite.accepted"
+    PROGRAM_CREATED = "program.created"
+    PROGRAM_PUBLISHED = "program.published"
+    PROGRAM_ARCHIVED = "program.archived"
+    ASSIGNMENT_CREATED = "assignment.created"
+    ASSIGNMENT_CHANGED = "assignment.changed"
+    ARTICLE_CREATED = "kb.article.created"
+    ARTICLE_UPDATED = "kb.article.updated"
+    ARTICLE_PUBLISHED = "kb.article.published"
+    ARTICLE_ARCHIVED = "kb.article.archived"

@@ -197,6 +197,12 @@ flowchart TB
   Routes --> SuperPanel
 ```
 
+Employee Workspace (`/employee/*`) includes onboarding, knowledge, and
+**AI-12A/AI-12B** chat at `/employee/ai`. The page is a thin client of
+`POST /api/v1/ai/chat` plus `GET/DELETE /api/v1/ai/conversations`.
+Tenant and employee identity are never chosen in the UI. History is
+employee-owned; delete archives the thread.
+
 ### Технологии UI
 
 - React + Vite + TypeScript
@@ -544,7 +550,7 @@ flowchart LR
 
 | Service | Image / build | Ports | Entrypoint |
 |---------|---------------|-------|------------|
-| `db` | `postgres:16-alpine` | `5432` | Postgres |
+| `db` | `pgvector/pgvector:pg16` | `5432` | Postgres 16 + pgvector |
 | `redis` | `redis:7-alpine` | `6379` | Redis |
 | `api` | root `Dockerfile` | `8000` | `docker/entrypoint-api.sh` |
 | `frontend` | `frontend/Dockerfile` | `3000:80` | Nginx |
@@ -626,6 +632,12 @@ erDiagram
 | Assignment | `status` | `pending`, `in_progress`, `completed`, `cancelled` |
 | Progress | `status` | `not_started`, `in_progress`, `completed`, `skipped` |
 | Article | `status` | `draft`, `published`, `archived` |
+| AIConversation | `status` | `active`, `archived` |
+
+Employee AI threads are tenant- and employee-scoped (`ai_conversations`,
+`ai_messages`). Assistant messages may store public citations
+(`source_id`, `title`, `article_id`) and `no_answer`. See section 12
+(Employee AI conversation history).
 
 ### Alembic
 
@@ -671,6 +683,49 @@ flowchart LR
 | `/assignments`, `/employees/{id}/assignments` | Assignments | `HRUser` / self |
 | `/progress` | Progress | view vs complete rules |
 | `/knowledge/articles\|categories\|tags` | Knowledge | `HRUser` write; read by role |
+| `/ai` | AI chat + conversation history | Authenticated employee session |
+
+### Employee AI conversation history (AI-12B)
+
+Persistent Employee Workspace history reuses `ai_conversations` /
+`ai_messages`. Identity is the authenticated session only. Clients never
+send `company_id`, `employee_id`, or `tenant_id`.
+
+```
+GET    /api/v1/ai/conversations
+GET    /api/v1/ai/conversations/{conversation_id}
+DELETE /api/v1/ai/conversations/{conversation_id}
+POST   /api/v1/ai/chat
+```
+
+List returns metadata only (`updated_at DESC`). Detail returns messages
+(`created_at ASC`). Pagination is `offset`/`limit` (default 100, max 1000);
+the Employee UI does not paginate in AI-12B.
+
+Ownership: `company_id` + `employee_id` of the authenticated employee.
+Unknown, foreign, or archived ids are HTTP 404. Frontend is never an
+authorization boundary.
+
+Delete archives the thread (`status=archived`). Archived rows stay in
+PostgreSQL, leave the history list, and reject follow-up chat. **Новый чат**
+does not archive. Titles are the first user message (truncated, UTF-8);
+no LLM-generated titles.
+
+`/employee/ai` loads history, restores `?c=<conversation_id>` or the most
+recently updated thread, and continues with `POST /ai/chat`. Refresh uses
+the history API as source of truth. Telegram is unchanged.
+
+Details: [docs/ai/architecture.md](docs/ai/architecture.md).
+
+### End-to-end RAG evaluation (AI-8)
+
+Evaluation-only. Dataset: `tests/ai/evaluation/dataset.json`. Command:
+`python -m scripts.evaluate_rag --write-report`. Live OpenAI is opt-in via
+`ONBOARDAI_AI7_LIVE_OPENAI=1` and is never required for pytest.
+Report: [docs/ai/ai8-rag-evaluation.md](docs/ai/ai8-rag-evaluation.md).
+Small sample; Fake providers are not production quality.
+AI-8 live OpenAI evaluation remains NOT MEASURED until a live run is labeled
+MEASURED. This stage does not change retrieval.
 
 ### Super Admin endpoints (кратко)
 
@@ -721,7 +776,8 @@ docker compose up --build
 | http://localhost:3000/super-admin/login | Super Admin login |
 | http://localhost:8000 | API |
 | http://localhost:8000/docs | Swagger |
-| http://localhost:8000/health | Health |
+| http://localhost:8000/health | Liveness (`{"status":"ok"}`) |
+| http://localhost:8000/ready | Readiness (`{"status":"ready"}`; Postgres always, Redis in production) |
 
 ### Критичные env
 

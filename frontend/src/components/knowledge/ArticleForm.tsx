@@ -5,6 +5,7 @@ import { labelVisibility, t } from '../../i18n'
 import type { Category } from '../../types/category'
 import type { Tag } from '../../types/tag'
 import type { KnowledgeVisibility } from '../../types/article'
+import type { Program } from '../../types/program'
 
 export interface ArticleFormValues {
   title: string
@@ -13,12 +14,14 @@ export interface ArticleFormValues {
   visibility: KnowledgeVisibility
   tag_ids: string[]
   change_summary: string
+  program_ids: string[]
 }
 
 interface ArticleFormProps {
   initial: ArticleFormValues
   categories: Category[]
   tags: Tag[]
+  programs?: Program[]
   submitLabel: string
   pending?: boolean
   onSubmit: (values: ArticleFormValues) => Promise<void>
@@ -31,6 +34,7 @@ export function ArticleForm({
   initial,
   categories,
   tags,
+  programs = [],
   submitLabel,
   pending,
   onSubmit,
@@ -154,6 +158,47 @@ export function ArticleForm({
           )}
         </div>
       </div>
+
+      {values.visibility === 'program' ? (
+        <div>
+          <Label>{t('knowledge.articles.programs')}</Label>
+          <p className="mb-2 text-xs text-[var(--color-muted)]">
+            {t('knowledge.articles.programsHint')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {programs.length === 0 ? (
+              <p className="text-sm text-[var(--color-muted)]">
+                {t('companyDashboard.emptyPrograms')}
+              </p>
+            ) : (
+              programs.map((program) => {
+                const on = values.program_ids.includes(program.id)
+                return (
+                  <button
+                    key={program.id}
+                    type="button"
+                    onClick={() =>
+                      setValues((prev) => {
+                        const next = new Set(prev.program_ids)
+                        if (next.has(program.id)) next.delete(program.id)
+                        else next.add(program.id)
+                        return { ...prev, program_ids: [...next] }
+                      })
+                    }
+                    className={`rounded-full border px-3 py-1 text-xs font-medium ${
+                      on
+                        ? 'border-[var(--color-accent)] bg-teal-50 text-[var(--color-accent)]'
+                        : 'border-[var(--color-border)] bg-white text-[var(--color-muted)]'
+                    }`}
+                  >
+                    {program.title}
+                  </button>
+                )
+              })
+            )}
+          </div>
+        </div>
+      ) : null}
 
       <div>
         <Label htmlFor="summary">{t('knowledge.articles.summary')}</Label>

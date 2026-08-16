@@ -5,3 +5,4 @@ class OnboardingStates(StatesGroup):
     """FSM for employee onboarding flow in Telegram."""
 
     viewing_step = State()
+    answering_quiz = State()

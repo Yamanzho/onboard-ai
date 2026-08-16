@@ -53,10 +53,25 @@ export function EmptyState({
   )
 }
 
-export function ErrorAlert({ message }: { message: string }) {
+export function ErrorAlert({
+  message,
+  onRetry,
+}: {
+  message: string
+  onRetry?: () => void
+}) {
   return (
     <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-      {message}
+      <p>{message}</p>
+      {onRetry ? (
+        <button
+          type="button"
+          className="mt-2 text-sm font-medium underline"
+          onClick={onRetry}
+        >
+          {t('common.retry')}
+        </button>
+      ) : null}
     </div>
   )
 }

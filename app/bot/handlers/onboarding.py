@@ -8,9 +8,17 @@ from aiogram.types import CallbackQuery, Message
 from app.bot.api.client import OnboardApiClient, OnboardApiError
 from app.bot.api.schemas import ProgressItemDTO
 from app.bot.handlers.step_content import format_step_message
-from app.bot.keyboards.menu import MENU_MY_ONBOARDING
+from app.bot.keyboards.menu import (
+    MENU_ACTIVE,
+    MENU_CALENDAR,
+    MENU_COMPANY,
+    MENU_HISTORY,
+    MENU_MY_ONBOARDING,
+    MENU_PROFILE,
+)
 from app.bot.keyboards.onboarding import complete_step_keyboard, parse_complete_callback
 from app.bot.states.onboarding import OnboardingStates
+from app.services.step_content import parse_questions
 
 router = Router(name="onboarding")
 
@@ -73,11 +81,19 @@ async def _show_current_step(
         return
 
     step_number, item = current
+    step_type = item.step.step_type if item.step is not None else "content"
+    existing = await state.get_data()
     await state.set_state(OnboardingStates.viewing_step)
     await state.update_data(
         assignment_id=str(assignment_id),
         program_id=str(program_id),
         progress_id=str(item.id),
+        step_type=step_type,
+        telegram_user_id=(
+            message.from_user.id
+            if message.from_user is not None
+            else existing.get("telegram_user_id")
+        ),
     )
     text = _format_step_message(
         program_title=program.title,
@@ -86,7 +102,19 @@ async def _show_current_step(
         total_steps=len(progress.items),
         item=item,
     )
-    markup = complete_step_keyboard(item.id)
+    markup = None
+    if step_type == "quiz":
+        questions = parse_questions(item.step.content if item.step else None)
+        await state.set_state(OnboardingStates.answering_quiz)
+        text += (
+            "\n\nОтправьте ответы одним сообщением — "
+            f"по одной строке на каждый вопрос ({len(questions)} шт.)."
+        )
+    elif step_type == "ack":
+        markup = complete_step_keyboard(item.id, label="✅ Подтверждаю")
+    else:
+        label = "✅ Прочитано" if step_type == "content" else "✅ Выполнено"
+        markup = complete_step_keyboard(item.id, label=label)
     if edit:
         await message.edit_text(text, reply_markup=markup)
     else:
@@ -200,7 +228,9 @@ async def complete_step_callback(
         return
 
     try:
-        await api.complete_progress(progress_id)
+        step_type = str(data.get("step_type") or "content")
+        payload = {"ack": True} if step_type == "ack" else None
+        await api.complete_progress(progress_id, payload=payload)
     except OnboardApiError as exc:
         if exc.status_code == 409:
             await callback.answer("Шаг уже выполнен", show_alert=True)
@@ -222,4 +252,94 @@ async def complete_step_callback(
     except OnboardApiError:
         await callback.message.edit_text(
             "Не удалось обновить прогресс. Откройте «Мой онбординг» снова."
+        )
+
+
+_MENU_TEXTS = frozenset(
+    {
+        MENU_MY_ONBOARDING,
+        MENU_ACTIVE,
+        MENU_HISTORY,
+        MENU_CALENDAR,
+        MENU_COMPANY,
+        MENU_PROFILE,
+    }
+)
+
+
+@router.message(
+    OnboardingStates.answering_quiz,
+    F.text,
+    ~F.text.in_(_MENU_TEXTS),
+)
+async def quiz_answers(
+    message: Message,
+    api: OnboardApiClient,
+    state: FSMContext,
+) -> None:
+    if message.from_user is None or not message.text:
+        return
+
+    data = await state.get_data()
+    assignment_id_raw = data.get("assignment_id")
+    program_id_raw = data.get("program_id")
+    progress_id_raw = data.get("progress_id")
+    if assignment_id_raw is None or program_id_raw is None or progress_id_raw is None:
+        await message.answer("Сессия устарела. Откройте «Мой онбординг» снова.")
+        return
+
+    if not await api.ensure_session(message.from_user.id):
+        await message.answer("Сессия устарела. Откройте «Мой онбординг» снова.")
+        return
+
+    try:
+        progress = await api.get_progress(UUID(assignment_id_raw))
+    except OnboardApiError:
+        await message.answer("Не удалось загрузить шаг. Попробуйте позже.")
+        return
+
+    current = api.first_incomplete_step(progress)
+    if current is None or str(current[1].id) != str(progress_id_raw):
+        await message.answer("Этот шаг уже неактуален. Откройте «Мой онбординг» снова.")
+        return
+
+    item = current[1]
+    questions = parse_questions(item.step.content if item.step else None)
+    lines = [line.strip() for line in message.text.splitlines() if line.strip()]
+    if len(lines) != len(questions):
+        await message.answer(
+            f"Нужно {len(questions)} ответ(а/ов) — по одному на строку. "
+            "Отправьте сообщение ещё раз."
+        )
+        return
+
+    answers = {question["id"]: answer for question, answer in zip(questions, lines, strict=True)}
+    try:
+        completed = await api.complete_progress(item.id, payload={"answers": answers})
+    except OnboardApiError as exc:
+        if exc.status_code == 409:
+            await message.answer("Шаг уже выполнен.")
+        else:
+            await message.answer("Не удалось сохранить ответы. Попробуйте ещё раз.")
+            return
+
+    quiz_score = completed.payload.get("quiz_score") if completed.payload else None
+    if isinstance(quiz_score, dict):
+        correct = quiz_score.get("correct_count")
+        total = quiz_score.get("total")
+        if correct is not None and total is not None:
+            await message.answer(f"Результат теста: {correct} из {total}.")
+
+    try:
+        await _show_current_step(
+            message=message,
+            api=api,
+            state=state,
+            assignment_id=UUID(assignment_id_raw),
+            program_id=UUID(program_id_raw),
+        )
+    except OnboardApiError:
+        await message.answer(
+            "Ответы сохранены, но не удалось открыть следующий шаг. "
+            "Откройте «Мой онбординг» снова."
         )

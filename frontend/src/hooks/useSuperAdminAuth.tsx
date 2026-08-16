@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from 'react'
 import { t } from '../i18n'
-import { ApiError } from '../services/apiClient'
+import { ApiError, setPlatformUnauthorizedHandler } from '../services/apiClient'
 import * as superAdminApi from '../services/superAdminApi'
 import type { SuperAdminUser } from '../types/superAdmin'
 
@@ -56,6 +56,13 @@ export function SuperAdminAuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void loadMe()
   }, [loadMe])
+
+  useEffect(() => {
+    setPlatformUnauthorizedHandler(() => {
+      setUser(null)
+    })
+    return () => setPlatformUnauthorizedHandler(null)
+  }, [])
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null)

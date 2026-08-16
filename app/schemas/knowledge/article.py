@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.db.enums import KnowledgeLinkTargetType
 from app.schemas.knowledge.tag import TagResponse
 from app.schemas.knowledge.version import ArticleVersionResponse
 from app.schemas.limits import MAX_ARTICLE_BODY_LENGTH
@@ -49,6 +50,13 @@ class ArticleCreate(BaseModel):
         description="Existing tag IDs within the same company.",
     )
     change_summary: str | None = Field(default=None, max_length=2000)
+    program_ids: list[UUID] = Field(
+        default_factory=list,
+        description=(
+            "Programs this article is linked to. Required for visibility=program "
+            "so assigned employees can read the article."
+        ),
+    )
 
 
 class ArticleUpdate(BaseModel):
@@ -86,6 +94,10 @@ class ArticleUpdate(BaseModel):
         description="When set, replaces the full tag set for the article.",
     )
     change_summary: str | None = Field(default=None, max_length=2000)
+    program_ids: list[UUID] | None = Field(
+        default=None,
+        description="When set, replaces program links for this article.",
+    )
 
     @model_validator(mode="after")
     def require_at_least_one_field(self) -> "ArticleUpdate":
@@ -108,6 +120,10 @@ class ArticleResponse(BaseModel):
     created_by_id: UUID | None
     current_version: ArticleVersionResponse | None = None
     tags: list[TagResponse] = Field(default_factory=list)
+    program_ids: list[UUID] = Field(
+        default_factory=list,
+        description="Program IDs linked for visibility=program.",
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -116,3 +132,22 @@ class ArticleListResponse(BaseModel):
     """Paginated-style list wrapper for knowledge articles."""
 
     items: list[ArticleResponse]
+
+
+class CorpusReindexResponse(BaseModel):
+    """HR/Admin rebuild of the tenant's current published vector index."""
+
+    indexed_articles: int
+    indexed_chunks: int
+
+
+def article_response(article: object) -> ArticleResponse:
+    """Serialize an article including program_ids derived from links."""
+    response = ArticleResponse.model_validate(article)
+    links = getattr(article, "links", None) or []
+    program_ids = [
+        link.target_id
+        for link in links
+        if getattr(link, "target_type", None) == KnowledgeLinkTargetType.PROGRAM.value
+    ]
+    return response.model_copy(update={"program_ids": program_ids})

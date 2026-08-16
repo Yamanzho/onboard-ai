@@ -24,7 +24,9 @@ This starts **PostgreSQL**, **Redis**, **API** (migrations + demo seed), **Admin
 | Admin UI  | http://localhost:3000 |
 | API (local/dev) | http://localhost:8000 — not published with `docker-compose.prod.yml` |
 | Health (via nginx) | http://localhost:3000/health |
+| Ready (via nginx) | http://localhost:3000/ready |
 | Health (direct, local) | http://localhost:8000/health |
+| Ready (direct, local) | http://localhost:8000/ready |
 | Swagger (local/dev) | http://localhost:8000/docs |
 | Bot webhook port (server mode) | http://localhost:8081/webhook |
 
@@ -149,6 +151,18 @@ npm run dev
 ```
 
 Open http://localhost:5173.
+
+---
+
+## CI
+
+GitHub Actions (`.github/workflows/ci.yml`) on push/PR:
+
+- Backend: `pip install -e ".[dev]"`, `ruff`, Alembic single-head, RLS bootstrap + `alembic upgrade head`, `pytest` (including `-m security`)
+- Frontend: `npm ci`, `npm run lint`, `tsc -b`, `npm run build`
+- Infra: `docker compose config` (dev + production with dummy secrets), `docker build` for API and frontend images
+
+CI never uses live production secrets. Compose validation uses dummy values matching `tests/infra/compose_prod_env.py`.
 
 ---
 

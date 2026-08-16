@@ -6,11 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.config import (
-    Settings,
+    _MIN_POSTGRES_PASSWORD_LEN,
     _WEAK_POSTGRES_PASSWORDS,
+    Settings,
     _database_url_password,
     _database_url_username,
-    _MIN_POSTGRES_PASSWORD_LEN,
 )
 
 # Deterministic unit-test values — not production credentials.
@@ -39,6 +39,7 @@ def _production_settings(**overrides: object) -> Settings:
         "migration_database_url": _STRONG_MIGRATION_URL,
         "onboard_owner_password": _STRONG_DB_PASSWORD,
         "onboard_app_password": _STRONG_DB_PASSWORD,
+        "invite_base_url": "https://onboardai.example.test",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

@@ -10,12 +10,15 @@ from app.core.config import get_settings
 from app.db.base import Base
 from app.db.models import (  # noqa: F401 — register models on Base.metadata
     AIConversation,
+    AIMessage,
     Assignment,
     Company,
+    CompanyAuditLog,
     CompanySubscription,
     Employee,
     EmployeeInvite,
     KnowledgeArticle,
+    KnowledgeArticleChunk,
     KnowledgeArticleLink,
     KnowledgeArticleTag,
     KnowledgeArticleVersion,

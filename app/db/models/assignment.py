@@ -13,7 +13,6 @@ from app.db.enums import AssignmentStatus
 from app.db.mixins import TimestampMixin
 
 if TYPE_CHECKING:
-    from app.db.models.ai_conversation import AIConversation
     from app.db.models.company import Company
     from app.db.models.employee import Employee
     from app.db.models.onboarding_program import OnboardingProgram
@@ -90,9 +89,6 @@ class Assignment(Base, TimestampMixin):
     progress_records: Mapped[list[Progress]] = relationship(
         back_populates="assignment",
         cascade="all, delete-orphan",
-    )
-    ai_conversations: Mapped[list[AIConversation]] = relationship(
-        back_populates="assignment",
     )
 
     def __repr__(self) -> str:

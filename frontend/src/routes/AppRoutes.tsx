@@ -11,6 +11,7 @@ import { AssignmentCreatePage } from '../pages/assignments/AssignmentCreatePage'
 import { AssignmentDetailPage } from '../pages/assignments/AssignmentDetailPage'
 import { AssignmentListPage } from '../pages/assignments/AssignmentListPage'
 import { CompanyDashboardPage } from '../pages/company/CompanyDashboardPage'
+import { HrDashboardPage } from '../pages/hr/HrDashboardPage'
 import { HrCreatePage } from '../pages/company/HrCreatePage'
 import { HrListPage } from '../pages/company/HrListPage'
 import { EmployeeCreatePage } from '../pages/employees/EmployeeCreatePage'
@@ -35,7 +36,10 @@ import { MyActivePage } from '../pages/employee/MyActivePage'
 import { MyHistoryPage } from '../pages/employee/MyHistoryPage'
 import { MyCalendarPage } from '../pages/employee/MyCalendarPage'
 import { MyCompanyPage } from '../pages/employee/MyCompanyPage'
-import { HrDashboardPage } from '../pages/hr/HrDashboardPage'
+import { EmployeeKnowledgeListPage } from '../pages/employee/EmployeeKnowledgeListPage'
+import { EmployeeArticlePage } from '../pages/employee/EmployeeArticlePage'
+import { EmployeeAIPage } from '../pages/employee/EmployeeAIPage'
+import { CompanyAuditLogPage } from '../pages/audit/CompanyAuditLogPage'
 import { SuperAdminCompanyCreatePage } from '../pages/super-admin/SuperAdminCompanyCreatePage'
 import { SuperAdminCompanyDetailPage } from '../pages/super-admin/SuperAdminCompanyDetailPage'
 import { SuperAdminCompanyEditPage } from '../pages/super-admin/SuperAdminCompanyEditPage'
@@ -102,6 +106,7 @@ function managementRoutes(opts: {
       <Route path="knowledge/:articleId" element={<ArticleEditPage />} />
 
       <Route path="progress" element={<DashboardPage />} />
+      <Route path="audit" element={<CompanyAuditLogPage />} />
 
       <Route path="profile" element={<SettingsPage section="profile" />} />
       <Route path="security" element={<SettingsPage section="security" />} />
@@ -213,6 +218,12 @@ export function AppRoutes() {
                 <Route path="history" element={<MyHistoryPage />} />
                 <Route path="calendar" element={<MyCalendarPage />} />
                 <Route path="company" element={<MyCompanyPage />} />
+                <Route path="knowledge" element={<EmployeeKnowledgeListPage />} />
+                <Route
+                  path="knowledge/:articleId"
+                  element={<EmployeeArticlePage />}
+                />
+                <Route path="ai" element={<EmployeeAIPage />} />
                 <Route
                   path="profile"
                   element={<SettingsPage section="profile" />}

@@ -3,9 +3,10 @@ from typing import Any
 from uuid import UUID
 
 from app.core.exceptions import NotFoundError, ValidationError
-from app.db.enums import AssignmentStatus, EmployeeRole
+from app.db.enums import AssignmentStatus, CompanyAuditAction, EmployeeRole
 from app.db.models.onboarding_program import OnboardingProgram
 from app.db.uow import UnitOfWork
+from app.services.company_audit import record_company_audit
 from app.services.subscription_guard import ensure_program_limit
 from app.services.tenancy import ensure_same_company
 
@@ -39,6 +40,7 @@ class OnboardingProgramService:
         actor_company_id: UUID,
         title: str,
         description: str | None = None,
+        actor_employee_id: UUID | None = None,
     ) -> OnboardingProgram:
         ensure_same_company(
             resource_company_id=company_id,
@@ -59,6 +61,15 @@ class OnboardingProgramService:
                     description=description,
                     is_active=False,
                 ),
+            )
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.PROGRAM_CREATED.value,
+                resource_type="program",
+                resource_id=program.id,
+                summary=f"Created program {title!r}",
             )
             await uow.commit()
             return program
@@ -96,6 +107,7 @@ class OnboardingProgramService:
         program_id: UUID,
         *,
         company_id: UUID,
+        actor_employee_id: UUID | None = None,
     ) -> OnboardingProgram:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -114,6 +126,15 @@ class OnboardingProgramService:
 
             updated = await uow.onboarding_programs.update(program_id, is_active=True)
             assert updated is not None
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.PROGRAM_PUBLISHED.value,
+                resource_type="program",
+                resource_id=program_id,
+                summary=f"Published program {program.title!r}",
+            )
             await uow.commit()
             return updated
 
@@ -122,6 +143,7 @@ class OnboardingProgramService:
         program_id: UUID,
         *,
         company_id: UUID,
+        actor_employee_id: UUID | None = None,
     ) -> OnboardingProgram:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -136,6 +158,15 @@ class OnboardingProgramService:
             updated = await uow.onboarding_programs.update(program_id, is_active=False)
             if updated is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
+            await record_company_audit(
+                uow,
+                company_id=company_id,
+                actor_employee_id=actor_employee_id,
+                action=CompanyAuditAction.PROGRAM_ARCHIVED.value,
+                resource_type="program",
+                resource_id=program_id,
+                summary=f"Archived program {program.title!r}",
+            )
             await uow.commit()
             return updated
 

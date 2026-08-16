@@ -1,7 +1,12 @@
 from functools import lru_cache
 
+from app.services.ai.chat import AIChatService
+from app.services.ai.conversations import ConversationService
+from app.services.ai.indexer import KnowledgeChunkIndexer
+from app.services.analytics import AnalyticsService
 from app.services.assignment import AssignmentService
 from app.services.company import CompanyService
+from app.services.company_audit import CompanyAuditService
 from app.services.employee import EmployeeService
 from app.services.knowledge.article_service import ArticleService
 from app.services.knowledge.category_service import CategoryService
@@ -16,6 +21,16 @@ from app.services.step import StepService
 def get_company_service() -> CompanyService:
     """Provide a shared CompanyService instance for request handlers."""
     return CompanyService()
+
+
+@lru_cache
+def get_company_audit_service() -> CompanyAuditService:
+    return CompanyAuditService()
+
+
+@lru_cache
+def get_analytics_service() -> AnalyticsService:
+    return AnalyticsService()
 
 
 @lru_cache
@@ -44,8 +59,23 @@ def get_progress_service() -> ProgressService:
 
 
 @lru_cache
+def get_chunk_indexer() -> KnowledgeChunkIndexer:
+    return KnowledgeChunkIndexer()
+
+
+@lru_cache
+def get_ai_chat_service() -> AIChatService:
+    return AIChatService()
+
+
+@lru_cache
+def get_conversation_service() -> ConversationService:
+    return ConversationService()
+
+
+@lru_cache
 def get_article_service() -> ArticleService:
-    return ArticleService()
+    return ArticleService(chunk_indexer=get_chunk_indexer())
 
 
 @lru_cache

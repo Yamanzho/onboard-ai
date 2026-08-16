@@ -50,6 +50,8 @@ EMPLOYEE_NAV = [
     "/employee/history",
     "/employee/calendar",
     "/employee/company",
+    "/employee/knowledge",
+    "/employee/ai",
     "/employee/profile",
     "/employee/security",
 ]
@@ -137,12 +139,17 @@ def test_employee_workspace_allowed() -> None:
     assert "/employee" in paths
     assert "/employee/onboarding" in paths
     assert "/employee/active" in paths
+    assert "/employee/ai" in paths
     assert workspace_allows("employee", "/employee")
+    assert workspace_allows("employee", "/employee/ai")
     assert not workspace_allows("employee", "/company")
     assert not workspace_allows("employee", "/hr")
     assert not workspace_allows("employee", "/platform")
     assert "/company" not in paths
     assert "/hr" not in paths
+    assert "/company/ai" not in paths
+    assert "/hr/ai" not in paths
+    assert "/platform/ai" not in paths
 
 
 def test_super_admin_platform_isolated() -> None:

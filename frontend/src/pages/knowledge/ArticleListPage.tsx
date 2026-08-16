@@ -8,7 +8,7 @@ import {
 } from '../../components/common/PageHeader'
 import { StatusBadge } from '../../components/knowledge/StatusBadge'
 import { Button } from '../../components/ui/Button'
-import { Select } from '../../components/ui/Field'
+import { Input, Select } from '../../components/ui/Field'
 import { useArticleMutations, useArticles } from '../../hooks/useArticles'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useCategories } from '../../hooks/useCategories'
@@ -23,6 +23,7 @@ export function ArticleListPage() {
   const [status, setStatus] = useState('')
   const [categoryId, setCategoryId] = useState('')
   const [tagId, setTagId] = useState('')
+  const [search, setSearch] = useState('')
   const [actionError, setActionError] = useState<string | null>(null)
 
   const filters = useMemo(
@@ -30,18 +31,22 @@ export function ArticleListPage() {
       status: status || undefined,
       category_id: categoryId || undefined,
       tag_id: tagId || undefined,
+      q: search.trim() || undefined,
     }),
-    [status, categoryId, tagId],
+    [status, categoryId, tagId, search],
   )
 
-  const { data, isLoading, error } = useArticles(filters)
+  const { data, isLoading, error, refetch } = useArticles(filters)
   const { data: categories } = useCategories()
   const { data: tags } = useTags()
   const { publish, archive } = useArticleMutations()
 
   const items = data?.items ?? []
+  const visible = items
 
-  async function onPublish(id: string) {
+  async function onPublish(id: string, title: string) {
+    const ok = window.confirm(t('knowledge.articles.publishConfirm', { title }))
+    if (!ok) return
     setActionError(null)
     try {
       await publish.mutateAsync(id)
@@ -52,7 +57,9 @@ export function ArticleListPage() {
     }
   }
 
-  async function onArchive(id: string) {
+  async function onArchive(id: string, title: string) {
+    const ok = window.confirm(t('knowledge.articles.archiveConfirm', { title }))
+    if (!ok) return
     setActionError(null)
     try {
       await archive.mutateAsync(id)
@@ -76,9 +83,20 @@ export function ArticleListPage() {
       />
 
       {actionError ? <ErrorAlert message={actionError} /> : null}
-      {error ? <ErrorAlert message={(error as Error).message} /> : null}
+      {error ? (
+        <ErrorAlert
+          message={(error as Error).message}
+          onRetry={() => void refetch()}
+        />
+      ) : null}
 
-      <div className="mb-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-3">
+      <div className="mb-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-4">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={t('knowledge.articles.searchPlaceholder')}
+          aria-label={t('knowledge.articles.searchPlaceholder')}
+        />
         <Select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">{t('common.allStatuses')}</option>
           {ARTICLE_STATUSES.map((s) => (
@@ -107,12 +125,20 @@ export function ArticleListPage() {
 
       {isLoading ? (
         <LoadingBlock />
-      ) : items.length === 0 ? (
+      ) : visible.length === 0 ? (
         <EmptyState
-          title={t('knowledge.articles.emptyTitle')}
-          description={t('knowledge.articles.emptyDescription')}
-          actionLabel={t('knowledge.articles.create')}
-          actionTo={paths.knowledgeNew}
+          title={
+            search.trim()
+              ? t('knowledge.articles.searchEmptyTitle')
+              : t('knowledge.articles.emptyTitle')
+          }
+          description={
+            search.trim()
+              ? t('knowledge.articles.searchEmptyDescription')
+              : t('knowledge.articles.emptyDescription')
+          }
+          actionLabel={search.trim() ? undefined : t('knowledge.articles.create')}
+          actionTo={search.trim() ? undefined : paths.knowledgeNew}
         />
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
@@ -127,7 +153,7 @@ export function ArticleListPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
-              {items.map((article) => (
+              {visible.map((article) => (
                 <tr key={article.id}>
                   <td className="px-4 py-3">
                     <Link
@@ -153,7 +179,13 @@ export function ArticleListPage() {
                       {article.status === 'draft' ? (
                         <Button
                           variant="secondary"
-                          onClick={() => void onPublish(article.id)}
+                          onClick={() =>
+                            void onPublish(
+                              article.id,
+                              article.current_version?.title ??
+                                t('knowledge.articles.untitled'),
+                            )
+                          }
                           disabled={publish.isPending}
                         >
                           {t('common.publish')}
@@ -162,7 +194,13 @@ export function ArticleListPage() {
                       {article.status !== 'archived' ? (
                         <Button
                           variant="ghost"
-                          onClick={() => void onArchive(article.id)}
+                          onClick={() =>
+                            void onArchive(
+                              article.id,
+                              article.current_version?.title ??
+                                t('knowledge.articles.untitled'),
+                            )
+                          }
                           disabled={archive.isPending}
                         >
                           {t('common.archive')}

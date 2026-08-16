@@ -29,6 +29,16 @@ function formatDate(value: string | null | undefined) {
   }
 }
 
+function quizScoreLabel(payload: Record<string, unknown> | undefined): string | null {
+  const score = payload?.quiz_score
+  if (!score || typeof score !== 'object') return null
+  const rec = score as Record<string, unknown>
+  if (typeof rec.correct_count === 'number' && typeof rec.total === 'number') {
+    return `${rec.correct_count}/${rec.total}`
+  }
+  return null
+}
+
 function progressTone(status: string) {
   if (status === 'completed') return 'success' as const
   if (status === 'in_progress') return 'warning' as const
@@ -222,7 +232,11 @@ export function AssignmentDetailPage() {
                         {formatDate(item.completed_at)}
                       </td>
                       <td className="max-w-xs px-4 py-3 text-xs text-[var(--color-muted)]">
-                        {payloadEntries.length === 0 ? (
+                        {quizScoreLabel(item.payload) ? (
+                          <span>
+                            {t('assignments.quizScore')}: {quizScoreLabel(item.payload)}
+                          </span>
+                        ) : payloadEntries.length === 0 ? (
                           t('common.emDash')
                         ) : (
                           <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-50 p-2 font-mono">

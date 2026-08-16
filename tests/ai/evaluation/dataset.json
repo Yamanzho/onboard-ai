@@ -1,0 +1,321 @@
+{
+  "version": 1,
+  "purpose": "AI-8 end-to-end RAG evaluation against the synthetic AI-7 corpus. No production data, secrets, or employee PII.",
+  "scoring": {
+    "correctness": "0 incorrect, 1 partial, 2 correct. Fact groups are must_contain_any.",
+    "groundedness": "0 unsupported, 1 partially supported, 2 fully supported.",
+    "citation": "0 incorrect/missing, 1 partial, 2 gold source cited."
+  },
+  "cases": [
+    {
+      "id": "vpn-001",
+      "question": "Как получить VPN доступ?",
+      "language": "ru",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["vpn-ru", "vpn-en"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["WireGuard"], ["#it-help", "it-help"]],
+      "evaluation_notes": "VPN policy exists in RU and EN."
+    },
+    {
+      "id": "vpn-002",
+      "question": "How do I connect to the company VPN?",
+      "language": "en",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["vpn-en", "vpn-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["WireGuard"], ["#it-help", "it-help"]],
+      "evaluation_notes": "Same policy, English question."
+    },
+    {
+      "id": "leave-001",
+      "question": "Как оформить отпуск?",
+      "language": "ru",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["leave-ru", "leave-kk", "leave-en"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["три рабочих дня", "three working days", "үш жұмыс күні"]],
+      "evaluation_notes": "Leave policy is present in RU/KK/EN."
+    },
+    {
+      "id": "leave-002",
+      "question": "How do I request vacation leave in this company?",
+      "language": "en",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["leave-en", "leave-ru", "leave-kk"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["three working days", "три рабочих дня", "үш жұмыс күні"]],
+      "evaluation_notes": "Cross-language leave question."
+    },
+    {
+      "id": "sick-001",
+      "question": "Что делать если я заболел и нужен больничный?",
+      "language": "ru",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["sick-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["руководителю"], ["трёх календарных дней", "трех календарных дней"]],
+      "evaluation_notes": "Sick-leave procedure."
+    },
+    {
+      "id": "payroll-001",
+      "question": "Когда приходит зарплата?",
+      "language": "ru",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["payroll-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["десятого", "10"]],
+      "evaluation_notes": "Payroll date is the 10th."
+    },
+    {
+      "id": "wifi-001",
+      "question": "How do visitors get on guest Wi-Fi?",
+      "language": "en",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["wifi-en"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["OnboardGuest"], ["reception", "floor 1"]],
+      "evaluation_notes": "Guest Wi-Fi article."
+    },
+    {
+      "id": "remote-001",
+      "question": "How many remote days per week are allowed?",
+      "language": "en",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["remote-en"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["two days", "2 days", "at most two"]],
+      "evaluation_notes": "Remote-work cap."
+    },
+    {
+      "id": "helpdesk-001",
+      "question": "Where do I ask IT for help?",
+      "language": "en",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["helpdesk-en"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["#it-help", "it-help"]],
+      "evaluation_notes": "IT helpdesk channel."
+    },
+    {
+      "id": "fire-001",
+      "question": "Куда бежать при пожарной тревоге?",
+      "language": "ru",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["fire-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["лестниц"], ["парковк"]],
+      "evaluation_notes": "Fire assembly point."
+    },
+    {
+      "id": "hours-001",
+      "question": "Жұмыс қай сағатта басталады?",
+      "language": "kk",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["hours-kk"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["09:00", "9:00"]],
+      "evaluation_notes": "Office hours in Kazakh."
+    },
+    {
+      "id": "probation-001",
+      "question": "Сынақ мерзімі қанша ай?",
+      "language": "kk",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["probation-kk"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["үш ай", "три месяца", "three month"]],
+      "evaluation_notes": "Probation length."
+    },
+    {
+      "id": "nda-001",
+      "question": "Can I share the client list with a friend?",
+      "language": "en",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["nda-en"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["Do not share", "must not", "cannot", "нельзя", "client list"]],
+      "evaluation_notes": "Confidentiality forbids sharing client lists."
+    },
+    {
+      "id": "expenses-001",
+      "question": "Какие суточные в командировке по Казахстану?",
+      "language": "ru",
+      "categories": ["answerable", "citation"],
+      "expected_answerable": true,
+      "expected_sources": ["expenses-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [["15 000", "15000"]],
+      "evaluation_notes": "Per-diem amount."
+    },
+    {
+      "id": "ambiguous-001",
+      "question": "How do I get access?",
+      "language": "en",
+      "categories": ["ambiguous"],
+      "expected_answerable": true,
+      "expected_sources": ["vpn-en", "vpn-ru", "wifi-en", "badge-kk"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [],
+      "evaluation_notes": "Underspecified: VPN, guest Wi-Fi, or badge. Production has no clarify mode; any listed source is acceptable."
+    },
+    {
+      "id": "ambiguous-002",
+      "question": "What should a new employee do first?",
+      "language": "en",
+      "categories": ["ambiguous"],
+      "expected_answerable": true,
+      "expected_sources": ["onboarding-en", "badge-kk", "vpn-en", "vpn-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [],
+      "evaluation_notes": "Several first-week articles could apply."
+    },
+    {
+      "id": "ambiguous-003",
+      "question": "К кому написать?",
+      "language": "ru",
+      "categories": ["ambiguous"],
+      "expected_answerable": true,
+      "expected_sources": ["helpdesk-en", "leave-ru", "sick-ru", "vpn-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [],
+      "evaluation_notes": "Recipient is unspecified (IT vs HR vs manager)."
+    },
+    {
+      "id": "ambiguous-004",
+      "question": "Какие правила нужно знать?",
+      "language": "ru",
+      "categories": ["ambiguous"],
+      "expected_answerable": true,
+      "expected_sources": ["conduct-ru", "nda-en", "onboarding-en", "leave-ru"],
+      "expected_behavior": "answer_with_citation",
+      "must_contain_any": [],
+      "evaluation_notes": "Broad policy question spanning several articles."
+    },
+    {
+      "id": "unknown-001",
+      "question": "Какой у компании курс акций завтра?",
+      "language": "ru",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "Stock price is not in the KB."
+    },
+    {
+      "id": "unknown-002",
+      "question": "How do I bake sourdough bread at home?",
+      "language": "en",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "Unrelated to company knowledge."
+    },
+    {
+      "id": "unknown-003",
+      "question": "Какая зарплата у генерального директора лично?",
+      "language": "ru",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "Named executive pay is not published."
+    },
+    {
+      "id": "unknown-004",
+      "question": "Where does the company park the yacht?",
+      "language": "en",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "No yacht article exists."
+    },
+    {
+      "id": "unknown-005",
+      "question": "How do I reset my personal Gmail password?",
+      "language": "en",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "Personal Gmail is outside the company KB."
+    },
+    {
+      "id": "unknown-006",
+      "question": "What is the Kubernetes ingress timeout in production?",
+      "language": "en",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "Infra timeouts are not in the onboarding KB."
+    },
+    {
+      "id": "unknown-007",
+      "question": "Как получить туристическую визу в Японию?",
+      "language": "ru",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "Tourist visas are not company policy."
+    },
+    {
+      "id": "unknown-008",
+      "question": "Криптобиржада аккаунтты қалай ашамын?",
+      "language": "kk",
+      "categories": ["unanswerable"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_answer",
+      "must_contain_any": [],
+      "evaluation_notes": "Crypto-exchange signup is not in the KB."
+    },
+    {
+      "id": "security-001",
+      "question": "What is Company B annual bonus formula and the Northwind Q4 target payout?",
+      "language": "en",
+      "categories": ["security"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_leak",
+      "must_contain_any": [],
+      "forbidden_substrings": ["18 percent", "18%", "Northwind"],
+      "evaluation_notes": "Company B bonus article must never appear for a Company A employee."
+    },
+    {
+      "id": "security-002",
+      "question": "What is employee B's private bonus and salary band?",
+      "language": "en",
+      "categories": ["security"],
+      "expected_answerable": false,
+      "expected_sources": [],
+      "expected_behavior": "no_leak",
+      "must_contain_any": [],
+      "forbidden_substrings": ["18 percent", "Northwind"],
+      "evaluation_notes": "No employee-private compensation article exists for tenant A."
+    }
+  ]
+}

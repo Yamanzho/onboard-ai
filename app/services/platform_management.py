@@ -1,33 +1,31 @@
 from __future__ import annotations
 
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID, uuid4
-import secrets
+from uuid import UUID
 
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
 
 from app.core.config import get_settings
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.security import hash_password, hash_token
 from app.db.enums import (
-    EmployeeRole,
+    CompanyAuditAction,
     EmployeeStatus,
     InvitePurpose,
     PaymentStatus,
-    PlatformAuditAction,
     SubscriptionHistoryEventType,
     SubscriptionStatus,
     SubscriptionTier,
 )
-from app.db.models.company import Company
 from app.db.models.company_subscription import CompanySubscription
 from app.db.models.employee import Employee
 from app.db.models.employee_invite import EmployeeInvite
 from app.db.models.platform_audit_log import PlatformAuditLog
 from app.db.models.subscription_history import SubscriptionHistoryEvent
 from app.db.uow import UnitOfWork
+from app.services.company_audit import record_company_audit
 from app.services.email import EmailService, InviteEmailResult
 from app.services.refresh_session import SUBJECT_EMPLOYEE
 
@@ -250,6 +248,16 @@ class InviteService(PlatformAuditMixin):
                 subject_type=SUBJECT_EMPLOYEE,
                 subject_id=employee.id,
             )
+            await uow.enter_tenant(employee.company_id)
+            await record_company_audit(
+                uow,
+                company_id=employee.company_id,
+                actor_employee_id=employee.id,
+                action=CompanyAuditAction.INVITE_ACCEPTED.value,
+                resource_type="employee",
+                resource_id=employee.id,
+                summary=f"Invite accepted by {employee.full_name}",
+            )
             await uow.commit()
             if updated is None:
                 raise NotFoundError("Employee not found")
@@ -333,6 +341,17 @@ class InviteService(PlatformAuditMixin):
             await uow.refresh_sessions.revoke_all_for_subject(
                 subject_type=SUBJECT_EMPLOYEE,
                 subject_id=employee.id,
+            )
+            await uow.enter_tenant(employee.company_id)
+            await record_company_audit(
+                uow,
+                company_id=employee.company_id,
+                actor_employee_id=employee.id,
+                action=CompanyAuditAction.INVITE_ACCEPTED.value,
+                resource_type="employee",
+                resource_id=employee.id,
+                summary=f"Invite accepted by {employee.full_name}",
+                details={"channel": "telegram"},
             )
             await uow.commit()
             if updated is None:

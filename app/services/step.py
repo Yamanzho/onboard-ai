@@ -8,6 +8,7 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.db.enums import StepType
 from app.db.models.step import Step
 from app.db.uow import UnitOfWork
+from app.services.step_content import validate_step_content
 from app.services.tenancy import ensure_same_company
 
 _ALLOWED_STEP_TYPES = {item.value for item in StepType}
@@ -63,6 +64,7 @@ class StepService:
             )
         if estimated_minutes is not None and estimated_minutes < 0:
             raise ValidationError("estimated_minutes must be >= 0")
+        validate_step_content(step_type, content)
 
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -140,6 +142,10 @@ class StepService:
                 actor_company_id=company_id,
                 not_found_message=f"Step {step_id} not found",
             )
+            next_type = values.get("step_type", step.step_type)
+            next_content = values.get("content", step.content)
+            content_dict = next_content if isinstance(next_content, dict) else {}
+            validate_step_content(str(next_type), content_dict)
             updated = await uow.steps.update(step_id, **values)
             if updated is None:
                 raise NotFoundError(f"Step {step_id} not found")

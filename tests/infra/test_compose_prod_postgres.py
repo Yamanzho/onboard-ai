@@ -10,16 +10,9 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS as _COMPOSE_SECRETS
 
-_COMPOSE_SECRETS = {
-    "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-    "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-    "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-    "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-    "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-    "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
-}
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _compose_available() -> bool:
@@ -45,7 +38,8 @@ def _compose_config(*, prod: bool, env: dict[str, str] | None = None) -> dict:
 
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_dev_compose_keeps_localhost_postgres_with_default_password() -> None:
-    cfg = _compose_config(prod=False)
+    # Isolate from a host POSTGRES_PASSWORD (e.g. leftover prod-test exports).
+    cfg = _compose_config(prod=False, env={"POSTGRES_PASSWORD": ""})
     db = cfg["services"]["db"]
     ports = db.get("ports") or []
     assert ports, "dev Postgres should publish localhost port for tooling"

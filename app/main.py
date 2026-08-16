@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 
 from app.api.exception_handlers import register_exception_handlers
+from app.api.middleware import RequestIdMiddleware
 from app.api.v1.router import router as api_v1_router
 from app.core.config import Settings, get_settings
+from app.core.readiness import assert_ready
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -76,6 +78,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ),
             },
             {
+                "name": "AI",
+                "description": (
+                    "Stateless tenant-scoped knowledge-base chat. "
+                    "Identity comes from the authenticated session."
+                ),
+            },
+            {
                 "name": "Super Admin",
                 "description": (
                     "Platform Super Admin panel: cross-tenant companies, users, "
@@ -87,12 +96,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     register_exception_handlers(application)
+    application.add_middleware(RequestIdMiddleware)
     application.include_router(api_v1_router)
 
     @application.get("/health", tags=["Health"], summary="Health check")
     async def health() -> dict[str, str]:
-        """Return service liveness status."""
+        """Return process liveness. Does not check PostgreSQL or Redis."""
         return {"status": "ok"}
+
+    @application.get("/ready", tags=["Health"], summary="Readiness check")
+    async def ready() -> dict[str, str]:
+        """Return whether the app can accept traffic.
+
+        Always checks PostgreSQL. Checks Redis when ``APP_ENV=production``
+        (Redis is a required runtime dependency). Response bodies never
+        include connection strings or secrets.
+        """
+        await assert_ready()
+        return {"status": "ready"}
 
     return application
 

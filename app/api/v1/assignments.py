@@ -11,6 +11,7 @@ from app.api.auth_deps import (
 )
 from app.api.deps import get_assignment_service, get_progress_service
 from app.api.v1.responses import ERROR_RESPONSES
+from app.db.enums import EmployeeRole
 from app.schemas.assignment import AssignmentCreate, AssignmentResponse
 from app.schemas.progress import (
     AssignmentProgressResponse,
@@ -19,6 +20,7 @@ from app.schemas.progress import (
 )
 from app.services.assignment import AssignmentService
 from app.services.progress import ProgressService
+from app.services.step_content import public_step_content
 
 router = APIRouter(tags=["Assignments"])
 
@@ -81,6 +83,7 @@ async def create_assignment(
         company_id=current_user.company_id,
         assigned_by_id=payload.assigned_by_id,
         due_at=payload.due_at,
+        actor_employee_id=current_user.id,
     )
     return AssignmentResponse.model_validate(assignment)
 
@@ -230,6 +233,7 @@ async def cancel_assignment(
     await service.cancel_assignment(
         assignment_id,
         company_id=current_user.company_id,
+        actor_employee_id=current_user.id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -277,12 +281,15 @@ async def get_assignment_progress(
     responses: list[ProgressResponse] = []
     for item in items:
         step = step_by_id.get(item.step_id)
+        content = step.content or {} if step is not None else {}
+        if current_user.role == EmployeeRole.EMPLOYEE.value:
+            content = public_step_content(content)
         step_info = (
             ProgressStepInfo(
                 title=step.title,
                 description=step.description,
                 step_type=step.step_type,
-                content=step.content or {},
+                content=content,
                 position=step.position,
             )
             if step is not None

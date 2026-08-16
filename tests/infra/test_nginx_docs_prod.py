@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS
+
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = ROOT / "frontend"
 
@@ -42,6 +44,8 @@ def test_dev_nginx_proxies_openapi_docs() -> None:
     assert "proxy_pass http://api:8000/redoc" in conf
     assert "location /api/" in conf
     assert "location = /health" in conf
+    assert "location = /ready" in conf
+    assert "proxy_pass http://api:8000/ready" in conf
 
 
 def test_prod_nginx_overwrites_forwarded_for_with_remote_addr() -> None:
@@ -84,6 +88,10 @@ def test_prod_nginx_blocks_openapi_docs() -> None:
     # API + health must remain proxied.
     assert "proxy_pass http://api:8000/api/" in conf
     assert "proxy_pass http://api:8000/health" in conf
+    assert "proxy_pass http://api:8000/ready" in conf
+    assert "location = /ready" in conf
+    assert "proxy_set_header X-Forwarded-Proto $forwarded_proto;" in conf
+    assert "map $http_x_forwarded_proto $forwarded_proto" in conf
 
 
 def test_prod_nginx_has_restrictive_content_security_policy() -> None:
@@ -123,15 +131,7 @@ def test_frontend_dockerfile_accepts_nginx_conf_arg() -> None:
 
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_prod_compose_uses_nginx_prod_conf() -> None:
-    env = {
-        "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-        "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-        "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-        "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-        "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-        "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
-    }
-    cfg = _compose_config(prod=True, env=env)
+    cfg = _compose_config(prod=True, env=COMPOSE_PROD_SECRETS)
     frontend = cfg["services"]["frontend"]
     build = frontend.get("build") or {}
     args = build.get("args") or {}

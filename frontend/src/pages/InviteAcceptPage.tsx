@@ -80,7 +80,6 @@ export function InviteAcceptPage() {
     try {
       await authApi.acceptInvite({ token, password })
       setDone(true)
-      navigate('/login', { replace: true })
     } catch (err: unknown) {
       setSubmitError(
         err instanceof ApiError ? err.message : t('invite.acceptFailed'),
@@ -116,9 +115,15 @@ export function InviteAcceptPage() {
               {new Date(preview.expires_at).toLocaleString()}
             </p>
             {done ? (
-              <p className="mt-4 text-sm text-[var(--color-muted)]">{t('invite.activatedGoLogin')}</p>
+              <div className="mt-4 space-y-3">
+                <p className="text-sm text-emerald-800">{t('invite.activatedGoLogin')}</p>
+                <Link to="/login">
+                  <Button className="w-full">{t('invite.goToSignIn')}</Button>
+                </Link>
+              </div>
             ) : null}
             {submitError ? <ErrorAlert message={submitError} /> : null}
+            {!done ? (
             <form onSubmit={onSubmit} className="mt-4 space-y-3">
               <div>
                 <Label htmlFor="password">{t('common.password')}</Label>
@@ -148,6 +153,7 @@ export function InviteAcceptPage() {
                 {submitting ? t('invite.settingPassword') : t('invite.setPasswordContinue')}
               </Button>
             </form>
+            ) : null}
           </>
         )}
       </div>

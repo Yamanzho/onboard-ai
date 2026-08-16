@@ -51,6 +51,9 @@ def test_production_does_not_fall_back_to_memory_when_redis_unavailable() -> Non
         migration_database_url=(
             "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai"
         ),
+        onboard_owner_password="unit-test-postgres-password",
+        onboard_app_password="unit-test-postgres-password",
+        invite_base_url="https://onboardai.example.test",
     )
     with patch("aiogram.fsm.storage.redis.RedisStorage") as storage_cls:
         storage_cls.from_url.side_effect = ConnectionError("redis down")
@@ -72,6 +75,9 @@ def test_production_redis_auth_failure_fails_startup_storage() -> None:
         migration_database_url=(
             "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai"
         ),
+        onboard_owner_password="unit-test-postgres-password",
+        onboard_app_password="unit-test-postgres-password",
+        invite_base_url="https://onboardai.example.test",
     )
     with patch("aiogram.fsm.storage.redis.RedisStorage") as storage_cls:
         storage_cls.from_url.side_effect = Exception("NOAUTH Authentication required")
@@ -97,6 +103,9 @@ def test_production_storage_error_message_does_not_leak_password() -> None:
         migration_database_url=(
             "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai"
         ),
+        onboard_owner_password="unit-test-postgres-password",
+        onboard_app_password="unit-test-postgres-password",
+        invite_base_url="https://onboardai.example.test",
     )
     with patch("aiogram.fsm.storage.redis.RedisStorage") as storage_cls:
         storage_cls.from_url.side_effect = Exception(f"Error connecting to redis://:{secret}@redis")

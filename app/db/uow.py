@@ -11,16 +11,19 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.rls_guard import SESSION_RLS_MODE_KEY, install_rls_orm_guard
 from app.db.session import async_session_factory
 from app.repositories.ai_conversation import AIConversationRepository
+from app.repositories.ai_message import AIMessageRepository
 from app.repositories.assignment import AssignmentRepository
 from app.repositories.company import CompanyRepository
+from app.repositories.company_audit_log import CompanyAuditLogRepository
+from app.repositories.company_subscription import CompanySubscriptionRepository
 from app.repositories.employee import EmployeeRepository
+from app.repositories.employee_invite import EmployeeInviteRepository
 from app.repositories.knowledge_article import KnowledgeArticleRepository
+from app.repositories.knowledge_article_chunk import KnowledgeArticleChunkRepository
 from app.repositories.knowledge_article_link import KnowledgeArticleLinkRepository
 from app.repositories.knowledge_article_version import KnowledgeArticleVersionRepository
 from app.repositories.knowledge_category import KnowledgeCategoryRepository
 from app.repositories.knowledge_tag import KnowledgeTagRepository
-from app.repositories.company_subscription import CompanySubscriptionRepository
-from app.repositories.employee_invite import EmployeeInviteRepository
 from app.repositories.onboarding_program import OnboardingProgramRepository
 from app.repositories.platform_audit_log import PlatformAuditLogRepository
 from app.repositories.progress import ProgressRepository
@@ -53,6 +56,7 @@ class UnitOfWork:
 
     session: AsyncSession
     companies: CompanyRepository
+    company_audit_logs: CompanyAuditLogRepository
     employees: EmployeeRepository
     onboarding_programs: OnboardingProgramRepository
     steps: StepRepository
@@ -61,9 +65,11 @@ class UnitOfWork:
     knowledge_categories: KnowledgeCategoryRepository
     knowledge_tags: KnowledgeTagRepository
     knowledge_articles: KnowledgeArticleRepository
+    knowledge_article_chunks: KnowledgeArticleChunkRepository
     knowledge_article_versions: KnowledgeArticleVersionRepository
     knowledge_article_links: KnowledgeArticleLinkRepository
     ai_conversations: AIConversationRepository
+    ai_messages: AIMessageRepository
     super_admins: SuperAdminRepository
     company_subscriptions: CompanySubscriptionRepository
     subscription_history: SubscriptionHistoryRepository
@@ -89,6 +95,7 @@ class UnitOfWork:
         self.session = self._session
         install_rls_orm_guard(self._session)
         self.companies = CompanyRepository(self._session)
+        self.company_audit_logs = CompanyAuditLogRepository(self._session)
         self.employees = EmployeeRepository(self._session)
         self.onboarding_programs = OnboardingProgramRepository(self._session)
         self.steps = StepRepository(self._session)
@@ -97,9 +104,11 @@ class UnitOfWork:
         self.knowledge_categories = KnowledgeCategoryRepository(self._session)
         self.knowledge_tags = KnowledgeTagRepository(self._session)
         self.knowledge_articles = KnowledgeArticleRepository(self._session)
+        self.knowledge_article_chunks = KnowledgeArticleChunkRepository(self._session)
         self.knowledge_article_versions = KnowledgeArticleVersionRepository(self._session)
         self.knowledge_article_links = KnowledgeArticleLinkRepository(self._session)
         self.ai_conversations = AIConversationRepository(self._session)
+        self.ai_messages = AIMessageRepository(self._session)
         self.super_admins = SuperAdminRepository(self._session)
         self.company_subscriptions = CompanySubscriptionRepository(self._session)
         self.subscription_history = SubscriptionHistoryRepository(self._session)

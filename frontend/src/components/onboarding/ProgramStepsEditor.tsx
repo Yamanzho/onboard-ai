@@ -19,6 +19,8 @@ import {
 import {
   buildStepContent,
   stepContentBody,
+  stepContentQuestions,
+  stepContentUrl,
   type StepFormValues,
 } from './stepFormUtils'
 
@@ -27,6 +29,8 @@ const emptyForm: StepFormValues = {
   description: '',
   step_type: 'content',
   content_body: '',
+  content_url: '',
+  content_questions: '',
   is_required: true,
   estimated_minutes: '',
 }
@@ -36,7 +40,7 @@ function toPayload(values: StepFormValues, existingContent?: Record<string, unkn
     title: values.title,
     description: values.description || null,
     step_type: values.step_type,
-    content: buildStepContent(values.content_body, existingContent),
+    content: buildStepContent(values, existingContent),
     is_required: values.is_required,
     estimated_minutes: values.estimated_minutes
       ? Number(values.estimated_minutes)
@@ -173,6 +177,8 @@ export function ProgramStepsEditor({
               description: editing.description ?? '',
               step_type: editing.step_type as StepType,
               content_body: stepContentBody(editing.content),
+              content_url: stepContentUrl(editing.content),
+              content_questions: stepContentQuestions(editing.content),
               is_required: editing.is_required,
               estimated_minutes:
                 editing.estimated_minutes != null

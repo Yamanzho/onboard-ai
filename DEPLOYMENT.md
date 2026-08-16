@@ -50,7 +50,10 @@ curl -s http://localhost:8000/health
 
 # Prefer same-origin via frontend nginx (also works in production compose):
 curl -s http://localhost:3000/health
-# {"status":"ok"}
+# {"status":"ok"}   — process liveness (does not check Postgres/Redis)
+
+curl -s http://localhost:3000/ready
+# {"status":"ready"} — Postgres up; Redis up when APP_ENV=production
 
 open http://localhost:3000
 open http://localhost:8000/docs   # local/dev only — Swagger/OpenAPI; not available in production
@@ -77,10 +80,14 @@ When `APP_ENV=production`, the API **fail-fast** rejects missing or obviously we
 |----------|------|
 | `SECRET_KEY` | Required; ≥ 32 chars; not a known default/placeholder |
 | `SUPER_ADMIN_PASSWORD` | Required; ≥ 12 chars; not a known default/placeholder |
-| `REDIS_URL` / `REDIS_PASSWORD` | Redis URL must embed a non-empty password (P0-03) |
-| `DATABASE_URL` / `POSTGRES_PASSWORD` | Postgres URL password required; ≥ 12 chars; not a known default (SEC-R2) |
+| `BOT_SERVICE_TOKEN` | Required in production Compose; ≥ 24 chars; placeholders rejected; requires `BOT_COMPANY_ID` |
+| `REDIS_URL` / `REDIS_PASSWORD` | Redis URL must embed a strong password (≥ 12 chars) |
+| `DATABASE_URL` / `ONBOARD_APP_PASSWORD` | Runtime DB password required; ≥ 12 chars; not a known default |
+| `MIGRATION_DATABASE_URL` / `ONBOARD_OWNER_PASSWORD` | Migrator password required; ≥ 12 chars; not a known default |
+| `INVITE_BASE_URL` | Must be `https://…` |
+| `SEED_DEMO` | Forced `false` in production Compose; entrypoint refuses `true` |
 
-`docker-compose.prod.yml` also refuses to interpolate if `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, or `POSTGRES_PASSWORD` is missing/empty.
+`docker-compose.prod.yml` also refuses to interpolate if `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_OWNER_PASSWORD`, `ONBOARD_APP_PASSWORD`, `BOT_SERVICE_TOKEN`, or `BOT_COMPANY_ID` is missing/empty. `BOT_COMPANY_ID` must **not** be the demo seed UUID `11111111-1111-4111-8111-111111111111`.
 
 Generate secrets (do not copy placeholders from `.env.example` into production):
 
@@ -89,6 +96,9 @@ openssl rand -hex 32                                          # SECRET_KEY
 python -c "import secrets; print(secrets.token_urlsafe(24))"  # SUPER_ADMIN_PASSWORD
 python -c "import secrets; print(secrets.token_urlsafe(32))"  # REDIS_PASSWORD
 python -c "import secrets; print(secrets.token_urlsafe(32))"  # POSTGRES_PASSWORD
+python -c "import secrets; print(secrets.token_urlsafe(32))"  # ONBOARD_OWNER_PASSWORD
+python -c "import secrets; print(secrets.token_urlsafe(32))"  # ONBOARD_APP_PASSWORD
+python -c "import secrets; print(secrets.token_urlsafe(32))"  # BOT_SERVICE_TOKEN
 ```
 
 Development keeps convenient local defaults; production validation does not apply when `APP_ENV` ≠ `production`.
@@ -102,7 +112,7 @@ When `APP_ENV=production`, **Redis is a hard dependency** — services must not 
 | Bot FSM storage | Must initialize `RedisStorage`; failure **raises** (container exits/restarts). **No** `MemoryStorage` fallback. | Falls back to `MemoryStorage` if Redis is down (**dev-only**; not shared/durable) |
 | API login rate limits | Redis required; connect/command failure → **HTTP 503**. **No** per-process memory fallback (would break shared limits across `UVICORN_WORKERS`). | In-memory fallback if Redis is unavailable (**dev-only**; not shared across workers) |
 
-Error messages never include Redis passwords. `/health` remains a **liveness** probe (`{"status":"ok"}`) without Redis credentials; Redis outages surface at bot startup and on rate-limited login endpoints.
+Error messages never include Redis passwords. `/health` is a **liveness** probe (`{"status":"ok"}`) without dependency checks. `/ready` is a **readiness** probe (`{"status":"ready"}`): PostgreSQL is always required; Redis is required when `APP_ENV=production`. Bodies never include connection strings or secrets. Redis outages also surface at bot startup and on rate-limited login endpoints.
 
 Do **not** run production with Redis intentionally down.
 
@@ -142,7 +152,11 @@ Full procedure (backup, verification, rollback; **no** volume wipe as rotation):
 #   SUPER_ADMIN_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(24))")
 #   REDIS_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
 #   POSTGRES_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
-# Add those to .env. APP_ENV/DEBUG are forced by compose.prod.yml.
+#   ONBOARD_OWNER_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+#   ONBOARD_APP_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+#   BOT_SERVICE_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
+#   BOT_COMPANY_ID=$(uuidgen)   # replace with real company UUID after create
+# Add those to .env. APP_ENV/DEBUG/SEED_DEMO are forced by compose.prod.yml.
 # Weak/default secrets are rejected at API startup (Settings fail-fast).
 
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
@@ -157,8 +171,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 **Production** (`-f docker-compose.prod.yml`):
 
 - **No** source bind-mounts — application code is baked into the image (`Dockerfile` `COPY`)
-- Forces `APP_ENV=production` and `DEBUG=false` (ignores development values from `.env` for those keys)
-- Requires `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, and `POSTGRES_PASSWORD` at compose interpolate time (`:?`)
+- Forces `APP_ENV=production`, `DEBUG=false`, and `SEED_DEMO=false`
+- Requires `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_*_PASSWORD`, `BOT_SERVICE_TOKEN`, `BOT_COMPANY_ID`, and `INVITE_BASE_URL` at compose interpolate time (`:?`)
 - API Settings fail-fast on weak/default `SECRET_KEY` / `SUPER_ADMIN_PASSWORD` / unauthenticated Redis / weak Postgres password
 - API: `uvicorn … --workers ${UVICORN_WORKERS:-2}` — **no** `--reload`
 - Bot: `python -m app.bot` from the image (no reload)
@@ -195,7 +209,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml config
 # redis command includes requirepass
 
 curl -s http://localhost:8000/health   # should fail (connection refused)
-curl -s http://localhost:3000/health   # ok via nginx
+curl -s http://localhost:3000/health   # liveness via nginx
+curl -s http://localhost:3000/ready    # readiness via nginx (Postgres; Redis in production)
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/docs         # 404
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/openapi.json # 404
 curl -s -o /dev/null -w "%{http_code}\n" http://localhost:3000/redoc        # 404
@@ -217,6 +232,7 @@ docker compose exec api python -m scripts.seed_demo
 ```
 
 Disable seed: `SEED_DEMO=false` in `.env`, then recreate the API container.
+Production Compose **forces** `SEED_DEMO=false`; the API entrypoint **exits** if `SEED_DEMO=true` when `APP_ENV=production`.
 
 ### Stop / reset
 
@@ -335,12 +351,16 @@ SUPER_ADMIN_PASSWORD=<python -c "import secrets; print(secrets.token_urlsafe(24)
 AUTH_PASSWORD=<strong password — shared login disabled in production anyway>
 BOT_SERVICE_TOKEN=<python -c "import secrets; print(secrets.token_urlsafe(32))">
 BOT_TOKEN=<from BotFather>
-BOT_COMPANY_ID=11111111-1111-4111-8111-111111111111
-BOT_WEBHOOK_URL=https://onboard.example.com/webhook
+TELEGRAM_BOT_USERNAME=<botfather username without @>
+BOT_COMPANY_ID=<uuidgen then replace with real company UUID — never the demo seed id>
+BOT_WEBHOOK_URL=https://onboardai.aoe.kz/webhook
 BOT_WEBHOOK_SECRET=<random>
 REDIS_PASSWORD=<python -c "import secrets; print(secrets.token_urlsafe(32))">
 POSTGRES_PASSWORD=<python -c "import secrets; print(secrets.token_urlsafe(32))">
-SEED_DEMO=true   # or false after first bootstrap
+ONBOARD_OWNER_PASSWORD=<python -c "import secrets; print(secrets.token_urlsafe(32))">
+ONBOARD_APP_PASSWORD=<python -c "import secrets; print(secrets.token_urlsafe(32))">
+INVITE_BASE_URL=https://onboardai.aoe.kz
+SEED_DEMO=false
 ```
 
 Do **not** paste angle-bracket placeholders or documented demo defaults (`change-me*`, `onboard`) into a production `.env` — Settings will refuse to start.
@@ -356,6 +376,29 @@ Changing `POSTGRES_PASSWORD` on an existing volume is **not** a password rotatio
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 docker compose ps
 docker compose logs -f api
+```
+
+### 5.2.1 Production verification sequence
+
+Walk this list on a new VPS after cloning the repo. Automated CI covers compose config, Docker image build, pytest (including security + golden-path + tenant isolation), and `/ready` behavior — not live DNS, Telegram, or backups.
+
+1. **Configure `.env`** — `cp .env.example .env`, then generate unique secrets (see §2 Production secrets). Set `INVITE_BASE_URL=https://<pilot-host>`. Do not copy placeholders. `SEED_DEMO=false`.
+2. **Validate secrets** — production Compose interpolates required variables (`:?`). API Settings **fail-fast** on weak/default `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, Redis password, Postgres passwords, `BOT_SERVICE_TOKEN`, `BOT_COMPANY_ID` (must not be the demo seed UUID). `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must succeed.
+3. **Start production compose** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Confirm API/DB/Redis have **no** public host ports; frontend is `127.0.0.1:3000`.
+4. **Run migrations** — `docker/entrypoint-api.sh` runs `alembic upgrade head` on API start. Optional check: `docker compose exec api alembic current` (expect a single head).
+5. **Verify health (liveness)** — `curl -fsS http://127.0.0.1:3000/health` → `{"status":"ok"}`. This only means the API process is up.
+6. **Verify readiness** — `curl -fsS http://127.0.0.1:3000/ready` → `{"status":"ready"}`. HTTP 503 means PostgreSQL (always) or Redis (production) is not accepting traffic. The body must not contain URLs or passwords.
+7. **Configure nginx** — copy `deploy/nginx/onboardai.aoe.kz.conf` (HTTP / ACME bootstrap). See [deploy/nginx/README.md](deploy/nginx/README.md).
+8. **Configure HTTPS** — certbot, then replace with `deploy/nginx/onboardai.aoe.kz.https.conf` (HTTPS-only + HSTS). `curl -fsS https://<pilot-host>/ready`.
+9. **Verify application** — Super Admin login at `/platform/login`, then the pilot checklist: [production-pilot-golden-path.md](docs/runbooks/production-pilot-golden-path.md). Automated coverage: `tests/e2e/test_golden_path.py`.
+10. **Verify Telegram** — set `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, real `BOT_COMPANY_ID`, matching `BOT_SERVICE_TOKEN`. Confirm bot logs (polling or webhook). Live Bot API cannot be asserted in CI.
+11. **Verify backup** — follow [postgres-backup.md](docs/runbooks/postgres-backup.md) (`pg_dump`, off-box copy, encryption, restore drill). The app does not ship backup workers.
+
+```bash
+# After compose is up (frontend bound to 127.0.0.1:3000):
+curl -fsS http://127.0.0.1:3000/health
+curl -fsS http://127.0.0.1:3000/ready
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec api alembic current
 ```
 
 ### 5.3 Public TLS / edge contract (F-07)
@@ -405,6 +448,14 @@ server {
 
     ssl_certificate     /etc/letsencrypt/live/onboard.example.com/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/onboard.example.com/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # Enable HSTS only on this HTTPS server (HTTP already redirects).
+    # Do not add includeSubDomains until every subdomain is on HTTPS.
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
 
     # Admin UI + /api via Compose frontend (frontend nginx → api:8000).
     # SEC-R1: overwrite client IP headers with $remote_addr — do NOT use
@@ -479,8 +530,9 @@ cd frontend && npm install && npm run dev
 
 | Symptom | Check |
 |---------|--------|
-| API unhealthy | `docker compose logs api` — DB URL, migrations |
-| Frontend 502 on `/api` | API health; frontend depends on healthy API |
+| API unhealthy | `docker compose logs api` — DB URL, migrations; `curl /ready` |
+| Frontend 502 on `/api` | API health/ready; frontend depends on healthy API |
+| `/ready` returns 503 | Postgres down, or Redis down in production (`APP_ENV=production`) |
 | Login fails | Use **employee UUID**, not email; password = `AUTH_PASSWORD` |
 | Bot idle | `BOT_TOKEN` empty — expected; set token and recreate bot |
 | Bot can't auth employee | `telegram_user_id` mismatch; `BOT_COMPANY_ID` wrong; `BOT_SERVICE_TOKEN` mismatch |
@@ -494,17 +546,21 @@ cd frontend && npm install && npm run dev
 - [ ] Strong unique `SECRET_KEY` (≥32 chars; not a default/placeholder)
 - [ ] Strong unique `SUPER_ADMIN_PASSWORD` (≥12 chars; not a default/placeholder)
 - [ ] Strong `AUTH_PASSWORD` if still used for any legacy bootstrap (shared login is off in production)
-- [ ] Unique `BOT_SERVICE_TOKEN`
+- [ ] Unique `BOT_SERVICE_TOKEN` (≥24 chars; not a placeholder)
+- [ ] `BOT_COMPANY_ID` is the real pilot company UUID (not the demo seed id)
+- [ ] `TELEGRAM_BOT_USERNAME` set for employee invite deep links
 - [ ] Strong unique `POSTGRES_PASSWORD` (≥12 chars; not `onboard` / other defaults)
 - [ ] Strong unique `ONBOARD_OWNER_PASSWORD` / `ONBOARD_APP_PASSWORD` (distinct from bootstrap)
+- [ ] `INVITE_BASE_URL=https://<pilot-host>`
 - [ ] Understand F-03: editing `POSTGRES_PASSWORD` alone does not rotate an existing volume ([runbook](docs/runbooks/postgres-password-rotation.md))
-- [ ] `DEBUG=false`, `APP_ENV=production`
+- [ ] `DEBUG=false`, `APP_ENV=production`, `SEED_DEMO=false` (production Compose forces these)
 - [ ] Do not publish Postgres/Redis/API ports publicly (prod: no host ports; passwords required)
 - [ ] Frontend plaintext bound to `127.0.0.1` only; TLS edge in front
 - [ ] Production uses `docker-compose.prod.yml` (immutable images; no `.:/app`; no `--reload`; secrets required; non-root API/bot)
-- [ ] TLS 1.2+ (prefer 1.3) for Admin UI and bot webhook; HTTP→HTTPS on edge; HSTS after HTTPS-only confirmed
+- [ ] TLS 1.2+ (prefer 1.3) for Admin UI and bot webhook; HTTP→HTTPS on edge; HSTS after HTTPS-only confirmed ([host nginx](deploy/nginx/README.md))
 - [ ] `TRUST_PROXY_HEADERS=true` only with trusted overwrite proxy and unpublished API
-- [ ] Backups for `postgres_data` volume (+ restore drill)
-- [ ] Decide whether `SEED_DEMO` stays enabled
-- [ ] Rotate demo passwords / remove demo users on real tenants
+- [ ] PostgreSQL backups: [postgres-backup.md](docs/runbooks/postgres-backup.md) (storage, encryption, retention, restore drill)
+- [ ] Walk the pilot flow: [production-pilot-golden-path.md](docs/runbooks/production-pilot-golden-path.md)
+- [ ] `curl` `/health` (liveness) and `/ready` (Postgres + production Redis)
+- [ ] CI green on the commit you deploy (`.github/workflows/ci.yml`)
 - [ ] Monitor `docker compose logs` for API/bot errors

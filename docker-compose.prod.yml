@@ -6,8 +6,8 @@
 #   #   python -c "import secrets; print(secrets.token_urlsafe(24))"  # SUPER_ADMIN_PASSWORD
 #   #   python -c "import secrets; print(secrets.token_urlsafe(32))"  # REDIS_PASSWORD
 #   #   python -c "import secrets; print(secrets.token_urlsafe(32))"  # POSTGRES_PASSWORD
-#   # Put SECRET_KEY, SUPER_ADMIN_PASSWORD, REDIS_PASSWORD, POSTGRES_PASSWORD in .env
-#   # (DEBUG must be false).
+#   # Put those plus ONBOARD_OWNER_PASSWORD, ONBOARD_APP_PASSWORD, BOT_SERVICE_TOKEN
+#   # in .env. DEBUG/SEED_DEMO are forced false by this file.
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Security / immutability intent:
@@ -32,7 +32,8 @@
 # - F-05: API/bot image runs as non-root UID 10001 (see Dockerfile USER).
 # - Sprint 1.1: Do NOT use docker-compose.ip.yml in production. That override
 #           publishes 0.0.0.0:3000 and AUTH_COOKIE_SECURE=false (HTTP-only hack).
-#           Host TLS config: deploy/nginx/onboardai.aoe.kz.conf
+#           Host TLS: deploy/nginx/onboardai.aoe.kz.conf (certbot bootstrap),
+#           then onboardai.aoe.kz.https.conf (HTTPS-only + HSTS).
 # - Invite SMTP: api uses env_file=.env from docker-compose.yml. Set SMTP_HOST,
 #           SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_FROM, SMTP_USE_TLS there.
 #           `docker compose --env-file .env` alone does not inject vars into the
@@ -63,9 +64,15 @@ services:
       # Forced for this compose file — do not inherit development from .env.
       APP_ENV: production
       DEBUG: "false"
+      SEED_DEMO: "false"
       # P0-02: refuse to interpolate with missing/empty critical secrets.
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD is required for docker-compose.prod.yml}
+      BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN:?BOT_SERVICE_TOKEN is required for docker-compose.prod.yml}
+      # No demo-seed default. Use the real pilot tenant UUID (after company create,
+      # or a temporary uuidgen value on first boot — then replace and recreate).
+      BOT_COMPANY_ID: ${BOT_COMPANY_ID:?BOT_COMPANY_ID is required for docker-compose.prod.yml}
+      INVITE_BASE_URL: ${INVITE_BASE_URL:?INVITE_BASE_URL is required for docker-compose.prod.yml}
       # Trusted single-proxy mode: frontend nginx overwrites X-Real-IP / XFF.
       # Keep API host ports empty (below). Never set true if API is published.
       TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
@@ -95,6 +102,9 @@ services:
       APP_ENV: production
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
+      BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN:?BOT_SERVICE_TOKEN is required for docker-compose.prod.yml}
+      BOT_COMPANY_ID: ${BOT_COMPANY_ID:?BOT_COMPANY_ID is required for docker-compose.prod.yml}
+      INVITE_BASE_URL: ${INVITE_BASE_URL:?INVITE_BASE_URL is required for docker-compose.prod.yml}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       # R-AUDIT-02: bot does not open DB connections (HTTP → API only), but
       # Settings still validates DATABASE_URL when APP_ENV=production. Override

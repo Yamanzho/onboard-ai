@@ -18,6 +18,25 @@ export function useArticles(filters: Omit<ArticleListParams, 'company_id'> = {})
   })
 }
 
+export function useArticleVersions(articleId: string | undefined) {
+  return useQuery({
+    queryKey: ['article-versions', articleId],
+    queryFn: () => articlesApi.listArticleVersions(articleId!),
+    enabled: Boolean(articleId),
+  })
+}
+
+export function useArticleVersion(
+  articleId: string | undefined,
+  version: number | undefined,
+) {
+  return useQuery({
+    queryKey: ['article-version', articleId, version],
+    queryFn: () => articlesApi.getArticleVersion(articleId!, version!),
+    enabled: Boolean(articleId && version),
+  })
+}
+
 export function useArticle(articleId: string | undefined) {
   return useQuery({
     queryKey: ['article', articleId],
@@ -33,6 +52,8 @@ export function useArticleMutations() {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['articles'] })
     void qc.invalidateQueries({ queryKey: ['article'] })
+    void qc.invalidateQueries({ queryKey: ['article-versions'] })
+    void qc.invalidateQueries({ queryKey: ['article-version'] })
   }
 
   const create = useMutation({
@@ -60,5 +81,11 @@ export function useArticleMutations() {
     onSuccess: invalidate,
   })
 
-  return { create, update, publish, archive }
+  const restoreVersion = useMutation({
+    mutationFn: ({ id, version }: { id: string; version: number }) =>
+      articlesApi.restoreArticleVersion(id, version),
+    onSuccess: invalidate,
+  })
+
+  return { create, update, publish, archive, restoreVersion }
 }

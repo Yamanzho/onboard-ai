@@ -34,8 +34,19 @@ class _TokenPair:
 class OnboardApiError(Exception):
     """Raised when the OnboardAI REST API returns an error response."""
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retry_after: int | None = None,
+        request_id: str | None = None,
+        detail: object | None = None,
+    ) -> None:
         self.status_code = status_code
+        self.retry_after = retry_after
+        self.request_id = request_id
+        self.detail = detail
         super().__init__(message)
 
 
@@ -223,12 +234,37 @@ class OnboardApiClient:
         payload = await self._get(f"/api/v1/assignments/{assignment_id}/progress")
         return AssignmentProgressDTO.model_validate(payload)
 
-    async def complete_progress(self, progress_id: UUID) -> ProgressItemDTO:
-        payload = await self._post(
+    async def post_ai_chat(
+        self,
+        message: str,
+        conversation_id: UUID | str | None = None,
+    ) -> dict:
+        """POST /api/v1/ai/chat using the bound employee JWT.
+
+        Tenant identity comes from that JWT. The JSON body is the user
+        question and, when continuing a thread, the server-issued
+        conversation_id. Telegram never generates the id.
+        """
+        body: dict[str, str] = {"message": message}
+        if conversation_id is not None:
+            body["conversation_id"] = str(conversation_id)
+        payload = await self._post("/api/v1/ai/chat", json=body)
+        assert isinstance(payload, dict)
+        return payload
+
+    async def complete_progress(
+        self,
+        progress_id: UUID,
+        payload: dict | None = None,
+    ) -> ProgressItemDTO:
+        body = {"source": "telegram_bot"}
+        if payload:
+            body.update(payload)
+        response = await self._post(
             f"/api/v1/progress/{progress_id}/complete",
-            json={"payload": {"source": "telegram_bot"}},
+            json={"payload": body},
         )
-        return ProgressItemDTO.model_validate(payload)
+        return ProgressItemDTO.model_validate(response)
 
     @staticmethod
     def first_incomplete_step(
@@ -330,7 +366,26 @@ class OnboardApiClient:
                 f"API {response.request.method} {response.request.url.path} "
                 f"failed ({response.status_code}): {detail}",
                 status_code=response.status_code,
+                retry_after=_retry_after_seconds(response),
+                request_id=_response_request_id(response),
+                detail=detail,
             )
         if response.status_code == 204:
             return None
         return response.json()
+
+
+def _retry_after_seconds(response: httpx.Response) -> int | None:
+    raw = response.headers.get("Retry-After")
+    if raw is None:
+        return None
+    stripped = raw.strip()
+    if stripped.isdigit():
+        return int(stripped)
+    return None
+
+
+def _response_request_id(response: httpx.Response) -> str | None:
+    from app.core.request_id import read_request_id
+
+    return read_request_id(response.headers.get("X-Request-ID"))

@@ -1,8 +1,10 @@
-from functools import lru_cache
 import re
+from functools import lru_cache
 
-from pydantic import model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.core.ai_constants import DEFAULT_TELEGRAM_CONVERSATION_TTL_SECONDS
 
 # Documented / common insecure values — rejected in production even if long enough.
 _WEAK_SECRET_KEYS = frozenset(
@@ -62,10 +64,37 @@ _WEAK_POSTGRES_PASSWORDS = frozenset(
     }
 )
 
+_WEAK_BOT_SERVICE_TOKENS = frozenset(
+    {
+        "change-me",
+        "changeme",
+        "bot-token",
+        "bot_service_token",
+        "botservicetoken",
+        "<generate-a-strong-bot-service-token>",
+    }
+)
+
+_WEAK_REDIS_PASSWORDS = frozenset(
+    {
+        "redis",
+        "password",
+        "changeme",
+        "change-me",
+        "secret",
+        "onboard",
+        "<generate-a-strong-random-password>",
+    }
+)
+
 _MIN_SECRET_KEY_LEN = 32
 _MIN_SUPER_ADMIN_PASSWORD_LEN = 12
 _MIN_POSTGRES_PASSWORD_LEN = 12
+_MIN_BOT_SERVICE_TOKEN_LEN = 24
+_MIN_REDIS_PASSWORD_LEN = 12
 _PLACEHOLDER_RE = re.compile(r"^<[^>]+>$")
+# scripts/seed_demo.py well-known tenant — must not be the production bot binding.
+_DEMO_SEED_COMPANY_ID = "11111111-1111-4111-8111-111111111111"
 
 
 def _is_missing_or_weak_secret(value: str, *, weak_values: frozenset[str], min_length: int) -> bool:
@@ -88,6 +117,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        populate_by_name=True,
     )
 
     app_name: str = "OnboardAI"
@@ -177,8 +207,191 @@ class Settings(BaseSettings):
     # (see docker-compose.prod.yml + REDIS_PASSWORD).
     redis_url: str = "redis://localhost:6379/0"
 
+    # AI embeddings. Dev/CI default is FakeEmbeddingProvider (no network).
+    # Production hosted default is OpenAI text-embedding-3-small (1536).
+    # API keys belong in env only — never in the repository or in logs.
+    ai_embedding_provider: str = "fake"
+    ai_embedding_dimension: int = 1536
+    ai_embedding_model: str = "text-embedding-3-small"
+    ai_embedding_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("AI_EMBEDDING_API_KEY", "OPENAI_API_KEY"),
+    )
+    ai_embedding_timeout_seconds: float = 30.0
+    # AI-9A LLM. Dev/CI default is FakeLLMProvider (no network).
+    # Keys belong in env only — never in the repository or in logs.
+    ai_llm_provider: str = "fake"
+    ai_llm_model: str = "gpt-4o-mini"
+    ai_llm_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        validation_alias=AliasChoices("AI_LLM_API_KEY", "OPENAI_API_KEY"),
+    )
+    ai_llm_timeout_seconds: float = 30.0
+    # AI-9B HTTP chat rate limit (per authenticated employee, fixed window).
+    # 0 disables the limiter (tests). Not an authorization mechanism.
+    ai_chat_rate_limit: int = 20
+    ai_chat_rate_window_seconds: int = 60
+    # AI-10A: bounded OpenAI retries and overall RAG chat budget.
+    # Chat timeout must stay below the Telegram HTTP client timeout (30s).
+    ai_provider_max_retries: int = 2
+    ai_provider_retry_backoff_seconds: float = 0.2
+    ai_provider_retry_max_backoff_seconds: float = 2.0
+    ai_chat_timeout_seconds: float = 25.0
+    # AI-11C: Redis TTL for the Telegram → conversation_id pointer.
+    # Not conversation history; Postgres remains the source of truth.
+    ai_telegram_conversation_ttl_seconds: int = DEFAULT_TELEGRAM_CONVERSATION_TTL_SECONDS
+
+    @field_validator("ai_embedding_provider")
+    @classmethod
+    def _validate_embedding_provider(cls, value: str) -> str:
+        from app.core.ai_constants import SUPPORTED_EMBEDDING_PROVIDERS
+
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_EMBEDDING_PROVIDERS:
+            raise ValueError(
+                "AI_EMBEDDING_PROVIDER must be 'fake' or 'openai'"
+            )
+        return normalized
+
+    @field_validator("ai_embedding_dimension")
+    @classmethod
+    def _validate_embedding_dimension(cls, value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("AI_EMBEDDING_DIMENSION must be an integer")
+        if value < 1 or value > 4096:
+            raise ValueError("AI_EMBEDDING_DIMENSION must be between 1 and 4096")
+        return value
+
+    @field_validator("ai_embedding_timeout_seconds")
+    @classmethod
+    def _validate_embedding_timeout(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("AI_EMBEDDING_TIMEOUT_SECONDS must be a number")
+        if value <= 0 or value > 120:
+            raise ValueError("AI_EMBEDDING_TIMEOUT_SECONDS must be between 0 and 120")
+        return float(value)
+
+    @field_validator("ai_llm_provider")
+    @classmethod
+    def _validate_llm_provider(cls, value: str) -> str:
+        from app.core.ai_constants import SUPPORTED_LLM_PROVIDERS
+
+        normalized = value.strip().lower()
+        if normalized not in SUPPORTED_LLM_PROVIDERS:
+            raise ValueError("AI_LLM_PROVIDER must be 'fake' or 'openai'")
+        return normalized
+
+    @field_validator("ai_llm_timeout_seconds")
+    @classmethod
+    def _validate_llm_timeout(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("AI_LLM_TIMEOUT_SECONDS must be a number")
+        if value <= 0 or value > 120:
+            raise ValueError("AI_LLM_TIMEOUT_SECONDS must be between 0 and 120")
+        return float(value)
+
+    @field_validator("ai_chat_rate_limit")
+    @classmethod
+    def _validate_ai_chat_rate_limit(cls, value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("AI_CHAT_RATE_LIMIT must be an integer")
+        if value < 0:
+            raise ValueError("AI_CHAT_RATE_LIMIT must be >= 0")
+        return value
+
+    @field_validator("ai_chat_rate_window_seconds")
+    @classmethod
+    def _validate_ai_chat_rate_window(cls, value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("AI_CHAT_RATE_WINDOW_SECONDS must be an integer")
+        if value < 1 or value > 3600:
+            raise ValueError("AI_CHAT_RATE_WINDOW_SECONDS must be between 1 and 3600")
+        return value
+
+    @field_validator("ai_provider_max_retries")
+    @classmethod
+    def _validate_ai_provider_max_retries(cls, value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("AI_PROVIDER_MAX_RETRIES must be an integer")
+        if value < 0 or value > 5:
+            raise ValueError("AI_PROVIDER_MAX_RETRIES must be between 0 and 5")
+        return value
+
+    @field_validator("ai_provider_retry_backoff_seconds")
+    @classmethod
+    def _validate_ai_provider_retry_backoff(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("AI_PROVIDER_RETRY_BACKOFF_SECONDS must be a number")
+        if value < 0 or value > 10:
+            raise ValueError("AI_PROVIDER_RETRY_BACKOFF_SECONDS must be between 0 and 10")
+        return float(value)
+
+    @field_validator("ai_provider_retry_max_backoff_seconds")
+    @classmethod
+    def _validate_ai_provider_retry_max_backoff(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("AI_PROVIDER_RETRY_MAX_BACKOFF_SECONDS must be a number")
+        if value <= 0 or value > 30:
+            raise ValueError(
+                "AI_PROVIDER_RETRY_MAX_BACKOFF_SECONDS must be between 0 and 30"
+            )
+        return float(value)
+
+    @field_validator("ai_chat_timeout_seconds")
+    @classmethod
+    def _validate_ai_chat_timeout(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("AI_CHAT_TIMEOUT_SECONDS must be a number")
+        if value <= 0 or value > 120:
+            raise ValueError("AI_CHAT_TIMEOUT_SECONDS must be between 0 and 120")
+        return float(value)
+
+    @field_validator("ai_telegram_conversation_ttl_seconds")
+    @classmethod
+    def _validate_telegram_conversation_ttl(cls, value: int) -> int:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("AI_TELEGRAM_CONVERSATION_TTL_SECONDS must be an integer")
+        if value < 60 or value > 30 * 24 * 3600:
+            raise ValueError(
+                "AI_TELEGRAM_CONVERSATION_TTL_SECONDS must be between 60 and 2592000"
+            )
+        return value
+
     @model_validator(mode="after")
     def _harden_runtime(self) -> "Settings":
+        from app.core.ai_constants import (
+            KB_CHUNK_VECTOR_DIMENSION,
+            OPENAI_EMBEDDING_DIMENSION,
+        )
+
+        if self.ai_embedding_provider == "openai":
+            if not self.ai_embedding_api_key.get_secret_value().strip():
+                raise ValueError(
+                    "AI_EMBEDDING_API_KEY (or OPENAI_API_KEY) is required when "
+                    "AI_EMBEDDING_PROVIDER=openai"
+                )
+            if self.ai_embedding_dimension != OPENAI_EMBEDDING_DIMENSION:
+                raise ValueError(
+                    "AI_EMBEDDING_DIMENSION must be "
+                    f"{OPENAI_EMBEDDING_DIMENSION} when AI_EMBEDDING_PROVIDER=openai"
+                )
+            if self.ai_embedding_dimension != KB_CHUNK_VECTOR_DIMENSION:
+                raise ValueError(
+                    "AI_EMBEDDING_DIMENSION must match the pgvector column width "
+                    f"({KB_CHUNK_VECTOR_DIMENSION})"
+                )
+            if not self.ai_embedding_model.strip():
+                raise ValueError("AI_EMBEDDING_MODEL must not be empty")
+
+        if self.ai_llm_provider == "openai":
+            if not self.ai_llm_api_key.get_secret_value().strip():
+                raise ValueError(
+                    "AI_LLM_API_KEY (or OPENAI_API_KEY) is required when "
+                    "AI_LLM_PROVIDER=openai"
+                )
+            if not self.ai_llm_model.strip():
+                raise ValueError("AI_LLM_MODEL must not be empty")
+
         # Bot service token must always be company-bound (all environments).
         if self.bot_service_token and not self.bot_company_id:
             raise ValueError(
@@ -215,14 +428,61 @@ class Settings(BaseSettings):
                 f"(use a unique strong password, >= {_MIN_SUPER_ADMIN_PASSWORD_LEN} chars)"
             )
 
-        if self.bot_service_token and len(self.bot_service_token) < 24:
+        if self.bot_service_token and _is_missing_or_weak_secret(
+            self.bot_service_token,
+            weak_values=_WEAK_BOT_SERVICE_TOKENS,
+            min_length=_MIN_BOT_SERVICE_TOKEN_LEN,
+        ):
             raise ValueError(
-                "BOT_SERVICE_TOKEN must be at least 24 characters when APP_ENV=production"
+                "BOT_SERVICE_TOKEN is missing or too weak for APP_ENV=production "
+                f"(use a unique random value, >= {_MIN_BOT_SERVICE_TOKEN_LEN} chars)"
             )
-        if not _redis_url_has_password(self.redis_url):
+        if self.bot_token.strip() and not self.bot_service_token.strip():
             raise ValueError(
-                "REDIS_URL must include a non-empty password when APP_ENV=production "
-                "(example: redis://:${REDIS_PASSWORD}@redis:6379/0)"
+                "BOT_SERVICE_TOKEN is required when BOT_TOKEN is set and "
+                "APP_ENV=production"
+            )
+        if (
+            self.bot_company_id.strip().lower() == _DEMO_SEED_COMPANY_ID
+        ):
+            raise ValueError(
+                "BOT_COMPANY_ID must not use the demo seed company id when "
+                "APP_ENV=production (set it to the real pilot tenant UUID)"
+            )
+        invite_base = self.invite_base_url.strip().lower()
+        if not invite_base.startswith("https://"):
+            raise ValueError(
+                "INVITE_BASE_URL must use https:// when APP_ENV=production"
+            )
+        if _is_missing_or_weak_secret(
+            self.onboard_app_password,
+            weak_values=_WEAK_POSTGRES_PASSWORDS,
+            min_length=_MIN_POSTGRES_PASSWORD_LEN,
+        ):
+            raise ValueError(
+                "ONBOARD_APP_PASSWORD is missing or too weak for APP_ENV=production "
+                f"(use a unique strong value, >= {_MIN_POSTGRES_PASSWORD_LEN} chars)"
+            )
+        if _is_missing_or_weak_secret(
+            self.onboard_owner_password,
+            weak_values=_WEAK_POSTGRES_PASSWORDS,
+            min_length=_MIN_POSTGRES_PASSWORD_LEN,
+        ):
+            raise ValueError(
+                "ONBOARD_OWNER_PASSWORD is missing or too weak for APP_ENV=production "
+                f"(use a unique strong value, >= {_MIN_POSTGRES_PASSWORD_LEN} chars)"
+            )
+        redis_password = _redis_url_password(self.redis_url)
+        if redis_password is None or _is_missing_or_weak_secret(
+            redis_password,
+            weak_values=_WEAK_REDIS_PASSWORDS,
+            min_length=_MIN_REDIS_PASSWORD_LEN,
+        ):
+            raise ValueError(
+                "REDIS_URL must include a strong non-empty password when "
+                "APP_ENV=production "
+                f"(>= {_MIN_REDIS_PASSWORD_LEN} chars; "
+                "example: redis://:${REDIS_PASSWORD}@redis:6379/0)"
             )
         db_password = _database_url_password(self.database_url)
         if db_password is None or _is_missing_or_weak_secret(
@@ -269,17 +529,24 @@ class Settings(BaseSettings):
         return self.app_env.lower() == "production"
 
 
-def _redis_url_has_password(redis_url: str) -> bool:
-    """Return True when the Redis URL embeds a non-empty password."""
+def _redis_url_password(redis_url: str) -> str | None:
+    """Extract the password from a Redis URL, or None if absent/empty."""
     from urllib.parse import unquote, urlparse
 
     parsed = urlparse(redis_url)
     if parsed.scheme not in {"redis", "rediss"}:
-        return False
-    password = parsed.password
-    if password is None:
-        return False
-    return bool(unquote(password))
+        return None
+    if parsed.password is None:
+        return None
+    password = unquote(parsed.password)
+    if not password:
+        return None
+    return password
+
+
+def _redis_url_has_password(redis_url: str) -> bool:
+    """Return True when the Redis URL embeds a non-empty password."""
+    return _redis_url_password(redis_url) is not None
 
 
 def _database_url_password(database_url: str) -> str | None:

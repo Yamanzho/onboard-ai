@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+APP_ENV_VALUE="${APP_ENV:-development}"
+if [ "$APP_ENV_VALUE" = "production" ] && [ "${SEED_DEMO:-false}" = "true" ]; then
+  echo "[api] SEED_DEMO=true is forbidden when APP_ENV=production" >&2
+  exit 1
+fi
+
 echo "[api] waiting for database…"
 python - <<'PY'
 import asyncio
@@ -60,7 +66,6 @@ fi
 echo "[api] seeding platform Super Admin…"
 python -m scripts.seed_super_admin
 
-APP_ENV_VALUE="${APP_ENV:-development}"
 echo "[api] starting uvicorn (APP_ENV=${APP_ENV_VALUE})…"
 if [ "${APP_ENV_VALUE}" = "production" ]; then
   exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "${UVICORN_WORKERS:-2}"

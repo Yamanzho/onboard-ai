@@ -3,6 +3,7 @@ import type {
   AssignmentCreate,
   AssignmentListParams,
   AssignmentProgress,
+  ProgressItem,
 } from '../types/assignment'
 import { apiRequest } from './apiClient'
 
@@ -57,4 +58,14 @@ export async function getAssignmentProgress(
   return apiRequest<AssignmentProgress>(
     `/api/v1/assignments/${assignmentId}/progress`,
   )
+}
+
+export async function completeProgress(
+  progressId: string,
+  payload?: Record<string, unknown>,
+): Promise<ProgressItem> {
+  return apiRequest<ProgressItem>(`/api/v1/progress/${progressId}/complete`, {
+    method: 'POST',
+    body: { payload: payload ?? {} },
+  })
 }

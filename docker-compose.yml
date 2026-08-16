@@ -83,7 +83,7 @@ services:
     restart: unless-stopped
 
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: onboard-ai-db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-onboard}

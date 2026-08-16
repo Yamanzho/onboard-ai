@@ -56,6 +56,7 @@ async def create_program(
         actor_company_id=current_user.company_id,
         title=payload.title,
         description=payload.description,
+        actor_employee_id=current_user.id,
     )
     return ProgramResponse.model_validate(program)
 
@@ -189,6 +190,7 @@ async def publish_program(
     program = await service.publish_program(
         program_id,
         company_id=current_user.company_id,
+        actor_employee_id=current_user.id,
     )
     return ProgramResponse.model_validate(program)
 
@@ -217,6 +219,7 @@ async def archive_program(
     program = await service.archive_program(
         program_id,
         company_id=current_user.company_id,
+        actor_employee_id=current_user.id,
     )
     return ProgramResponse.model_validate(program)
 

@@ -428,3 +428,64 @@ async def test_cancelled_assignment_does_not_grant_program_article(
     )
     assert response.status_code == 404, response.text
     assert "CANCELLED_ASSIGNMENT_SECRET" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_employee_list_hides_drafts_and_unlinked_program_articles(
+    api_client: AsyncClient,
+    article_service: ArticleService,
+    company_a: Company,
+    employee_a: Employee,
+    hr_a: Employee,
+) -> None:
+    draft = await article_service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Hidden draft",
+        body="DRAFT_LIST_SECRET",
+    )
+    published = await article_service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Visible handbook",
+        body="Published list body",
+        visibility=KnowledgeVisibility.COMPANY.value,
+    )
+    await article_service.publish_article(published.id, company_id=company_a.id)
+
+    program = await _create_program(company_a.id)
+    program_article = await article_service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Program only",
+        body="PROGRAM_LIST_SECRET",
+        visibility=KnowledgeVisibility.PROGRAM.value,
+        program_ids=[program.id],
+    )
+    await article_service.publish_article(program_article.id, company_id=company_a.id)
+
+    listed = await api_client.get(
+        "/api/v1/knowledge/articles",
+        headers=auth_header(employee_a),
+        params={"company_id": str(company_a.id)},
+    )
+    assert listed.status_code == 200, listed.text
+    titles = {
+        item["current_version"]["title"]
+        for item in listed.json()["items"]
+        if item.get("current_version")
+    }
+    assert "Visible handbook" in titles
+    assert "Hidden draft" not in titles
+    assert "Program only" not in titles
+    assert "DRAFT_LIST_SECRET" not in listed.text
+    assert "PROGRAM_LIST_SECRET" not in listed.text
+
+    hr_list = await api_client.get(
+        "/api/v1/knowledge/articles",
+        headers=auth_header(hr_a),
+        params={"company_id": str(company_a.id), "status": "draft"},
+    )
+    assert hr_list.status_code == 200, hr_list.text
+    hr_ids = {item["id"] for item in hr_list.json()["items"]}
+    assert str(draft.id) in hr_ids

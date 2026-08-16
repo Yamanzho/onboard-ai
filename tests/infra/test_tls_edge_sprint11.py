@@ -14,20 +14,13 @@ from fastapi import Response
 from app.core.auth_cookies import set_auth_cookies
 from app.core.config import Settings, get_settings
 from app.schemas.auth import TokenResponse
+from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS as _COMPOSE_SECRETS
 
 ROOT = Path(__file__).resolve().parents[2]
 AUTH_COOKIES = ROOT / "app" / "core" / "auth_cookies.py"
 COMPOSE_PROD = ROOT / "docker-compose.prod.yml"
 NGINX_EDGE = ROOT / "deploy" / "nginx" / "onboardai.aoe.kz.conf"
-
-_COMPOSE_SECRETS = {
-    "REDIS_PASSWORD": "compose-test-redis-password-not-a-secret",
-    "SECRET_KEY": "compose-test-hmac-secret-key-32chars-min!",
-    "SUPER_ADMIN_PASSWORD": "compose-test-super-admin-ok",
-    "POSTGRES_PASSWORD": "compose-test-postgres-password-ok",
-    "ONBOARD_OWNER_PASSWORD": "compose-test-owner-password-ok",
-    "ONBOARD_APP_PASSWORD": "compose-test-app-password-ok",
-}
+NGINX_EDGE_HTTPS = ROOT / "deploy" / "nginx" / "onboardai.aoe.kz.https.conf"
 
 
 def test_auth_cookies_source_has_no_secure_override_env() -> None:
@@ -47,11 +40,34 @@ def test_prod_compose_forbids_auth_cookie_secure_false() -> None:
     assert "docker-compose.ip.yml" in text  # documented as forbidden
 
 
+def test_nginx_https_edge_has_tls_hsts_and_overwrites_xff() -> None:
+    assert NGINX_EDGE_HTTPS.is_file()
+    text = NGINX_EDGE_HTTPS.read_text(encoding="utf-8")
+    assert "listen 443 ssl" in text
+    assert "TLSv1.2" in text and "TLSv1.3" in text
+    assert "return 301 https://$host$request_uri;" in text
+    hsts_lines = [
+        line.strip()
+        for line in text.splitlines()
+        if "Strict-Transport-Security" in line and not line.strip().startswith("#")
+    ]
+    assert hsts_lines
+    assert "max-age=31536000" in hsts_lines[0]
+    assert "includeSubDomains" not in hsts_lines[0]
+    assert "add_header X-Content-Type-Options" in text
+    assert "add_header X-Frame-Options" in text
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in text
+    assert "proxy_set_header X-Real-IP $remote_addr;" in text
+    assert "proxy_set_header X-Forwarded-Proto $scheme;" in text
+    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" not in text
+    assert "127.0.0.1:3000" in text
+    assert "127.0.0.1:8081" in text
+
+
 def test_nginx_edge_config_exists_and_overwrites_xff() -> None:
     assert NGINX_EDGE.is_file()
     text = NGINX_EDGE.read_text(encoding="utf-8")
     assert "proxy_set_header X-Forwarded-For $remote_addr;" in text
-    assert "proxy_add_x_forwarded_for" not in text.split("never")[0] or True
     assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" not in text
     assert "127.0.0.1:3000" in text
 
@@ -75,11 +91,13 @@ def test_production_https_sets_secure_cookie(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("ONBOARD_OWNER_PASSWORD", "compose-test-owner-password-ok")
     monkeypatch.setenv("ONBOARD_APP_PASSWORD", "compose-test-app-password-ok")
     monkeypatch.setenv("POSTGRES_PASSWORD", "compose-test-postgres-password-ok")
-    # Avoid bot token production checks when unset.
-    monkeypatch.delenv("BOT_SERVICE_TOKEN", raising=False)
-    monkeypatch.delenv("BOT_TOKEN", raising=False)
+    monkeypatch.setenv("INVITE_BASE_URL", "https://onboardai.example.test")
+    # Override .env so production validators do not see demo/placeholder bot values.
+    monkeypatch.setenv("BOT_SERVICE_TOKEN", "")
+    monkeypatch.setenv("BOT_COMPANY_ID", "")
+    monkeypatch.setenv("BOT_TOKEN", "")
 
-    settings = Settings()
+    settings = Settings(_env_file=None)
     assert settings.is_production is True
 
     # Bind settings for cookie helper

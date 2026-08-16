@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { t } from '../i18n'
 import { canAccessTenantPanel } from '../lib/roles'
-import { ApiError } from '../services/apiClient'
+import { ApiError, setTenantUnauthorizedHandler } from '../services/apiClient'
 import * as authApi from '../services/authApi'
 import type { CurrentUser } from '../types/auth'
 
@@ -56,6 +56,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void loadMe()
   }, [loadMe])
+
+  useEffect(() => {
+    setTenantUnauthorizedHandler(() => {
+      setUser(null)
+    })
+    return () => setTenantUnauthorizedHandler(null)
+  }, [])
 
   const login = useCallback(async (email: string, password: string) => {
     setError(null)
