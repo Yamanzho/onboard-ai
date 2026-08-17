@@ -12,7 +12,8 @@ concurrency:
 
 env:
   PYTHONUNBUFFERED: "1"
-  # Structural compose validation only. These are not production secrets.
+  # Dummy CI secrets only — never live production credentials.
+  # Backend interpolates these into the Postgres service and DB URLs.
   SECRET_KEY: compose-test-hmac-secret-key-32chars-min!
   SUPER_ADMIN_PASSWORD: compose-test-super-admin-ok
   REDIS_PASSWORD: compose-test-redis-password-not-a-secret
@@ -32,7 +33,7 @@ jobs:
         image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: onboard
-          POSTGRES_PASSWORD: onboard
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
           POSTGRES_DB: onboard_ai
         ports:
           - 5432:5432
@@ -42,11 +43,10 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql+asyncpg://onboard_app:onboard@localhost:5432/onboard_ai
-      MIGRATION_DATABASE_URL: postgresql+asyncpg://onboard_owner:onboard@localhost:5432/onboard_ai
-      BOOTSTRAP_DATABASE_URL: postgresql://onboard:onboard@localhost:5432/onboard_ai
+      DATABASE_URL: postgresql+asyncpg://onboard_app:${{ env.ONBOARD_APP_PASSWORD }}@localhost:5432/onboard_ai
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://onboard_owner:${{ env.ONBOARD_OWNER_PASSWORD }}@localhost:5432/onboard_ai
+      BOOTSTRAP_DATABASE_URL: postgresql://onboard:${{ env.POSTGRES_PASSWORD }}@localhost:5432/onboard_ai
       POSTGRES_USER: onboard
-      POSTGRES_PASSWORD: onboard
       POSTGRES_DB: onboard_ai
       POSTGRES_HOST: localhost
       REDIS_URL: redis://localhost:6379/0

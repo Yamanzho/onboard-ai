@@ -37,3 +37,10 @@ def test_github_actions_ci_workflow_exists() -> None:
     assert "evaluate_rag" not in text
     assert "OPENAI_API_KEY" not in text
     assert "AI_EMBEDDING_API_KEY" not in text
+    # CI DB URLs must use the same dummy passwords as bootstrap_rls_roles.
+    assert "onboard_owner:${{ env.ONBOARD_OWNER_PASSWORD }}" in text
+    assert "onboard_app:${{ env.ONBOARD_APP_PASSWORD }}" in text
+    assert "onboard:${{ env.POSTGRES_PASSWORD }}" in text
+    assert "POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}" in text
+    assert "onboard_owner:onboard@" not in text
+    assert "onboard_app:onboard@" not in text
