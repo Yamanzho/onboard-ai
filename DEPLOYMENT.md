@@ -386,25 +386,26 @@ Documentation is not a substitute for the compose port resets and localhost bind
 
 ### 5.4 Nginx reverse proxy (TLS)
 
+Canonical cutover (DNS, HTTP-first, Certbot, `INVITE_BASE_URL`):
+[`docs/deployment/https.md`](docs/deployment/https.md).
+
+Host site file (HTTP-first, no certificate paths until Certbot runs):
+`deploy/nginx/onboardai.aoe.kz.conf`.
+
 Terminate TLS on the host and proxy to the Compose **frontend** (`127.0.0.1:3000`). Prefer this over exposing the API. The frontend container (`nginx.prod.conf`) already overwrites `X-Real-IP` / `X-Forwarded-For` with `$remote_addr` when talking to the API (SEC-R1) and sends a restrictive Content-Security-Policy (F-06).
 
 If you also set those headers on the host edge (or if you ever proxy `/api` to the API yourself), use the same **overwrite** contract — never `$proxy_add_x_forwarded_for`, which preserves a client-spoofed `X-Forwarded-For` and can reintroduce a rate-limit bypass when `TRUST_PROXY_HEADERS=true`.
 
-Example site config (`/etc/nginx/sites-available/onboard-ai`):
+Phase 1 HTTP site (shipped; Certbot later adds :443). Do **not** copy a `ssl_certificate` block before files exist:
 
 ```nginx
 server {
     listen 80;
-    server_name onboard.example.com;
-    return 301 https://$host$request_uri;
-}
+    server_name onboardai.aoe.kz;
 
-server {
-    listen 443 ssl http2;
-    server_name onboard.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/onboard.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/onboard.example.com/privkey.pem;
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
 
     # Admin UI + /api via Compose frontend (frontend nginx → api:8000).
     # SEC-R1: overwrite client IP headers with $remote_addr — do NOT use
@@ -413,6 +414,7 @@ server {
     # trusted proxy; never publish API:8000 to the public internet.
     location / {
         proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
@@ -422,6 +424,7 @@ server {
     # Telegram webhook → bot container (127.0.0.1 bind only)
     location /webhook {
         proxy_pass http://127.0.0.1:8081/webhook;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
@@ -430,17 +433,22 @@ server {
 }
 ```
 
+Manual production steps (do not run from this documentation task):
+
 ```bash
-sudo ln -s /etc/nginx/sites-available/onboard-ai /etc/nginx/sites-enabled/
-sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d onboard.example.com
+sudo cp /opt/onboard-ai/deploy/nginx/onboardai.aoe.kz.conf \
+  /etc/nginx/sites-available/onboardai.aoe.kz
+sudo ln -sf /etc/nginx/sites-available/onboardai.aoe.kz /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
+sudo apt-get install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d onboardai.aoe.kz
 ```
 
-Then set `BOT_WEBHOOK_URL=https://onboard.example.com/webhook` and restart bot:
+Then set `INVITE_BASE_URL=https://onboardai.aoe.kz` in the VPS `.env` and restart **api**.
+If Telegram webhook mode is used, set `BOT_WEBHOOK_URL=https://onboardai.aoe.kz/webhook` and recreate **bot** only:
 
 ```bash
-docker compose up -d --force-recreate bot
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate bot
 docker compose logs -f bot
 ```
 

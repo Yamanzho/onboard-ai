@@ -54,6 +54,9 @@ def test_nginx_edge_config_exists_and_overwrites_xff() -> None:
     assert "proxy_add_x_forwarded_for" not in text.split("never")[0] or True
     assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" not in text
     assert "127.0.0.1:3000" in text
+    assert "server_name onboardai.aoe.kz;" in text
+    assert "ssl_certificate" not in text
+    assert "listen 443" not in text
 
 
 def test_production_https_sets_secure_cookie(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -34,7 +34,8 @@ Production-style Compose (immutable images; API/DB/Redis internal-only; frontend
 # Set REDIS_PASSWORD + POSTGRES_PASSWORD + ONBOARD_*_PASSWORD + strong SECRET_KEY
 # + SUPER_ADMIN_PASSWORD in .env first (see .env.example / DEPLOYMENT.md).
 # Placeholders and defaults are rejected in production.
-# Put a TLS terminator in front of 127.0.0.1:3000 (see DEPLOYMENT.md §5.3).
+# Put a TLS terminator in front of 127.0.0.1:3000
+# (see docs/deployment/https.md and DEPLOYMENT.md §5.3).
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 Details: [DEPLOYMENT.md](DEPLOYMENT.md). Postgres password rotation on an existing volume: [docs/runbooks/postgres-password-rotation.md](docs/runbooks/postgres-password-rotation.md).

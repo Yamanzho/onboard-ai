@@ -63,6 +63,10 @@ python -m scripts.seed_super_admin
 APP_ENV_VALUE="${APP_ENV:-development}"
 echo "[api] starting uvicorn (APP_ENV=${APP_ENV_VALUE})…"
 if [ "${APP_ENV_VALUE}" = "production" ]; then
-  exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers "${UVICORN_WORKERS:-2}"
+  # --forwarded-allow-ips='*' is safe only because docker-compose.prod.yml
+  # publishes no API host port. Do not combine with a public :8000 bind.
+  exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
+    --workers "${UVICORN_WORKERS:-2}" \
+    --proxy-headers --forwarded-allow-ips='*'
 fi
 exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
