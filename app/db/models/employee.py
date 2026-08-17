@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -38,6 +38,13 @@ class Employee(Base, TimestampMixin):
             "company_id",
             "telegram_user_id",
             unique=True,
+        ),
+        # Shared bot: one real Telegram account → at most one active employee.
+        Index(
+            "uq_employees_active_telegram_user_id",
+            "telegram_user_id",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
         ),
     )
 

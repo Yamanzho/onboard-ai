@@ -263,8 +263,9 @@ sequenceDiagram
 Ключевые факты:
 
 - Бот **не ходит в Postgres** — только REST.
-- Тенант бота зафиксирован env `BOT_COMPANY_ID`.
-- Идентичность сотрудника: `(company_id, telegram_user_id)`.
+- Один shared Telegram bot на весь SaaS.
+- Идентичность: `telegram_user_id` → Employee → `employee.company_id`.
+- `BOT_COMPANY_ID` — optional demo/ops metadata, не identity scope.
 - Rate-limit на bot login: `BOT_LOGIN_RATE_LIMIT` / `BOT_LOGIN_RATE_WINDOW_SECONDS`.
 
 ### Типовой user-flow
@@ -518,7 +519,7 @@ flowchart TB
 | Actor | Scope |
 |-------|--------|
 | Company admin/HR/employee | Strict tenant |
-| Bot | Single tenant via `BOT_COMPANY_ID` |
+| Bot | Shared process; tenant from `employee.company_id` |
 | Super Admin | Cross-tenant platform APIs |
 
 ---
@@ -733,7 +734,7 @@ docker compose up --build
 | `DATABASE_URL` | Postgres (asyncpg) |
 | `REDIS_URL` | Redis |
 | `BOT_TOKEN` | Telegram (empty = idle bot) |
-| `BOT_COMPANY_ID` | Bot tenant UUID |
+| `BOT_COMPANY_ID` | Optional demo/ops metadata (not identity) |
 | `BOT_SERVICE_TOKEN` | Bot → API trust |
 | `API_BASE_URL` | Bot → API base URL |
 | `SEED_DEMO` | Auto-seed demo tenant |
@@ -757,7 +758,7 @@ docker compose up --build
 
 - Company login — shared password, не per-user passwords.
 - Platform settings — in-memory stub.
-- Bot привязан к одному `BOT_COMPANY_ID` на процесс.
+- Bot — один shared process; tenant из `employee.company_id`.
 - Super Admin и Company Admin — разные auth realms; impersonation «войти как компания» не реализован.
 
 ---
@@ -766,4 +767,5 @@ docker compose up --build
 
 - [README.md](README.md) — quick start, demo credentials, bot checklist  
 - [DEPLOYMENT.md](DEPLOYMENT.md) — Compose + Ubuntu deployment  
+- [docs/integrations/telegram.md](docs/integrations/telegram.md) — shared Telegram bot identity  
 - OpenAPI — http://localhost:8000/docs

@@ -65,6 +65,7 @@ _WEAK_POSTGRES_PASSWORDS = frozenset(
 _MIN_SECRET_KEY_LEN = 32
 _MIN_SUPER_ADMIN_PASSWORD_LEN = 12
 _MIN_POSTGRES_PASSWORD_LEN = 12
+_DEMO_SEED_COMPANY_ID = "11111111-1111-4111-8111-111111111111"
 _PLACEHOLDER_RE = re.compile(r"^<[^>]+>$")
 
 
@@ -179,11 +180,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _harden_runtime(self) -> "Settings":
-        # Bot service token must always be company-bound (all environments).
-        if self.bot_service_token and not self.bot_company_id:
-            raise ValueError(
-                "BOT_COMPANY_ID is required whenever BOT_SERVICE_TOKEN is set"
-            )
+        # Bot service token authenticates the bot process, not a tenant.
+        # BOT_COMPANY_ID is optional metadata; identity is telegram_user_id.
 
         if self.app_env.lower() != "production":
             return self
@@ -218,6 +216,15 @@ class Settings(BaseSettings):
         if self.bot_service_token and len(self.bot_service_token) < 24:
             raise ValueError(
                 "BOT_SERVICE_TOKEN must be at least 24 characters when APP_ENV=production"
+            )
+        if (
+            self.bot_company_id.strip()
+            and self.bot_company_id.strip().lower() == _DEMO_SEED_COMPANY_ID
+        ):
+            raise ValueError(
+                "BOT_COMPANY_ID must not use the demo seed company id when "
+                "APP_ENV=production (leave it empty for the shared bot, or set "
+                "it to a real non-demo UUID if used as ops metadata)"
             )
         if not _redis_url_has_password(self.redis_url):
             raise ValueError(

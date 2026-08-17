@@ -309,32 +309,38 @@ class InviteService(PlatformAuditMixin):
             if already_connected and employee.telegram_user_id != telegram_user_id:
                 raise ConflictError("Employee already linked to another Telegram account")
 
-            # Uniqueness: another employee in this company already owns this TG.
-            await uow.enter_tenant(employee.company_id)
-            existing = await uow.employees.get_by_telegram_user_id(
-                employee.company_id,
+            # Uniqueness: another ACTIVE employee already owns this Telegram id.
+            await uow.enter_platform()
+            existing_rows = await uow.employees.list_by_telegram_user_id(
                 telegram_user_id,
             )
-            if existing is not None and existing.id != employee.id:
+            if any(
+                row.id != employee.id and row.status == EmployeeStatus.ACTIVE.value
+                for row in existing_rows
+            ):
                 raise ConflictError("Telegram account is already linked")
 
             # Update + consume invite under employee pin (same as password accept).
             await uow.enter_auth_bootstrap(employee_id=employee.id)
-            updated = await uow.employees.update(
-                employee.id,
-                telegram_user_id=telegram_user_id,
-                telegram_username=telegram_username,
-                telegram_chat_id=telegram_chat_id,
-                status=EmployeeStatus.ACTIVE.value,
-                role=InvitePurpose.EMPLOYEE.value,
-            )
-            await uow.employee_invites.invalidate_unused_for_employee(employee.id)
-            await uow.enter_session_bootstrap()
-            await uow.refresh_sessions.revoke_all_for_subject(
-                subject_type=SUBJECT_EMPLOYEE,
-                subject_id=employee.id,
-            )
-            await uow.commit()
+            try:
+                updated = await uow.employees.update(
+                    employee.id,
+                    telegram_user_id=telegram_user_id,
+                    telegram_username=telegram_username,
+                    telegram_chat_id=telegram_chat_id,
+                    status=EmployeeStatus.ACTIVE.value,
+                    role=InvitePurpose.EMPLOYEE.value,
+                )
+                await uow.employee_invites.invalidate_unused_for_employee(employee.id)
+                await uow.enter_session_bootstrap()
+                await uow.refresh_sessions.revoke_all_for_subject(
+                    subject_type=SUBJECT_EMPLOYEE,
+                    subject_id=employee.id,
+                )
+                await uow.commit()
+            except IntegrityError as exc:
+                await uow.rollback()
+                raise ConflictError("Telegram account is already linked") from exc
             if updated is None:
                 raise NotFoundError(invalid_msg)
             return updated

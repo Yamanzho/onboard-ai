@@ -332,10 +332,11 @@ async def login(
     description=(
         "Trusted Telegram bot identity exchange.\n\n"
         "Requires header `X-Bot-Service-Token` matching `BOT_SERVICE_TOKEN`. "
-        "When `BOT_COMPANY_ID` is configured on the API, the request "
-        "`company_id` must match it (prevents cross-tenant impersonation).\n"
-        "Resolves the employee by `(company_id, telegram_user_id)` and issues "
-        "a normal employee JWT pair. Does **not** use `AUTH_PASSWORD`.\n\n"
+        "Resolves the employee by `telegram_user_id` only (shared bot). "
+        "Tenant is `employee.company_id` from the database. Optional request "
+        "`company_id` is ignored and cannot select a tenant. "
+        "`BOT_COMPANY_ID` is not used for identity lookup.\n"
+        "Issues a normal employee JWT pair. Does **not** use `AUTH_PASSWORD`.\n\n"
         "The bot then calls protected REST endpoints with the returned "
         "`access_token` as `Authorization: Bearer`, and renews via "
         "`POST /auth/refresh` when the access token expires.\n\n"
@@ -347,7 +348,10 @@ async def login(
             "description": "Invalid or missing bot service token",
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Employee archived, invited, company deactivated, or company mismatch",
+            "description": "Employee archived, invited, or company deactivated",
+        },
+        status.HTTP_409_CONFLICT: {
+            "description": "Telegram id is linked to multiple active employees",
         },
         status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
         status.HTTP_429_TOO_MANY_REQUESTS: {
@@ -378,9 +382,8 @@ async def bot_telegram_login(
     if not verify_bot_service_token(x_bot_service_token or ""):
         logger.warning(
             "bot_login failed reason=invalid_service_token ip=%s "
-            "company_id=%s telegram_user_id=%s",
+            "telegram_user_id=%s",
             ip,
-            payload.company_id,
             payload.telegram_user_id,
         )
         raise HTTPException(
@@ -388,51 +391,30 @@ async def bot_telegram_login(
             detail="Invalid bot service token",
         )
 
-    settings = get_settings()
-    if not settings.bot_company_id:
-        logger.error(
-            "bot_login failed reason=bot_company_id_unset ip=%s",
-            ip,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Bot company binding is not configured",
-        )
-    try:
-        allowed_company = UUID(settings.bot_company_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Bot company id is misconfigured",
-        ) from None
-    if payload.company_id != allowed_company:
-        logger.warning(
-            "bot_login failed reason=company_mismatch ip=%s "
-            "company_id=%s telegram_user_id=%s",
-            ip,
-            payload.company_id,
-            payload.telegram_user_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bot is not authorized for this company",
-        )
-
     try:
         employee = await employees.get_by_telegram_user_id(
-            company_id=payload.company_id,
             telegram_user_id=payload.telegram_user_id,
         )
     except NotFoundError as exc:
         logger.warning(
             "bot_login failed reason=employee_not_found ip=%s "
-            "company_id=%s telegram_user_id=%s",
+            "telegram_user_id=%s",
             ip,
-            payload.company_id,
             payload.telegram_user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
+    except ConflictError as exc:
+        logger.warning(
+            "bot_login failed reason=ambiguous_telegram_identity ip=%s "
+            "telegram_user_id=%s",
+            ip,
+            payload.telegram_user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
             detail=str(exc),
         ) from exc
 
@@ -441,7 +423,7 @@ async def bot_telegram_login(
             "bot_login failed reason=employee_archived ip=%s "
             "company_id=%s telegram_user_id=%s employee_id=%s",
             ip,
-            payload.company_id,
+            employee.company_id,
             payload.telegram_user_id,
             employee.id,
         )
@@ -454,7 +436,7 @@ async def bot_telegram_login(
             "bot_login failed reason=employee_invited ip=%s "
             "company_id=%s telegram_user_id=%s employee_id=%s",
             ip,
-            payload.company_id,
+            employee.company_id,
             payload.telegram_user_id,
             employee.id,
         )
@@ -470,7 +452,7 @@ async def bot_telegram_login(
             "bot_login failed reason=company_deactivated ip=%s "
             "company_id=%s telegram_user_id=%s",
             ip,
-            payload.company_id,
+            employee.company_id,
             payload.telegram_user_id,
         )
         raise HTTPException(
@@ -510,7 +492,7 @@ async def bot_telegram_login(
             "description": "Invalid or missing bot service token",
         },
         status.HTTP_403_FORBIDDEN: {
-            "description": "Company mismatch or Telegram already linked",
+            "description": "Telegram already linked or company deactivated",
         },
         status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
         status.HTTP_429_TOO_MANY_REQUESTS: {
@@ -544,38 +526,12 @@ async def bot_accept_invite(
             detail="Invalid bot service token",
         )
 
-    settings = get_settings()
-    if not settings.bot_company_id:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Bot company binding is not configured",
-        )
-    try:
-        allowed_company = UUID(settings.bot_company_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Bot company id is misconfigured",
-        ) from None
-    if payload.company_id != allowed_company:
-        logger.warning(
-            "bot_invite_accept failed reason=company_mismatch ip=%s "
-            "telegram_user_id=%s",
-            ip,
-            payload.telegram_user_id,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Bot is not authorized for this company",
-        )
-
     try:
         employee = await platform.accept_invite_via_telegram(
             token=payload.token,
             telegram_user_id=payload.telegram_user_id,
             telegram_username=payload.telegram_username,
             telegram_chat_id=payload.telegram_chat_id,
-            expected_company_id=allowed_company,
         )
     except NotFoundError as exc:
         raise HTTPException(

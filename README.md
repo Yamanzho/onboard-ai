@@ -76,7 +76,7 @@ docker compose down
 | Variable | Purpose |
 |----------|---------|
 | `BOT_TOKEN` | From [@BotFather](https://t.me/BotFather) |
-| `BOT_COMPANY_ID` | Tenant UUID (demo seed default above) |
+| `BOT_COMPANY_ID` | Optional demo/ops metadata (not identity) |
 | `BOT_SERVICE_TOKEN` | Shared secret for `POST /api/v1/auth/bot/telegram` (must match API) |
 
 ### Local testing (polling — recommended)
@@ -115,7 +115,7 @@ Webhook mode is selected automatically when `BOT_WEBHOOK_URL` is non-empty; othe
 
 ### Manual bot checklist
 
-1. Employee exists with your `telegram_user_id` and status `active` in `BOT_COMPANY_ID`.
+1. Employee is **active** with your Telegram id bound via `/start <invite_token>` (Web `telegram_user_id` is not binding).
 2. Published program assigned to that employee.
 3. In Telegram: `/start` → open **Мой онбординг** → complete each step.
 4. In Admin: Dashboard / Assignments show progress / completed.

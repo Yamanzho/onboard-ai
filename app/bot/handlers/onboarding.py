@@ -99,7 +99,11 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
         return
 
     try:
-        employee = await api.find_employee_by_telegram(message.from_user.id)
+        employee = await api.find_employee_by_telegram(
+            message.from_user.id,
+            handler="my_onboarding",
+            chat_id=message.chat.id if message.chat else None,
+        )
     except OnboardApiError:
         await message.answer("Не удалось связаться с сервером. Попробуйте позже.")
         return

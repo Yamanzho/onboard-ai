@@ -110,9 +110,6 @@ def main() -> None:
     if not settings.bot_token:
         logger.error("BOT_TOKEN is required")
         sys.exit(1)
-    if not settings.bot_company_id:
-        logger.error("BOT_COMPANY_ID is required")
-        sys.exit(1)
     if not settings.bot_service_token:
         logger.error("BOT_SERVICE_TOKEN is required")
         sys.exit(1)

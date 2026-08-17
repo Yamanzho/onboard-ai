@@ -80,6 +80,7 @@ class UnitOfWork:
         self._rls_mode: RlsMode = RlsMode.NONE
         self._tenant_company_id: UUID | None = None
         self._auth_employee_id: UUID | None = None
+        self._auth_telegram_user_id: int | None = None
         self._auth_invite_token_hash: str | None = None
         self._auth_super_admin_id: UUID | None = None
         self._auth_super_admin_email: str | None = None
@@ -171,6 +172,7 @@ class UnitOfWork:
         self,
         *,
         employee_id: UUID | None = None,
+        telegram_user_id: int | None = None,
         invite_token_hash: str | None = None,
         super_admin_id: UUID | None = None,
         super_admin_email: str | None = None,
@@ -179,6 +181,7 @@ class UnitOfWork:
 
         Pins are transaction-local GUCs (never client-controlled HTTP fields):
         - ``employee_id`` — SELECT/UPDATE one employees row
+        - ``telegram_user_id`` — SELECT employees rows with that Telegram id
         - ``invite_token_hash`` — SELECT/UPDATE one employee_invites row by hash
         - ``super_admin_id`` / ``super_admin_email`` — SELECT one super_admins row
 
@@ -187,6 +190,13 @@ class UnitOfWork:
         """
         if employee_id is not None and not isinstance(employee_id, UUID):
             raise TypeError("employee_id must be a UUID")
+        if telegram_user_id is not None:
+            if not isinstance(telegram_user_id, int) or isinstance(
+                telegram_user_id, bool
+            ):
+                raise TypeError("telegram_user_id must be an int")
+            if telegram_user_id <= 0:
+                raise ValueError("telegram_user_id must be a positive integer")
         if super_admin_id is not None and not isinstance(super_admin_id, UUID):
             raise TypeError("super_admin_id must be a UUID")
         if invite_token_hash is not None:
@@ -200,6 +210,7 @@ class UnitOfWork:
 
         self._tenant_company_id = None
         self._auth_employee_id = employee_id
+        self._auth_telegram_user_id = telegram_user_id
         self._auth_invite_token_hash = invite_token_hash
         self._auth_super_admin_id = super_admin_id
         self._auth_super_admin_email = super_admin_email
@@ -217,6 +228,7 @@ class UnitOfWork:
 
     def _clear_auth_pins(self) -> None:
         self._auth_employee_id = None
+        self._auth_telegram_user_id = None
         self._auth_invite_token_hash = None
         self._auth_super_admin_id = None
         self._auth_super_admin_email = None
@@ -260,6 +272,11 @@ class UnitOfWork:
         auth_employee = (
             str(self._auth_employee_id) if self._auth_employee_id is not None else ""
         )
+        auth_telegram = (
+            str(self._auth_telegram_user_id)
+            if self._auth_telegram_user_id is not None
+            else ""
+        )
         invite_hash = self._auth_invite_token_hash or ""
         sa_id = (
             str(self._auth_super_admin_id)
@@ -289,6 +306,10 @@ class UnitOfWork:
         await session.execute(
             text("SELECT set_config('app.auth_employee_id', :v, true)"),
             {"v": auth_employee},
+        )
+        await session.execute(
+            text("SELECT set_config('app.auth_telegram_user_id', :v, true)"),
+            {"v": auth_telegram},
         )
         await session.execute(
             text("SELECT set_config('app.auth_invite_token_hash', :v, true)"),

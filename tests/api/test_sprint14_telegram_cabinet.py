@@ -14,6 +14,8 @@ from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from tests.conftest import _uow_factory, auth_header
 
+pytestmark = [pytest.mark.security, pytest.mark.telegram]
+
 
 @pytest.fixture
 def bot_service_token(monkeypatch: pytest.MonkeyPatch) -> str:
@@ -81,7 +83,8 @@ async def test_employee_a_and_b_tokens_differ_and_cross_bind_denied(
     assert url_a != url_b
     assert token_a in url_a and token_b in url_b
 
-    tg_a, tg_b = 9_200_000_001, 9_200_000_002
+    tg_a = uuid4().int % 1_000_000_000 + 50_000_000
+    tg_b = uuid4().int % 1_000_000_000 + 60_000_000
 
     ok_a = await api_client.post(
         "/api/v1/auth/bot/invite/accept",
@@ -209,7 +212,7 @@ async def test_admin_invite_rejected_via_telegram(
 
 
 @pytest.mark.asyncio
-async def test_cross_tenant_telegram_invite_denied(
+async def test_shared_bot_accepts_invite_for_any_company(
     api_client: AsyncClient,
     company_a,
     company_b,
@@ -218,7 +221,7 @@ async def test_cross_tenant_telegram_invite_denied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("SMTP_HOST", "")
-    # Bot is bound to company B, invite is for company A.
+    # BOT_COMPANY_ID may still name company B; invite is for company A.
     _bind_bot_company(monkeypatch, company_b.id)
     _, token, _ = await _create_invited_employee(
         api_client, admin_a, company_a.id, name="Cross Tenant"
@@ -233,7 +236,8 @@ async def test_cross_tenant_telegram_invite_denied(
             "company_id": str(company_b.id),
         },
     )
-    assert res.status_code == 400
+    assert res.status_code == 200, res.text
+    assert res.json()["employee"]["company_id"] == str(company_a.id)
     get_settings.cache_clear()
 
 

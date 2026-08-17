@@ -13,6 +13,7 @@ from app.bot.api.schemas import (
     ProgramDTO,
     ProgressItemDTO,
 )
+from app.bot.identity_debug import log_identity
 
 _DONE_STATUSES = frozenset({"completed", "skipped"})
 _access_token_var: ContextVar[str | None] = ContextVar(
@@ -56,7 +57,7 @@ class OnboardApiClient:
     def __init__(
         self,
         base_url: str,
-        company_id: UUID,
+        company_id: UUID | None = None,
         *,
         service_token: str,
     ) -> None:
@@ -80,23 +81,72 @@ class OnboardApiClient:
             await self._client.aclose()
             self._client = None
 
-    async def find_employee_by_telegram(self, telegram_user_id: int) -> EmployeeDTO | None:
+    async def find_employee_by_telegram(
+        self,
+        telegram_user_id: int,
+        *,
+        handler: str = "find_employee_by_telegram",
+        chat_id: int | None = None,
+    ) -> EmployeeDTO | None:
         """Resolve employee: cached session (+ refresh) first, else bot exchange."""
         if self.bind_telegram_token(telegram_user_id):
             try:
-                return await self.get_me()
+                employee = await self.get_me()
             except OnboardApiError as exc:
                 # Access expired and refresh failed, or unexpected error —
                 # fall through to a fresh identity exchange.
                 if exc.status_code == 403:
+                    log_identity(
+                        handler=handler,
+                        telegram_user_id=telegram_user_id,
+                        chat_id=chat_id,
+                        result="FORBIDDEN",
+                        company_id=self._company_id,
+                        status_code=403,
+                    )
                     raise
+            else:
+                log_identity(
+                    handler=handler,
+                    telegram_user_id=telegram_user_id,
+                    chat_id=chat_id,
+                    result="FOUND",
+                    employee_id=employee.id,
+                    company_id=employee.company_id,
+                )
+                return employee
 
         try:
-            return await self.authenticate_telegram(telegram_user_id)
+            employee = await self.authenticate_telegram(telegram_user_id)
         except OnboardApiError as exc:
             if exc.status_code == 404:
+                log_identity(
+                    handler=handler,
+                    telegram_user_id=telegram_user_id,
+                    chat_id=chat_id,
+                    result="NOT_FOUND",
+                    company_id=self._company_id,
+                    status_code=404,
+                )
                 return None
+            log_identity(
+                handler=handler,
+                telegram_user_id=telegram_user_id,
+                chat_id=chat_id,
+                result="FORBIDDEN" if exc.status_code == 403 else "ERROR",
+                company_id=self._company_id,
+                status_code=exc.status_code,
+            )
             raise
+        log_identity(
+            handler=handler,
+            telegram_user_id=telegram_user_id,
+            chat_id=chat_id,
+            result="FOUND",
+            employee_id=employee.id,
+            company_id=employee.company_id,
+        )
+        return employee
 
     async def get_me(self) -> EmployeeDTO:
         payload = await self._get("/api/v1/auth/me")
@@ -108,10 +158,7 @@ class OnboardApiClient:
         response = await client.post(
             "/api/v1/auth/bot/telegram",
             headers={"X-Bot-Service-Token": self._service_token},
-            json={
-                "company_id": str(self._company_id),
-                "telegram_user_id": telegram_user_id,
-            },
+            json={"telegram_user_id": telegram_user_id},
         )
         payload = self._parse(response)
         assert isinstance(payload, dict)
@@ -136,7 +183,6 @@ class OnboardApiClient:
         body: dict[str, object] = {
             "token": token,
             "telegram_user_id": telegram_user_id,
-            "company_id": str(self._company_id),
         }
         if telegram_username is not None:
             body["telegram_username"] = telegram_username

@@ -250,8 +250,9 @@ docker compose down -v       # wipe Postgres + Redis data
 | Variable | Required | Notes |
 |----------|----------|-------|
 | `BOT_TOKEN` | for live bot | From BotFather |
-| `BOT_COMPANY_ID` | for live bot | **Required** with `BOT_SERVICE_TOKEN`. One bot process = one company (see below). |
+| `BOT_COMPANY_ID` | for live bot | Optional ops metadata. **Not** used for employee identity lookup. Production Compose may still interpolate it; do not use the demo seed UUID. |
 | `BOT_SERVICE_TOKEN` | yes (API + bot) | Must be identical for API and bot; compared with `secrets.compare_digest` |
+| `BOT_IDENTITY_DEBUG` | no | Default off. Logs telegram/employee/company ids only. |
 | `BOT_WEBHOOK_URL` | webhook mode only | Public `https://…/webhook` |
 | `BOT_WEBHOOK_SECRET` | recommended for webhook | Telegram secret token header |
 | `BOT_WEBHOOK_PATH` | optional | Default `/webhook` |
@@ -260,14 +261,14 @@ docker compose down -v       # wipe Postgres + Redis data
 
 ### Bot tenancy model (F-08)
 
-`BOT_COMPANY_ID` is a **security binding**, not optional metadata:
+One **shared** Telegram bot serves every company. Tenant is `employee.company_id`
+from the bound employee row. `BOT_COMPANY_ID` is optional demo/ops metadata.
 
-- One bot **process** serves **one** company (single-tenant process architecture).
-- The API rejects bot login unless the request `company_id` **exactly equals** the server `BOT_COMPANY_ID`.
+- The only trusted Telegram identity is `message.from_user.id`.
+- Request `company_id` on bot endpoints is ignored.
 - Telegram / client-supplied company ids are **never** authorization truth.
-- Cross-tenant bot access remains impossible without a stolen service token **and** matching company binding.
-
-This is an intentional **scalability/ops** limit (run N bot processes for N companies), not a missing security control. Do **not** remove the binding to “support multi-tenant bots” without a server-side routing table that still ignores client-supplied company ids.
+- After login, JWT + RLS `enter_tenant(employee.company_id)` isolate data.
+- Binding is `/start <invite_token>`, not Web PATCH of `telegram_user_id`.
 
 ### Polling (local)
 
