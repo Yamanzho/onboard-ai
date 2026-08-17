@@ -11,7 +11,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Security / immutability intent:
-# - P0-01: API has no host port; TRUST_PROXY_HEADERS defaults true (nginx → api).
+# - P0-01: API has no host port; TRUST_PROXY_HEADERS is forced true (nginx → api).
 #           nginx.prod.conf overwrites X-Forwarded-For / X-Real-IP with $remote_addr
 #           (SEC-R1: never $proxy_add_x_forwarded_for — that preserves client spoofs).
 # - P0-02: SECRET_KEY + SUPER_ADMIN_PASSWORD required at compose interpolate time;
@@ -65,6 +65,10 @@ services:
       APP_ENV: production
       DEBUG: "false"
       SEED_DEMO: "false"
+      # F-04: trust frontend nginx overwrite of X-Real-IP / XFF. Do not inherit
+      # TRUST_PROXY_HEADERS=false from .env.example. Safe only because API
+      # host ports are empty below (unpublished; no client spoofing path).
+      TRUST_PROXY_HEADERS: "true"
       # P0-02: refuse to interpolate with missing/empty critical secrets.
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD is required for docker-compose.prod.yml}
@@ -73,9 +77,6 @@ services:
       # telegram_user_id → Employee → employee.company_id. Leave empty.
       BOT_COMPANY_ID: ${BOT_COMPANY_ID:-}
       INVITE_BASE_URL: ${INVITE_BASE_URL:?INVITE_BASE_URL is required for docker-compose.prod.yml}
-      # Trusted single-proxy mode: frontend nginx overwrites X-Real-IP / XFF.
-      # Keep API host ports empty (below). Never set true if API is published.
-      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       # SEC-R2: no POSTGRES_PASSWORD:-onboard fallback — password required below.
       # SEC-R3: runtime onboard_app; migrator onboard_owner (separate from bootstrap).
       # F-03: ONBOARD_* passwords are applied by bootstrap_rls_roles on API start.

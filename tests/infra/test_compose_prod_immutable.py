@@ -79,6 +79,7 @@ def test_prod_compose_forces_production_env_for_no_reload() -> None:
         # Ensure host .env cannot keep development / reload path.
         "APP_ENV": "development",
         "DEBUG": "true",
+        "TRUST_PROXY_HEADERS": "false",
     }
     cfg = _compose_config(prod=True, env=env)
     api_env = cfg["services"]["api"].get("environment") or {}
@@ -86,6 +87,7 @@ def test_prod_compose_forces_production_env_for_no_reload() -> None:
 
     assert api_env.get("APP_ENV") == "production"
     assert str(api_env.get("DEBUG")).lower() in {"false", "0"}
+    assert str(api_env.get("TRUST_PROXY_HEADERS")).lower() in {"true", "1"}
     assert bot_env.get("APP_ENV") == "production"
     assert str(bot_env.get("DEBUG")).lower() in {"false", "0"}
 
