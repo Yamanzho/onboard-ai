@@ -1,0 +1,223 @@
+{
+  "quiz_id": "wow-test-quiz-v1",
+  "corpus_id": "wow-test-corpus-v1",
+  "language": "ru",
+  "note": "Fixture-only dataset. OnboardAI has step_type=quiz as unstructured step JSON, not a standalone KB quiz engine. Do not invent production tables.",
+  "questions": [
+    {
+      "id": "q-easy-001",
+      "difficulty": "easy",
+      "type": "single_choice",
+      "question": "Какое оружие взял Артас Менетил в Северных землях?",
+      "options": ["Пеплоноситель", "Ледяная Скорбь", "Гром'аш", "Глаз Саргераса"],
+      "correct_indices": [1],
+      "source_articles": ["arthas"]
+    },
+    {
+      "id": "q-easy-002",
+      "difficulty": "easy",
+      "type": "true_false",
+      "question": "Мал'Ганис был тем натом, за которым Артас отправился на север после Стратхольма.",
+      "options": ["Верно", "Неверно"],
+      "correct_indices": [0],
+      "source_articles": ["arthas"]
+    },
+    {
+      "id": "q-easy-003",
+      "difficulty": "easy",
+      "type": "single_choice",
+      "question": "Где находится Ледяной Трон?",
+      "options": ["Черный храм", "Терамор", "Ледяная Корона в Нордсколе", "Штормград"],
+      "correct_indices": [2],
+      "source_articles": ["nerzhul"]
+    },
+    {
+      "id": "q-easy-004",
+      "difficulty": "easy",
+      "type": "single_choice",
+      "question": "Кто такой Гул'дан?",
+      "options": [
+        "Король Штормграда",
+        "Орочий чернокнижник и основатель Совета Теней",
+        "Архимаг Кирин-Тор",
+        "Предводитель Иллидари"
+      ],
+      "correct_indices": [1],
+      "source_articles": ["orcs-draenor"]
+    },
+    {
+      "id": "q-easy-005",
+      "difficulty": "easy",
+      "type": "true_false",
+      "question": "Иллидари — это орден охотников на демонов, собранный Иллиданом Ярость Бури.",
+      "options": ["Верно", "Неверно"],
+      "correct_indices": [0],
+      "source_articles": ["illidan"]
+    },
+    {
+      "id": "q-easy-006",
+      "difficulty": "easy",
+      "type": "single_choice",
+      "question": "Какой город-порт основала Джайна Праудмур на Калимдоре?",
+      "options": ["Оргриммар", "Даларан", "Терамор", "Луносвет"],
+      "correct_indices": [2],
+      "source_articles": ["jaina"]
+    },
+    {
+      "id": "q-easy-007",
+      "difficulty": "easy",
+      "type": "single_choice",
+      "question": "Как называлась нежить, которую Сильвана Ветрокрылая собрала после освобождения от Короля-лича?",
+      "options": ["Иллидари", "Отрекшиеся", "Кирин-Тор", "Совет Теней"],
+      "correct_indices": [1],
+      "source_articles": ["sylvanas"]
+    },
+    {
+      "id": "q-easy-008",
+      "difficulty": "easy",
+      "type": "true_false",
+      "question": "Источник Вечности был колоссальным источником магии на древнем Калимдоре.",
+      "options": ["Верно", "Неверно"],
+      "correct_indices": [0],
+      "source_articles": ["azeroth"]
+    },
+    {
+      "id": "q-easy-009",
+      "difficulty": "easy",
+      "type": "single_choice",
+      "question": "Столица Орды, основанная после Третьей войны, называется:",
+      "options": ["Штормград", "Терамор", "Оргриммар", "Даларан"],
+      "correct_indices": [2],
+      "source_articles": ["alliance-horde"]
+    },
+    {
+      "id": "q-easy-010",
+      "difficulty": "easy",
+      "type": "single_choice",
+      "question": "Что открыл Гул'дан между Дренором и Азеротом?",
+      "options": ["Ледяной Трон", "Тёмный портал", "Источник Вечности", "Черный храм"],
+      "correct_indices": [1],
+      "source_articles": ["orcs-draenor"]
+    },
+    {
+      "id": "q-medium-001",
+      "difficulty": "medium",
+      "type": "single_choice",
+      "question": "Почему Артас отправился за Мал'Ганисом после резни в Стратхольме?",
+      "options": [
+        "Чтобы вступить в Кирин-Тор",
+        "Чтобы отомстить нату и остановить чуму Плети любой ценой",
+        "Чтобы основать Терамор",
+        "Чтобы стать предводителем Иллидари"
+      ],
+      "correct_indices": [1],
+      "source_articles": ["arthas"]
+    },
+    {
+      "id": "q-medium-002",
+      "difficulty": "medium",
+      "type": "multiple_choice",
+      "question": "Какие явления прямо связаны с Нер'зулом в истории Короля-лича? Выберите все верные варианты.",
+      "options": ["Ледяной Трон", "Плеть", "Терамор", "Кил'джеден"],
+      "correct_indices": [0, 1, 3],
+      "source_articles": ["nerzhul"]
+    },
+    {
+      "id": "q-medium-003",
+      "difficulty": "medium",
+      "type": "single_choice",
+      "question": "Что такое Кровавый пакт орков Дренора?",
+      "options": [
+        "Союз Кирин-Тор с Альянсом",
+        "Питьё крови Маннорота, подчинившее кланы Пылающему Легиону",
+        "Коронация Артаса в Лордероне",
+        "Основание Отрекшихся"
+      ],
+      "correct_indices": [1],
+      "source_articles": ["orcs-draenor"]
+    },
+    {
+      "id": "q-medium-004",
+      "difficulty": "medium",
+      "type": "true_false",
+      "question": "Черный храм в Запределье стал цитаделью Иллидана и Иллидари.",
+      "options": ["Верно", "Неверно"],
+      "correct_indices": [0],
+      "source_articles": ["illidan"]
+    },
+    {
+      "id": "q-medium-005",
+      "difficulty": "medium",
+      "type": "single_choice",
+      "question": "Кем был Антонидас по отношению к Джайне Праудмур?",
+      "options": [
+        "Отцом Джайны и лордом-адмиралом Кул-Тираса",
+        "Наставником Джайны и главой Кирин-Тор в Даларане",
+        "Королём Лордерона",
+        "Вождём Орды"
+      ],
+      "correct_indices": [1],
+      "source_articles": ["jaina"]
+    },
+    {
+      "id": "q-medium-006",
+      "difficulty": "medium",
+      "type": "multiple_choice",
+      "question": "Какие события относятся к древней истории Азерота? Выберите все верные варианты.",
+      "options": ["Война Древних", "Раскол мира", "открытие Тёмного портала Гул'даном", "Источник Вечности"],
+      "correct_indices": [0, 1, 3],
+      "source_articles": ["azeroth"]
+    },
+    {
+      "id": "q-hard-001",
+      "difficulty": "hard",
+      "type": "single_choice",
+      "question": "Как связаны Нер'зул и Артас в истории Короля-лича?",
+      "options": [
+        "Нер'зул обучил Артаса магии Кирин-Тор в Даларане",
+        "Дух Нер'зула в Ледяном Троне был соединён с Артасом, взявшим Ледяную Скорбь, и вместе они стали Королём-личом",
+        "Они вместе основали Оргриммар",
+        "Артас изгнал Нер'зула из Черного храма"
+      ],
+      "correct_indices": [1],
+      "source_articles": ["arthas", "nerzhul"]
+    },
+    {
+      "id": "q-hard-002",
+      "difficulty": "hard",
+      "type": "multiple_choice",
+      "question": "Как Гул'дан связан с Пылающим Легионом? Выберите все верные варианты.",
+      "options": [
+        "Он возглавил Совет Теней и вёл кланы к скверне",
+        "Он открыл Тёмный портал по воле Легиона",
+        "Он сел на Ледяной Трон в Нордсколе",
+        "Он способствовал вторжению орков в Азерот"
+      ],
+      "correct_indices": [0, 1, 3],
+      "source_articles": ["orcs-draenor"]
+    },
+    {
+      "id": "q-hard-003",
+      "difficulty": "hard",
+      "type": "single_choice",
+      "question": "Как связаны падение Лордерона и появление Отрекшихся?",
+      "options": [
+        "Джайна основала Отрекшихся после гибели Терамора",
+        "После того как Артас разрушил Лордерон и убил Сильвану, она позже освободила часть нежити Плети и создала Отрекшихся",
+        "Гул'дан короновал Сильвану в Штормграде",
+        "Иллидари заняли столицу Лордерона"
+      ],
+      "correct_indices": [1],
+      "source_articles": ["arthas", "sylvanas"]
+    },
+    {
+      "id": "q-hard-004",
+      "difficulty": "hard",
+      "type": "true_false",
+      "question": "Джайна Праудмур связана с Далараном как маг Кирин-Тор, а не как основательница Оргриммара.",
+      "options": ["Верно", "Неверно"],
+      "correct_indices": [0],
+      "source_articles": ["jaina", "alliance-horde"]
+    }
+  ]
+}

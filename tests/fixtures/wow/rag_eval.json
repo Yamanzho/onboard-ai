@@ -1,0 +1,224 @@
+{
+  "eval_id": "wow-test-rag-eval-v1",
+  "corpus_id": "wow-test-corpus-v1",
+  "language": "ru",
+  "note": "Evaluation-only. Do not treat as production retrieval config. expected_articles are corpus ids, not DB UUIDs.",
+  "summary": {
+    "answerable": 12,
+    "ambiguous": 8,
+    "unanswerable": 10,
+    "total": 30
+  },
+  "cases": [
+    {
+      "id": "arthas-001",
+      "question": "Что произошло с Артасом после того, как он взял Ледяную Скорбь?",
+      "expected_behavior": "answer",
+      "expected_articles": ["arthas"],
+      "difficulty": "easy"
+    },
+    {
+      "id": "arthas-002",
+      "question": "Почему Артас отправился за Мал'Ганисом?",
+      "expected_behavior": "answer",
+      "expected_articles": ["arthas"],
+      "difficulty": "easy"
+    },
+    {
+      "id": "arthas-003",
+      "question": "Что случилось при падении Лордерона?",
+      "expected_behavior": "answer",
+      "expected_articles": ["arthas"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "nerzhul-001",
+      "question": "Кто такой Нер'зул и какую роль он сыграл в создании Короля-лича?",
+      "expected_behavior": "answer",
+      "expected_articles": ["nerzhul"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "nerzhul-002",
+      "question": "Что такое Плеть?",
+      "expected_behavior": "answer",
+      "expected_articles": ["nerzhul"],
+      "difficulty": "easy"
+    },
+    {
+      "id": "nerzhul-003",
+      "question": "Что представляет собой Ледяной Трон?",
+      "expected_behavior": "answer",
+      "expected_articles": ["nerzhul"],
+      "difficulty": "easy"
+    },
+    {
+      "id": "orcs-001",
+      "question": "Кто такой Гул'дан?",
+      "expected_behavior": "answer",
+      "expected_articles": ["orcs-draenor"],
+      "difficulty": "easy"
+    },
+    {
+      "id": "orcs-002",
+      "question": "Как Гул'дан связан с Пылающим Легионом?",
+      "expected_behavior": "answer",
+      "expected_articles": ["orcs-draenor"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "illidan-001",
+      "question": "Что представляли собой Иллидари?",
+      "expected_behavior": "answer",
+      "expected_articles": ["illidan"],
+      "difficulty": "easy"
+    },
+    {
+      "id": "jaina-001",
+      "question": "Как Джайна связана с Далараном?",
+      "expected_behavior": "answer",
+      "expected_articles": ["jaina"],
+      "difficulty": "easy"
+    },
+    {
+      "id": "sylvanas-001",
+      "question": "Кто такие Отрекшиеся и как Сильвана стала их предводительницей?",
+      "expected_behavior": "answer",
+      "expected_articles": ["sylvanas"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "azeroth-001",
+      "question": "Что такое Источник Вечности и чем закончилась Война Древних?",
+      "expected_behavior": "answer",
+      "expected_articles": ["azeroth"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "amb-001",
+      "question": "Как связаны Артас и Нер'зул?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["arthas", "nerzhul"],
+      "difficulty": "hard"
+    },
+    {
+      "id": "amb-002",
+      "question": "Как связаны падение Лордерона и появление Отрекшихся?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["arthas", "sylvanas"],
+      "difficulty": "hard"
+    },
+    {
+      "id": "amb-003",
+      "question": "Как Пылающий Легион связан и с Нер'зулом, и с орками Дренора?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["nerzhul", "orcs-draenor"],
+      "difficulty": "hard"
+    },
+    {
+      "id": "amb-004",
+      "question": "Как Джайна Праудмур связана с Альянсом?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["jaina", "alliance-horde"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "amb-005",
+      "question": "Как Сильвана Ветрокрылая связана с Артасом Менетилом?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["sylvanas", "arthas"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "amb-006",
+      "question": "Как Тёмный портал связан с древними конфликтами Азерота?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["orcs-draenor", "azeroth"],
+      "difficulty": "hard"
+    },
+    {
+      "id": "amb-007",
+      "question": "Как Иллидан и охотники на демонов связаны с войной против Легиона на Кель'данасе?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["illidan", "azeroth"],
+      "difficulty": "hard"
+    },
+    {
+      "id": "amb-008",
+      "question": "Как связаны Штормград и Терамор в истории Альянса?",
+      "expected_behavior": "ambiguous",
+      "expected_articles": ["alliance-horde", "jaina"],
+      "difficulty": "medium"
+    },
+    {
+      "id": "unknown-001",
+      "question": "Сколько золота зарабатывал Артас в месяц?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-002",
+      "question": "Какой точный возраст Артаса был в момент, когда он взял Ледяную Скорбь?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-003",
+      "question": "Какая зарплата была у Джайны Праудмур в Кирин-Тор?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-004",
+      "question": "Какой номер телефона у Тралла?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-005",
+      "question": "Какова текущая цена подписки World of Warcraft?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-006",
+      "question": "Что выйдет в следующем патче World of Warcraft?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-007",
+      "question": "Какой рейд будет следующим в актуальном дополнении?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-008",
+      "question": "Какой сейчас актуальный PvP рейтинг Гладиатора?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-009",
+      "question": "Какой email и игровой аккаунт использует Сильвана Ветрокрылая?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    },
+    {
+      "id": "unknown-010",
+      "question": "Кто такой Зарток Несуществующий из выдуманной фракции Небесный Картель?",
+      "expected_behavior": "no_answer",
+      "expected_articles": [],
+      "difficulty": "easy"
+    }
+  ]
+}
