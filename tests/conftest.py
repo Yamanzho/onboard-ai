@@ -34,12 +34,12 @@ from app.services.knowledge.tag_service import TagService
 @pytest.fixture(autouse=True)
 def telegram_conversation_store():
     """Keep Telegram conversation pointers off live Redis during tests."""
+    import app.bot.services.ai_conversation as store_mod
     from app.bot.services.ai_conversation import (
         MemoryRedisClient,
         TelegramConversationStore,
         reset_telegram_conversation_store_for_tests,
     )
-    import app.bot.services.ai_conversation as store_mod
 
     store = TelegramConversationStore(redis_client=MemoryRedisClient())
     store_mod._store = store

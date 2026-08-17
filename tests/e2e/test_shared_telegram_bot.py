@@ -17,6 +17,7 @@ from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from tests.conftest import _uow_factory, auth_header
 
+
 def _tg_id(bucket: int) -> int:
     return uuid4().int % 1_000_000_000 + bucket
 
