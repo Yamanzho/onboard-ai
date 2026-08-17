@@ -86,7 +86,10 @@ def test_auth_cookies_secure_in_production() -> None:
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_prod_compose_fail_closed_network_surface() -> None:
     """F-04/F-07: API/DB/Redis unpublished; frontend localhost-only; trust+unpublished API."""
-    cfg = _compose_config(prod=True, env=_COMPOSE_SECRETS)
+    cfg = _compose_config(
+        prod=True,
+        env={**_COMPOSE_SECRETS, "TRUST_PROXY_HEADERS": "false"},
+    )
     api = cfg["services"]["api"]
     db = cfg["services"]["db"]
     redis = cfg["services"]["redis"]

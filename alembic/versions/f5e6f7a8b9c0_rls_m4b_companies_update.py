@@ -20,6 +20,10 @@ depends_on = None
 
 def upgrade() -> None:
     op.execute('DROP POLICY IF EXISTS tenant_isolation ON "companies"')
+    op.execute('DROP POLICY IF EXISTS companies_select ON "companies"')
+    op.execute('DROP POLICY IF EXISTS companies_update ON "companies"')
+    op.execute('DROP POLICY IF EXISTS companies_insert ON "companies"')
+    op.execute('DROP POLICY IF EXISTS companies_delete ON "companies"')
     op.execute(
         """
         CREATE POLICY companies_select ON "companies"

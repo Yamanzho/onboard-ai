@@ -3,13 +3,8 @@ set -eu
 
 if [ -z "${BOT_TOKEN:-}" ]; then
   echo "[bot] BOT_TOKEN empty — bot idle (set BOT_TOKEN in .env and restart to enable Telegram)."
-  echo "[bot] BOT_COMPANY_ID=${BOT_COMPANY_ID:-unset}"
+  echo "[bot] BOT_COMPANY_ID=${BOT_COMPANY_ID:-unset} (optional; not used for identity lookup)"
   exec sleep infinity
-fi
-
-if [ -z "${BOT_COMPANY_ID:-}" ]; then
-  echo "[bot] BOT_COMPANY_ID is required when BOT_TOKEN is set"
-  exit 1
 fi
 
 if [ -z "${BOT_SERVICE_TOKEN:-}" ]; then

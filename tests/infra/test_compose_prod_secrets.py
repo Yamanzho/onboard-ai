@@ -75,7 +75,6 @@ def test_prod_compose_passes_with_required_secrets() -> None:
         "ONBOARD_OWNER_PASSWORD",
         "ONBOARD_APP_PASSWORD",
         "BOT_SERVICE_TOKEN",
-        "BOT_COMPANY_ID",
         "INVITE_BASE_URL",
     ],
 )
@@ -86,6 +85,27 @@ def test_prod_compose_fails_when_critical_secret_missing(missing_key: str) -> No
     assert proc.returncode != 0
     combined = f"{proc.stdout}\n{proc.stderr}"
     assert missing_key in combined
+
+
+@pytest.mark.skipif(not _compose_available(), reason="docker not available")
+def test_prod_compose_allows_empty_bot_company_id() -> None:
+    """Shared bot: BOT_COMPANY_ID is optional metadata, not a tenant selector."""
+    prod = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    assert "BOT_COMPANY_ID: ${BOT_COMPANY_ID:-}" in prod
+    for line in prod.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("#") or "BOT_COMPANY_ID" not in stripped:
+            continue
+        assert ":?" not in stripped
+
+    env = {**os.environ, **_COMPOSE_SECRETS}
+    env["BOT_COMPANY_ID"] = ""
+    cfg = _compose_config(prod=True, env=env)
+    api_env = cfg["services"]["api"].get("environment") or {}
+    bot_env = cfg["services"]["bot"].get("environment") or {}
+    assert api_env.get("BOT_COMPANY_ID") in (None, "")
+    assert bot_env.get("BOT_COMPANY_ID") in (None, "")
+    assert api_env.get("BOT_SERVICE_TOKEN") == _COMPOSE_SECRETS["BOT_SERVICE_TOKEN"]
 
 
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")

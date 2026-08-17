@@ -23,6 +23,9 @@ from app.db.uow import UnitOfWork
 from tests.conftest import auth_header
 
 
+pytestmark = pytest.mark.security
+
+
 def _uow() -> UnitOfWork:
     return UnitOfWork(session_factory=db_session.async_session_factory)
 
@@ -51,6 +54,7 @@ async def _set_tenant(session: AsyncSession, company_id) -> None:
     await session.execute(text("SELECT set_config('app.auth_mode', '', true)"))
     await session.execute(text("SELECT set_config('app.session_mode', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_employee_id', '', true)"))
+    await session.execute(text("SELECT set_config('app.auth_telegram_user_id', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_invite_token_hash', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_super_admin_id', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_super_admin_email', '', true)"))
@@ -62,6 +66,7 @@ async def _set_platform(session: AsyncSession) -> None:
     await session.execute(text("SELECT set_config('app.auth_mode', '', true)"))
     await session.execute(text("SELECT set_config('app.session_mode', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_employee_id', '', true)"))
+    await session.execute(text("SELECT set_config('app.auth_telegram_user_id', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_invite_token_hash', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_super_admin_id', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_super_admin_email', '', true)"))
@@ -74,6 +79,7 @@ async def _clear_gucs(session: AsyncSession) -> None:
         "app.auth_mode",
         "app.session_mode",
         "app.auth_employee_id",
+        "app.auth_telegram_user_id",
         "app.auth_invite_token_hash",
         "app.auth_super_admin_id",
         "app.auth_super_admin_email",
@@ -88,6 +94,7 @@ async def _set_auth(
     session: AsyncSession,
     *,
     employee_id=None,
+    telegram_user_id: int | None = None,
     invite_token_hash: str | None = None,
     super_admin_id=None,
     super_admin_email: str | None = None,
@@ -99,6 +106,10 @@ async def _set_auth(
     await session.execute(
         text("SELECT set_config('app.auth_employee_id', :v, true)"),
         {"v": str(employee_id) if employee_id is not None else ""},
+    )
+    await session.execute(
+        text("SELECT set_config('app.auth_telegram_user_id', :v, true)"),
+        {"v": str(telegram_user_id) if telegram_user_id is not None else ""},
     )
     await session.execute(
         text("SELECT set_config('app.auth_invite_token_hash', :v, true)"),

@@ -120,6 +120,9 @@ async def bootstrap() -> None:
         dbname = (urlparse(url).path or "/onboard_ai").lstrip("/") or "onboard_ai"
         await conn.execute(f'GRANT CONNECT ON DATABASE "{dbname}" TO onboard_owner')
         await conn.execute(f'GRANT CONNECT ON DATABASE "{dbname}" TO onboard_app')
+        # CREATE SCHEMA in Alembic (f1a2b3c4d5e6) needs CREATE on the database.
+        # onboard_app stays CONNECT-only on the database.
+        await conn.execute(f'GRANT CREATE ON DATABASE "{dbname}" TO onboard_owner')
         await conn.execute("GRANT USAGE, CREATE ON SCHEMA public TO onboard_owner")
         await conn.execute("GRANT USAGE ON SCHEMA public TO onboard_app")
         await conn.execute("GRANT ALL ON SCHEMA public TO onboard_owner")

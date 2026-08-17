@@ -80,14 +80,14 @@ When `APP_ENV=production`, the API **fail-fast** rejects missing or obviously we
 |----------|------|
 | `SECRET_KEY` | Required; ≥ 32 chars; not a known default/placeholder |
 | `SUPER_ADMIN_PASSWORD` | Required; ≥ 12 chars; not a known default/placeholder |
-| `BOT_SERVICE_TOKEN` | Required in production Compose; ≥ 24 chars; placeholders rejected; requires `BOT_COMPANY_ID` |
+| `BOT_SERVICE_TOKEN` | Required in production Compose; ≥ 24 chars; placeholders rejected. Authenticates the bot process, not a tenant. |
 | `REDIS_URL` / `REDIS_PASSWORD` | Redis URL must embed a strong password (≥ 12 chars) |
 | `DATABASE_URL` / `ONBOARD_APP_PASSWORD` | Runtime DB password required; ≥ 12 chars; not a known default |
 | `MIGRATION_DATABASE_URL` / `ONBOARD_OWNER_PASSWORD` | Migrator password required; ≥ 12 chars; not a known default |
 | `INVITE_BASE_URL` | Must be `https://…` |
 | `SEED_DEMO` | Forced `false` in production Compose; entrypoint refuses `true` |
 
-`docker-compose.prod.yml` also refuses to interpolate if `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_OWNER_PASSWORD`, `ONBOARD_APP_PASSWORD`, `BOT_SERVICE_TOKEN`, or `BOT_COMPANY_ID` is missing/empty. `BOT_COMPANY_ID` must **not** be the demo seed UUID `11111111-1111-4111-8111-111111111111`.
+`docker-compose.prod.yml` also refuses to interpolate if `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_OWNER_PASSWORD`, `ONBOARD_APP_PASSWORD`, `BOT_SERVICE_TOKEN`, or `INVITE_BASE_URL` is missing/empty. `BOT_COMPANY_ID` is optional (`${BOT_COMPANY_ID:-}`). If set in production, it must **not** be the demo seed UUID `11111111-1111-4111-8111-111111111111`. Identity is `telegram_user_id` → Employee → `employee.company_id`.
 
 Generate secrets (do not copy placeholders from `.env.example` into production):
 
@@ -155,7 +155,7 @@ Full procedure (backup, verification, rollback; **no** volume wipe as rotation):
 #   ONBOARD_OWNER_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
 #   ONBOARD_APP_PASSWORD=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
 #   BOT_SERVICE_TOKEN=$(python -c "import secrets; print(secrets.token_urlsafe(32))")
-#   BOT_COMPANY_ID=$(uuidgen)   # replace with real company UUID after create
+#   BOT_COMPANY_ID=             # optional ops metadata; leave empty for the shared bot
 # Add those to .env. APP_ENV/DEBUG/SEED_DEMO are forced by compose.prod.yml.
 # Weak/default secrets are rejected at API startup (Settings fail-fast).
 
@@ -172,7 +172,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 - **No** source bind-mounts — application code is baked into the image (`Dockerfile` `COPY`)
 - Forces `APP_ENV=production`, `DEBUG=false`, and `SEED_DEMO=false`
-- Requires `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_*_PASSWORD`, `BOT_SERVICE_TOKEN`, `BOT_COMPANY_ID`, and `INVITE_BASE_URL` at compose interpolate time (`:?`)
+- Requires `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_*_PASSWORD`, `BOT_SERVICE_TOKEN`, and `INVITE_BASE_URL` at compose interpolate time (`:?`). `BOT_COMPANY_ID` is optional (`${BOT_COMPANY_ID:-}`)
 - API Settings fail-fast on weak/default `SECRET_KEY` / `SUPER_ADMIN_PASSWORD` / unauthenticated Redis / weak Postgres password
 - API: `uvicorn … --workers ${UVICORN_WORKERS:-2}` — **no** `--reload`
 - Bot: `python -m app.bot` from the image (no reload)
@@ -266,8 +266,9 @@ docker compose down -v       # wipe Postgres + Redis data
 | Variable | Required | Notes |
 |----------|----------|-------|
 | `BOT_TOKEN` | for live bot | From BotFather |
-| `BOT_COMPANY_ID` | for live bot | **Required** with `BOT_SERVICE_TOKEN`. One bot process = one company (see below). |
+| `BOT_COMPANY_ID` | no | Optional ops metadata. **Not** used for employee identity lookup. Production Compose interpolates `${BOT_COMPANY_ID:-}` (empty is valid). If set, do not use the demo seed UUID. |
 | `BOT_SERVICE_TOKEN` | yes (API + bot) | Must be identical for API and bot; compared with `secrets.compare_digest` |
+| `BOT_IDENTITY_DEBUG` | no | Default off. Logs telegram/employee/company ids only. |
 | `BOT_WEBHOOK_URL` | webhook mode only | Public `https://…/webhook` |
 | `BOT_WEBHOOK_SECRET` | recommended for webhook | Telegram secret token header |
 | `BOT_WEBHOOK_PATH` | optional | Default `/webhook` |
@@ -276,14 +277,14 @@ docker compose down -v       # wipe Postgres + Redis data
 
 ### Bot tenancy model (F-08)
 
-`BOT_COMPANY_ID` is a **security binding**, not optional metadata:
+One **shared** Telegram bot serves every company. Tenant is `employee.company_id`
+from the bound employee row. `BOT_COMPANY_ID` is optional demo/ops metadata.
 
-- One bot **process** serves **one** company (single-tenant process architecture).
-- The API rejects bot login unless the request `company_id` **exactly equals** the server `BOT_COMPANY_ID`.
+- The only trusted Telegram identity is `message.from_user.id`.
+- Request `company_id` on bot endpoints is ignored.
 - Telegram / client-supplied company ids are **never** authorization truth.
-- Cross-tenant bot access remains impossible without a stolen service token **and** matching company binding.
-
-This is an intentional **scalability/ops** limit (run N bot processes for N companies), not a missing security control. Do **not** remove the binding to “support multi-tenant bots” without a server-side routing table that still ignores client-supplied company ids.
+- After login, JWT + RLS `enter_tenant(employee.company_id)` isolate data.
+- Binding is `/start <invite_token>`, not Web PATCH of `telegram_user_id`.
 
 ### Polling (local)
 
@@ -352,7 +353,7 @@ AUTH_PASSWORD=<strong password — shared login disabled in production anyway>
 BOT_SERVICE_TOKEN=<python -c "import secrets; print(secrets.token_urlsafe(32))">
 BOT_TOKEN=<from BotFather>
 TELEGRAM_BOT_USERNAME=<botfather username without @>
-BOT_COMPANY_ID=<uuidgen then replace with real company UUID — never the demo seed id>
+BOT_COMPANY_ID=                 # optional; empty for shared bot — never the demo seed id
 BOT_WEBHOOK_URL=https://onboardai.aoe.kz/webhook
 BOT_WEBHOOK_SECRET=<random>
 REDIS_PASSWORD=<python -c "import secrets; print(secrets.token_urlsafe(32))">
@@ -383,7 +384,7 @@ docker compose logs -f api
 Walk this list on a new VPS after cloning the repo. Automated CI covers compose config, Docker image build, pytest (including security + golden-path + tenant isolation), and `/ready` behavior — not live DNS, Telegram, or backups.
 
 1. **Configure `.env`** — `cp .env.example .env`, then generate unique secrets (see §2 Production secrets). Set `INVITE_BASE_URL=https://<pilot-host>`. Do not copy placeholders. `SEED_DEMO=false`.
-2. **Validate secrets** — production Compose interpolates required variables (`:?`). API Settings **fail-fast** on weak/default `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, Redis password, Postgres passwords, `BOT_SERVICE_TOKEN`, `BOT_COMPANY_ID` (must not be the demo seed UUID). `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must succeed.
+2. **Validate secrets** — production Compose interpolates required variables (`:?`). `BOT_COMPANY_ID` is optional (`:-`). API Settings **fail-fast** on weak/default `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, Redis password, Postgres passwords, `BOT_SERVICE_TOKEN`. If `BOT_COMPANY_ID` is set, it must not be the demo seed UUID. `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must succeed.
 3. **Start production compose** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Confirm API/DB/Redis have **no** public host ports; frontend is `127.0.0.1:3000`.
 4. **Run migrations** — `docker/entrypoint-api.sh` runs `alembic upgrade head` on API start. Optional check: `docker compose exec api alembic current` (expect a single head).
 5. **Verify health (liveness)** — `curl -fsS http://127.0.0.1:3000/health` → `{"status":"ok"}`. This only means the API process is up.
@@ -391,7 +392,7 @@ Walk this list on a new VPS after cloning the repo. Automated CI covers compose 
 7. **Configure nginx** — copy `deploy/nginx/onboardai.aoe.kz.conf` (HTTP / ACME bootstrap). See [deploy/nginx/README.md](deploy/nginx/README.md).
 8. **Configure HTTPS** — certbot, then replace with `deploy/nginx/onboardai.aoe.kz.https.conf` (HTTPS-only + HSTS). `curl -fsS https://<pilot-host>/ready`.
 9. **Verify application** — Super Admin login at `/platform/login`, then the pilot checklist: [production-pilot-golden-path.md](docs/runbooks/production-pilot-golden-path.md). Automated coverage: `tests/e2e/test_golden_path.py`.
-10. **Verify Telegram** — set `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, real `BOT_COMPANY_ID`, matching `BOT_SERVICE_TOKEN`. Confirm bot logs (polling or webhook). Live Bot API cannot be asserted in CI.
+10. **Verify Telegram** — set `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, matching `BOT_SERVICE_TOKEN`. Identity is `telegram_user_id` → Employee → `employee.company_id`. `BOT_COMPANY_ID` is optional ops metadata. Confirm bot logs (polling or webhook). Live Bot API cannot be asserted in CI.
 11. **Verify backup** — follow [postgres-backup.md](docs/runbooks/postgres-backup.md) (`pg_dump`, off-box copy, encryption, restore drill). The app does not ship backup workers.
 
 ```bash
@@ -429,33 +430,26 @@ Documentation is not a substitute for the compose port resets and localhost bind
 
 ### 5.4 Nginx reverse proxy (TLS)
 
+Canonical cutover (DNS, HTTP-first, Certbot, `INVITE_BASE_URL`):
+[`docs/deployment/https.md`](docs/deployment/https.md).
+
+Host site file (HTTP-first, no certificate paths until Certbot runs):
+`deploy/nginx/onboardai.aoe.kz.conf`.
+
 Terminate TLS on the host and proxy to the Compose **frontend** (`127.0.0.1:3000`). Prefer this over exposing the API. The frontend container (`nginx.prod.conf`) already overwrites `X-Real-IP` / `X-Forwarded-For` with `$remote_addr` when talking to the API (SEC-R1) and sends a restrictive Content-Security-Policy (F-06).
 
 If you also set those headers on the host edge (or if you ever proxy `/api` to the API yourself), use the same **overwrite** contract — never `$proxy_add_x_forwarded_for`, which preserves a client-spoofed `X-Forwarded-For` and can reintroduce a rate-limit bypass when `TRUST_PROXY_HEADERS=true`.
 
-Example site config (`/etc/nginx/sites-available/onboard-ai`):
+Phase 1 HTTP site (shipped; Certbot later adds :443). Do **not** copy a `ssl_certificate` block before files exist:
 
 ```nginx
 server {
     listen 80;
-    server_name onboard.example.com;
-    return 301 https://$host$request_uri;
-}
+    server_name onboardai.aoe.kz;
 
-server {
-    listen 443 ssl http2;
-    server_name onboard.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/onboard.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/onboard.example.com/privkey.pem;
-    ssl_protocols       TLSv1.2 TLSv1.3;
-
-    # Enable HSTS only on this HTTPS server (HTTP already redirects).
-    # Do not add includeSubDomains until every subdomain is on HTTPS.
-    add_header Strict-Transport-Security "max-age=31536000" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "DENY" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
 
     # Admin UI + /api via Compose frontend (frontend nginx → api:8000).
     # SEC-R1: overwrite client IP headers with $remote_addr — do NOT use
@@ -464,6 +458,7 @@ server {
     # trusted proxy; never publish API:8000 to the public internet.
     location / {
         proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
@@ -473,6 +468,7 @@ server {
     # Telegram webhook → bot container (127.0.0.1 bind only)
     location /webhook {
         proxy_pass http://127.0.0.1:8081/webhook;
+        proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $remote_addr;
@@ -481,17 +477,24 @@ server {
 }
 ```
 
+Manual production steps (do not run from this documentation task):
+
 ```bash
-sudo ln -s /etc/nginx/sites-available/onboard-ai /etc/nginx/sites-enabled/
-sudo apt-get install -y certbot python3-certbot-nginx
-sudo certbot --nginx -d onboard.example.com
+sudo cp /opt/onboard-ai/deploy/nginx/onboardai.aoe.kz.conf \
+  /etc/nginx/sites-available/onboardai.aoe.kz
+sudo ln -sf /etc/nginx/sites-available/onboardai.aoe.kz /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
+sudo apt-get install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d onboardai.aoe.kz
 ```
 
-Then set `BOT_WEBHOOK_URL=https://onboard.example.com/webhook` and restart bot:
+Then set `INVITE_BASE_URL=https://onboardai.aoe.kz` in the VPS `.env` and restart **api**.
+After certificates exist, replace the Certbot-patched site with
+`deploy/nginx/onboardai.aoe.kz.https.conf` (HTTP→HTTPS, TLS 1.2/1.3, HSTS).
+If Telegram webhook mode is used, set `BOT_WEBHOOK_URL=https://onboardai.aoe.kz/webhook` and recreate **bot** only:
 
 ```bash
-docker compose up -d --force-recreate bot
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate bot
 docker compose logs -f bot
 ```
 
@@ -535,7 +538,7 @@ cd frontend && npm install && npm run dev
 | `/ready` returns 503 | Postgres down, or Redis down in production (`APP_ENV=production`) |
 | Login fails | Use **employee UUID**, not email; password = `AUTH_PASSWORD` |
 | Bot idle | `BOT_TOKEN` empty — expected; set token and recreate bot |
-| Bot can't auth employee | `telegram_user_id` mismatch; `BOT_COMPANY_ID` wrong; `BOT_SERVICE_TOKEN` mismatch |
+| Bot can't auth employee | `telegram_user_id` mismatch; employee not active; `BOT_SERVICE_TOKEN` mismatch |
 | Webhook not receiving | Public HTTPS, path, firewall, `getWebhookInfo` via Bot API |
 | Port in use | Stop host `uvicorn`/`vite` or change `API_PORT` / `FRONTEND_PORT` |
 
@@ -547,7 +550,7 @@ cd frontend && npm install && npm run dev
 - [ ] Strong unique `SUPER_ADMIN_PASSWORD` (≥12 chars; not a default/placeholder)
 - [ ] Strong `AUTH_PASSWORD` if still used for any legacy bootstrap (shared login is off in production)
 - [ ] Unique `BOT_SERVICE_TOKEN` (≥24 chars; not a placeholder)
-- [ ] `BOT_COMPANY_ID` is the real pilot company UUID (not the demo seed id)
+- [ ] `BOT_COMPANY_ID` optional (`${BOT_COMPANY_ID:-}`); if set, not the demo seed id
 - [ ] `TELEGRAM_BOT_USERNAME` set for employee invite deep links
 - [ ] Strong unique `POSTGRES_PASSWORD` (≥12 chars; not `onboard` / other defaults)
 - [ ] Strong unique `ONBOARD_OWNER_PASSWORD` / `ONBOARD_APP_PASSWORD` (distinct from bootstrap)

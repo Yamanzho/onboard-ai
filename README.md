@@ -36,7 +36,8 @@ Production-style Compose (immutable images; API/DB/Redis internal-only; frontend
 # Set REDIS_PASSWORD + POSTGRES_PASSWORD + ONBOARD_*_PASSWORD + strong SECRET_KEY
 # + SUPER_ADMIN_PASSWORD in .env first (see .env.example / DEPLOYMENT.md).
 # Placeholders and defaults are rejected in production.
-# Put a TLS terminator in front of 127.0.0.1:3000 (see DEPLOYMENT.md §5.3).
+# Put a TLS terminator in front of 127.0.0.1:3000
+# (see docs/deployment/https.md and DEPLOYMENT.md §5.3).
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 Details: [DEPLOYMENT.md](DEPLOYMENT.md). Postgres password rotation on an existing volume: [docs/runbooks/postgres-password-rotation.md](docs/runbooks/postgres-password-rotation.md).
@@ -78,7 +79,7 @@ docker compose down
 | Variable | Purpose |
 |----------|---------|
 | `BOT_TOKEN` | From [@BotFather](https://t.me/BotFather) |
-| `BOT_COMPANY_ID` | Tenant UUID (demo seed default above) |
+| `BOT_COMPANY_ID` | Optional demo/ops metadata (not identity) |
 | `BOT_SERVICE_TOKEN` | Shared secret for `POST /api/v1/auth/bot/telegram` (must match API) |
 
 ### Local testing (polling — recommended)
@@ -117,7 +118,7 @@ Webhook mode is selected automatically when `BOT_WEBHOOK_URL` is non-empty; othe
 
 ### Manual bot checklist
 
-1. Employee exists with your `telegram_user_id` and status `active` in `BOT_COMPANY_ID`.
+1. Employee is **active** with your Telegram id bound via `/start <invite_token>` (Web `telegram_user_id` is not binding).
 2. Published program assigned to that employee.
 3. In Telegram: `/start` → open **Мой онбординг** → complete each step.
 4. In Admin: Dashboard / Assignments show progress / completed.

@@ -11,7 +11,7 @@
 #   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 #
 # Security / immutability intent:
-# - P0-01: API has no host port; TRUST_PROXY_HEADERS defaults true (nginx → api).
+# - P0-01: API has no host port; TRUST_PROXY_HEADERS is forced true (nginx → api).
 #           nginx.prod.conf overwrites X-Forwarded-For / X-Real-IP with $remote_addr
 #           (SEC-R1: never $proxy_add_x_forwarded_for — that preserves client spoofs).
 # - P0-02: SECRET_KEY + SUPER_ADMIN_PASSWORD required at compose interpolate time;
@@ -65,17 +65,18 @@ services:
       APP_ENV: production
       DEBUG: "false"
       SEED_DEMO: "false"
+      # F-04: trust frontend nginx overwrite of X-Real-IP / XFF. Do not inherit
+      # TRUST_PROXY_HEADERS=false from .env.example. Safe only because API
+      # host ports are empty below (unpublished; no client spoofing path).
+      TRUST_PROXY_HEADERS: "true"
       # P0-02: refuse to interpolate with missing/empty critical secrets.
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD is required for docker-compose.prod.yml}
       BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN:?BOT_SERVICE_TOKEN is required for docker-compose.prod.yml}
-      # No demo-seed default. Use the real pilot tenant UUID (after company create,
-      # or a temporary uuidgen value on first boot — then replace and recreate).
-      BOT_COMPANY_ID: ${BOT_COMPANY_ID:?BOT_COMPANY_ID is required for docker-compose.prod.yml}
+      # Optional demo/ops metadata only. Shared-bot identity is
+      # telegram_user_id → Employee → employee.company_id. Leave empty.
+      BOT_COMPANY_ID: ${BOT_COMPANY_ID:-}
       INVITE_BASE_URL: ${INVITE_BASE_URL:?INVITE_BASE_URL is required for docker-compose.prod.yml}
-      # Trusted single-proxy mode: frontend nginx overwrites X-Real-IP / XFF.
-      # Keep API host ports empty (below). Never set true if API is published.
-      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-true}
       # SEC-R2: no POSTGRES_PASSWORD:-onboard fallback — password required below.
       # SEC-R3: runtime onboard_app; migrator onboard_owner (separate from bootstrap).
       # F-03: ONBOARD_* passwords are applied by bootstrap_rls_roles on API start.
@@ -103,7 +104,8 @@ services:
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
       BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN:?BOT_SERVICE_TOKEN is required for docker-compose.prod.yml}
-      BOT_COMPANY_ID: ${BOT_COMPANY_ID:?BOT_COMPANY_ID is required for docker-compose.prod.yml}
+      # Optional demo/ops metadata only. Not a tenant bind for the shared bot.
+      BOT_COMPANY_ID: ${BOT_COMPANY_ID:-}
       INVITE_BASE_URL: ${INVITE_BASE_URL:?INVITE_BASE_URL is required for docker-compose.prod.yml}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       # R-AUDIT-02: bot does not open DB connections (HTTP → API only), but
