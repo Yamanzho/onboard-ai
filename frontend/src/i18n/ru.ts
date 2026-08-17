@@ -110,6 +110,7 @@ export const ru = {
     view: 'Просмотр',
     search: 'Поиск',
     block: 'Заблокировать',
+    restore: 'Восстановить',
     activate: 'Активировать',
     publish: 'Опубликовать',
     archive: 'В архив',
@@ -744,6 +745,9 @@ export const ru = {
         lastLogin: 'Последний вход',
         resendInvite: 'Повторить приглашение',
         blockConfirm: 'Заблокировать {name}?',
+        restoreConfirm: 'Восстановить сотрудника {name}?',
+        restoreSuccess: 'Сотрудник {name} восстановлен.',
+        restoreFailed: 'Не удалось восстановить сотрудника',
         resendFailed: 'Не удалось отправить приглашение',
         inviteEmailSent: 'Письмо с приглашением отправлено на {email}.',
         inviteManualUrl:
@@ -781,6 +785,9 @@ export const ru = {
       resendInvite: 'Повторить приглашение',
       blockConfirm:
         'Заблокировать {name}? Пользователь будет архивирован и не сможет войти.',
+      restoreConfirm: 'Восстановить сотрудника {name}?',
+      restoreSuccess: 'Сотрудник {name} восстановлен.',
+      restoreFailed: 'Не удалось восстановить сотрудника',
       resendFailed: 'Не удалось отправить приглашение',
       inviteEmailSent: 'Письмо с приглашением отправлено на {email}.',
       inviteManualUrl:

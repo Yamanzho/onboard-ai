@@ -43,7 +43,8 @@ export function SuperAdminUsersPage() {
   )
 
   const { data, isLoading, error } = usePlatformUsers(listParams)
-  const { update, block, resendInvite } = usePlatformUserMutations()
+  const { update, block, restore, resendInvite } = usePlatformUserMutations()
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null)
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -61,6 +62,7 @@ export function SuperAdminUsersPage() {
   async function onRoleChange(user: PlatformUser, nextRole: string) {
     if (nextRole === user.role) return
     setActionError(null)
+    setActionSuccess(null)
     setBusyId(user.id)
     try {
       await update.mutateAsync({
@@ -76,6 +78,7 @@ export function SuperAdminUsersPage() {
 
   async function onResend(user: PlatformUser) {
     setActionError(null)
+    setActionSuccess(null)
     setBusyId(user.id)
     try {
       const delivery = await resendInvite.mutateAsync(user.id)
@@ -109,11 +112,34 @@ export function SuperAdminUsersPage() {
     )
     if (!ok) return
     setActionError(null)
+    setActionSuccess(null)
     setBusyId(user.id)
     try {
       await block.mutateAsync(user.id)
     } catch (err) {
       setActionError(err instanceof ApiError ? err.message : t('common.actionFailed'))
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  async function onRestore(user: PlatformUser) {
+    const ok = window.confirm(
+      t('superAdmin.users.restoreConfirm', { name: user.full_name }),
+    )
+    if (!ok) return
+    setActionError(null)
+    setActionSuccess(null)
+    setBusyId(user.id)
+    try {
+      await restore.mutateAsync(user.id)
+      setActionSuccess(
+        t('superAdmin.users.restoreSuccess', { name: user.full_name }),
+      )
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError ? err.message : t('superAdmin.users.restoreFailed'),
+      )
     } finally {
       setBusyId(null)
     }
@@ -127,6 +153,11 @@ export function SuperAdminUsersPage() {
       />
 
       {actionError ? <ErrorAlert message={actionError} /> : null}
+      {actionSuccess ? (
+        <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {actionSuccess}
+        </div>
+      ) : null}
       {error instanceof Error ? <ErrorAlert message={error.message} /> : null}
 
       <div className="mb-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-3">
@@ -235,7 +266,15 @@ export function SuperAdminUsersPage() {
                           {t('superAdmin.users.resendInvite')}
                         </Button>
                       ) : null}
-                      {user.status !== 'archived' ? (
+                      {user.status === 'archived' ? (
+                        <Button
+                          variant="secondary"
+                          disabled={busyId === user.id}
+                          onClick={() => void onRestore(user)}
+                        >
+                          {t('common.restore')}
+                        </Button>
+                      ) : (
                         <Button
                           variant="danger"
                           disabled={busyId === user.id}
@@ -243,7 +282,7 @@ export function SuperAdminUsersPage() {
                         >
                           {t('common.block')}
                         </Button>
-                      ) : null}
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -783,6 +783,63 @@ class PlatformService(PlatformAuditMixin, SubscriptionMixin):
             await uow.commit()
         return result
 
+    async def restore_company_user(
+        self,
+        employee_id: UUID,
+        *,
+        super_admin_id: UUID | None = None,
+    ) -> PlatformUserResponse:
+        """Unarchive a company user without changing identity or related data.
+
+        Previously activated accounts (password or Telegram bind) return to
+        ``active``. Invited-never-activated accounts return to ``invited`` so
+        they must complete the existing invite-accept flow. Does not revoke
+        sessions, rebind Telegram, or issue a new invite.
+        """
+        async with self._uow_factory() as uow:
+            await uow.enter_platform()
+            employee = await uow.employees.get_by_id(employee_id)
+            if employee is None:
+                raise NotFoundError(f"Employee {employee_id} not found")
+            if employee.status != EmployeeStatus.ARCHIVED.value:
+                raise ValidationError("Only archived employees can be restored")
+
+            next_status = (
+                EmployeeStatus.ACTIVE.value
+                if self._can_restore_to_active(employee)
+                else EmployeeStatus.INVITED.value
+            )
+            updated = await uow.employees.update(employee_id, status=next_status)
+            if updated is None:
+                raise NotFoundError(f"Employee {employee_id} not found")
+            company = await uow.companies.get_by_id(updated.company_id)
+            await self._record_audit(
+                uow,
+                super_admin_id=super_admin_id,
+                action=PlatformAuditAction.USER_RESTORED.value,
+                resource_type="employee",
+                resource_id=employee_id,
+                company_id=updated.company_id,
+                summary=f"Restored user {updated.full_name}",
+                details={"status": next_status},
+            )
+            await uow.commit()
+            return self._user_response(updated, company)
+
+    @staticmethod
+    def _can_restore_to_active(employee: Employee) -> bool:
+        """True when the archived row was previously activated.
+
+        Web invite-accept sets ``password_hash``. Telegram invite-accept sets
+        chat/username without a password. Invited placeholders have neither.
+        """
+        if employee.password_hash:
+            return True
+        if employee.telegram_chat_id is not None:
+            return True
+        username = (employee.telegram_username or "").strip()
+        return bool(username)
+
     async def list_audit_logs(
         self,
         *,
