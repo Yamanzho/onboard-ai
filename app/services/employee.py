@@ -211,13 +211,24 @@ class EmployeeService:
     async def get_by_telegram_user_id(
         self,
         *,
-        company_id: UUID,
         telegram_user_id: int,
+        company_id: UUID | None = None,
         actor_company_id: UUID | None = None,
     ) -> Employee:
-        """Resolve an employee by Telegram identity within a company tenant."""
+        """Resolve an employee by Telegram identity.
+
+        Shared-bot path (``company_id`` omitted): platform SELECT by
+        ``telegram_user_id``, prefer the unique ACTIVE row, then invited/archived
+        for status gates. Tenant is ``employee.company_id`` — never a
+        client-supplied company.
+
+        Tenant-scoped path (``company_id`` set): lookup inside that company
+        after ``enter_tenant``. Used only for in-tenant uniqueness checks.
+        """
         if telegram_user_id <= 0:
             raise ValidationError("telegram_user_id must be a positive integer")
+        if company_id is None:
+            return await self._resolve_telegram_identity(telegram_user_id)
         if actor_company_id is not None:
             ensure_same_company(
                 resource_company_id=company_id,
@@ -226,7 +237,6 @@ class EmployeeService:
             )
 
         async with self._uow_factory() as uow:
-            # Bot login passes server-validated BOT_COMPANY_ID as company_id.
             await uow.enter_tenant(company_id)
             company = await uow.companies.get_by_id(company_id)
             if company is None:
@@ -240,6 +250,48 @@ class EmployeeService:
                     f"Employee with telegram_user_id={telegram_user_id} not found"
                 )
             return employee
+
+    async def _resolve_telegram_identity(self, telegram_user_id: int) -> Employee:
+        """Global Telegram identity: one active employee, tenant from the row.
+
+        Login has no company_id yet. Resolve under platform SELECT (same class
+        as email login). Request/Telegram never supply the tenant.
+        """
+        async with self._uow_factory() as uow:
+            await uow.enter_platform()
+            matches = await uow.employees.list_by_telegram_user_id(telegram_user_id)
+            if not matches:
+                raise NotFoundError(
+                    f"Employee with telegram_user_id={telegram_user_id} not found"
+                )
+            actives = [
+                row
+                for row in matches
+                if row.status == EmployeeStatus.ACTIVE.value
+            ]
+            if len(actives) > 1:
+                raise ConflictError(
+                    "Telegram account is linked to multiple active employees"
+                )
+            if len(actives) == 1:
+                return actives[0]
+            archived = [
+                row
+                for row in matches
+                if row.status == EmployeeStatus.ARCHIVED.value
+            ]
+            if archived:
+                return archived[0]
+            invited = [
+                row
+                for row in matches
+                if row.status == EmployeeStatus.INVITED.value
+            ]
+            if invited:
+                return invited[0]
+            raise NotFoundError(
+                f"Employee with telegram_user_id={telegram_user_id} not found"
+            )
 
     async def assert_company_active(self, company_id: UUID) -> None:
         """Reject auth when the tenant company or subscription blocks access."""

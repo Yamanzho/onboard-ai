@@ -45,7 +45,12 @@ def _invite_token(invite_url: str | None) -> str:
     return invite_url.split("#", 1)[1]
 
 
+def _tg_id(bucket: int) -> int:
+    return uuid4().int % 1_000_000_000 + bucket
+
+
 def _bind_bot_company(monkeypatch: pytest.MonkeyPatch, company_id) -> None:
+    """Patch optional BOT_COMPANY_ID metadata. It must not select a tenant."""
     monkeypatch.setenv("BOT_SERVICE_TOKEN", _BOT_SERVICE_TOKEN)
     monkeypatch.setenv("BOT_COMPANY_ID", str(company_id))
     monkeypatch.setenv("SMTP_HOST", "")
@@ -221,41 +226,84 @@ async def test_tenant_a_cannot_access_tenant_b_resources(
     assert patch_program.status_code == 404, patch_program.text
 
     # --- Invites / Telegram binding of Company B ---
+    # Tenant A HR still cannot operate on tenant B invites.
     resend = await api_client.post(
         f"/api/v1/employees/{invited_b_id}/resend-invite",
         headers=headers_hr_a,
     )
     assert resend.status_code == 404, resend.text
 
+    # Shared bot is not company-bound. Invite token selects employee/tenant.
+    # BOT_COMPANY_ID (A) and spoofed body company_id (A) cannot retarget B.
     _bind_bot_company(monkeypatch, company_a.id)
-    steal_bind = await api_client.post(
+    tg_id = _tg_id(9_300_000_000)
+    accept_b = await api_client.post(
         "/api/v1/auth/bot/invite/accept",
         headers={"X-Bot-Service-Token": _BOT_SERVICE_TOKEN},
         json={
             "token": invited_b_token,
-            "telegram_user_id": 9_300_000_042,
-            "company_id": str(company_b.id),
-        },
-    )
-    assert steal_bind.status_code == 403, steal_bind.text
-
-    steal_bind_as_a = await api_client.post(
-        "/api/v1/auth/bot/invite/accept",
-        headers={"X-Bot-Service-Token": _BOT_SERVICE_TOKEN},
-        json={
-            "token": invited_b_token,
-            "telegram_user_id": 9_300_000_043,
+            "telegram_user_id": tg_id,
             "company_id": str(company_a.id),
         },
     )
-    assert steal_bind_as_a.status_code in {400, 403, 404}, steal_bind_as_a.text
+    assert accept_b.status_code == 200, accept_b.text
+    bound = accept_b.json()["employee"]
+    assert bound["id"] == invited_b_id
+    assert bound["company_id"] == str(company_b.id)
+    assert bound["status"] == EmployeeStatus.ACTIVE.value
+    assert bound["telegram_user_id"] == tg_id
+    token_b = accept_b.json()["access_token"]
+    headers_bound_b = {"Authorization": f"Bearer {token_b}"}
+
+    me = await api_client.get("/api/v1/auth/me", headers=headers_bound_b)
+    assert me.status_code == 200, me.text
+    assert me.json()["id"] == invited_b_id
+    assert me.json()["company_id"] == str(company_b.id)
+
+    own_article = await api_client.get(
+        f"/api/v1/knowledge/articles/{article_b_id}",
+        headers=headers_bound_b,
+    )
+    assert own_article.status_code == 200, own_article.text
+
+    company_a_get = await api_client.get(
+        f"/api/v1/companies/{company_a.id}",
+        headers=headers_bound_b,
+    )
+    assert company_a_get.status_code in {403, 404}, company_a_get.text
+
+    employee_a_get = await api_client.get(
+        f"/api/v1/employees/{employee_a.id}",
+        headers=headers_bound_b,
+    )
+    assert employee_a_get.status_code in {403, 404}, employee_a_get.text
+
+    kb_a = await api_client.get(
+        "/api/v1/knowledge/articles",
+        headers=headers_bound_b,
+        params={"company_id": str(company_a.id)},
+    )
+    assert kb_a.status_code in {400, 403, 404}, kb_a.text
+
+    replay = await api_client.post(
+        "/api/v1/auth/bot/invite/accept",
+        headers={"X-Bot-Service-Token": _BOT_SERVICE_TOKEN},
+        json={
+            "token": invited_b_token,
+            "telegram_user_id": _tg_id(9_300_000_000),
+            "company_id": str(company_a.id),
+        },
+    )
+    assert replay.status_code in {400, 403, 404}, replay.text
 
     async with _uow_factory() as uow:
         await uow.enter_platform()
-        still_invited = await uow.employees.get_by_id(invited_b_id)
-        assert still_invited is not None
-        assert still_invited.status == EmployeeStatus.INVITED.value
-        assert still_invited.role == EmployeeRole.EMPLOYEE.value
+        bound_row = await uow.employees.get_by_id(invited_b_id)
+        assert bound_row is not None
+        assert bound_row.status == EmployeeStatus.ACTIVE.value
+        assert bound_row.role == EmployeeRole.EMPLOYEE.value
+        assert bound_row.company_id == company_b.id
+        assert bound_row.telegram_user_id == tg_id
 
     # --- RLS: conversations of B are invisible to tenant A ---
     await _set_tenant(app_role_session, company_a.id)

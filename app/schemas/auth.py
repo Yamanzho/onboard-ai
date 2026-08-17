@@ -93,7 +93,6 @@ class BotTelegramLoginRequest(BaseModel):
         json_schema_extra={
             "examples": [
                 {
-                    "company_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
                     "telegram_user_id": 123456789,
                 }
             ]
@@ -101,10 +100,16 @@ class BotTelegramLoginRequest(BaseModel):
         extra="forbid",
     )
 
-    company_id: UUID = Field(description="Tenant company ID (must match BOT_COMPANY_ID).")
     telegram_user_id: int = Field(
         gt=0,
         description="Telegram user id of the employee to authenticate.",
+    )
+    company_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Ignored. Kept for older bot clients. Tenant is derived from the "
+            "bound employee record, never from this field."
+        ),
     )
 
 
@@ -117,7 +122,12 @@ class BotInviteAcceptRequest(BaseModel):
     telegram_user_id: int = Field(..., gt=0)
     telegram_username: str | None = Field(default=None, max_length=255)
     telegram_chat_id: int | None = None
-    company_id: UUID = Field(description="Must match BOT_COMPANY_ID.")
+    company_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Ignored. Kept for older bot clients. Company comes from the invite."
+        ),
+    )
 
 
 class BotTelegramLoginResponse(TokenResponse):

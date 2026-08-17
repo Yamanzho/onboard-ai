@@ -24,6 +24,13 @@ class EmployeeRepository(BaseRepository[Employee]):
         result = await self._session.scalars(stmt)
         return result.first()
 
+    async def list_by_telegram_user_id(self, telegram_user_id: int) -> list[Employee]:
+        """Identity lookup by Telegram id (platform SELECT). No tenant filter."""
+        self._ensure_rls_context()
+        stmt = select(Employee).where(Employee.telegram_user_id == telegram_user_id)
+        result = await self._session.scalars(stmt)
+        return list(result.all())
+
     async def get_by_email(self, email: str) -> Employee | None:
         """Resolve one employee by normalized email (platform / auth login).
 

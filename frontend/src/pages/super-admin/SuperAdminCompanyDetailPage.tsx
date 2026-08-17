@@ -372,8 +372,9 @@ function LimitsTab({ company }: { company: PlatformCompanyDetail }) {
 
 function UsersTab({ companyId }: { companyId: string }) {
   const { data, isLoading, error } = useCompanyUsers(companyId)
-  const { create, block, resendInvite } = useCompanyUserMutations(companyId)
+  const { create, block, restore, resendInvite } = useCompanyUserMutations(companyId)
   const [actionError, setActionError] = useState<string | null>(null)
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null)
   const [fullName, setFullName] = useState('')
   const [email, setEmail] = useState('')
   const [role, setRole] = useState('admin')
@@ -382,6 +383,7 @@ function UsersTab({ companyId }: { companyId: string }) {
   async function onCreate(e: FormEvent) {
     e.preventDefault()
     setActionError(null)
+    setActionSuccess(null)
     try {
       const created = await create.mutateAsync({
         full_name: fullName.trim(),
@@ -419,6 +421,8 @@ function UsersTab({ companyId }: { companyId: string }) {
       t('superAdmin.companies.detail.blockConfirm', { name: user.full_name }),
     )
     if (!ok) return
+    setActionError(null)
+    setActionSuccess(null)
     setBusyId(user.id)
     try {
       await block.mutateAsync(user.id)
@@ -429,8 +433,34 @@ function UsersTab({ companyId }: { companyId: string }) {
     }
   }
 
+  async function onRestore(user: PlatformUser) {
+    const ok = window.confirm(
+      t('superAdmin.companies.detail.restoreConfirm', { name: user.full_name }),
+    )
+    if (!ok) return
+    setActionError(null)
+    setActionSuccess(null)
+    setBusyId(user.id)
+    try {
+      await restore.mutateAsync(user.id)
+      setActionSuccess(
+        t('superAdmin.companies.detail.restoreSuccess', { name: user.full_name }),
+      )
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError
+          ? err.message
+          : t('superAdmin.companies.detail.restoreFailed'),
+      )
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   async function onResend(user: PlatformUser) {
     setBusyId(user.id)
+    setActionError(null)
+    setActionSuccess(null)
     try {
       const delivery = await resendInvite.mutateAsync(user.id)
       if (delivery.delivery === 'email') {
@@ -464,6 +494,11 @@ function UsersTab({ companyId }: { companyId: string }) {
   return (
     <div className="space-y-4">
       {actionError ? <ErrorAlert message={actionError} /> : null}
+      {actionSuccess ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {actionSuccess}
+        </div>
+      ) : null}
       {error instanceof Error ? <ErrorAlert message={error.message} /> : null}
 
       <form
@@ -546,7 +581,15 @@ function UsersTab({ companyId }: { companyId: string }) {
                           {t('superAdmin.companies.detail.resendInvite')}
                         </Button>
                       ) : null}
-                      {user.status !== 'archived' ? (
+                      {user.status === 'archived' ? (
+                        <Button
+                          variant="secondary"
+                          disabled={busyId === user.id}
+                          onClick={() => void onRestore(user)}
+                        >
+                          {t('common.restore')}
+                        </Button>
+                      ) : (
                         <Button
                           variant="danger"
                           disabled={busyId === user.id}
@@ -554,7 +597,7 @@ function UsersTab({ companyId }: { companyId: string }) {
                         >
                           {t('common.block')}
                         </Button>
-                      ) : null}
+                      )}
                     </div>
                   </td>
                 </tr>

@@ -14,6 +14,8 @@ from app.db.enums import EmployeeRole, EmployeeStatus, InvitePurpose
 from app.db.models.employee import Employee
 from tests.conftest import _uow_factory, auth_header
 
+pytestmark = [pytest.mark.security, pytest.mark.telegram]
+
 
 @pytest.fixture
 def bot_service_token(monkeypatch: pytest.MonkeyPatch) -> str:

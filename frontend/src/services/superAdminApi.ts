@@ -213,6 +213,13 @@ export async function blockUser(employeeId: string): Promise<PlatformUser> {
   )
 }
 
+export async function restoreUser(employeeId: string): Promise<PlatformUser> {
+  return superAdminRequest<PlatformUser>(
+    `/api/v1/super-admin/users/${employeeId}/restore`,
+    { method: 'POST' },
+  )
+}
+
 export async function resendUserInvite(employeeId: string): Promise<{
   email_sent: boolean
   delivery: 'email' | 'manual_url'

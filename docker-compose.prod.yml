@@ -69,9 +69,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
       SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD is required for docker-compose.prod.yml}
       BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN:?BOT_SERVICE_TOKEN is required for docker-compose.prod.yml}
-      # No demo-seed default. Use the real pilot tenant UUID (after company create,
-      # or a temporary uuidgen value on first boot — then replace and recreate).
-      BOT_COMPANY_ID: ${BOT_COMPANY_ID:?BOT_COMPANY_ID is required for docker-compose.prod.yml}
+      # Optional demo/ops metadata only. Shared-bot identity is
+      # telegram_user_id → Employee → employee.company_id. Leave empty.
+      BOT_COMPANY_ID: ${BOT_COMPANY_ID:-}
       INVITE_BASE_URL: ${INVITE_BASE_URL:?INVITE_BASE_URL is required for docker-compose.prod.yml}
       # Trusted single-proxy mode: frontend nginx overwrites X-Real-IP / XFF.
       # Keep API host ports empty (below). Never set true if API is published.
@@ -103,7 +103,8 @@ services:
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
       BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN:?BOT_SERVICE_TOKEN is required for docker-compose.prod.yml}
-      BOT_COMPANY_ID: ${BOT_COMPANY_ID:?BOT_COMPANY_ID is required for docker-compose.prod.yml}
+      # Optional demo/ops metadata only. Not a tenant bind for the shared bot.
+      BOT_COMPANY_ID: ${BOT_COMPANY_ID:-}
       INVITE_BASE_URL: ${INVITE_BASE_URL:?INVITE_BASE_URL is required for docker-compose.prod.yml}
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       # R-AUDIT-02: bot does not open DB connections (HTTP → API only), but

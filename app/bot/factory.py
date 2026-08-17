@@ -21,13 +21,14 @@ logger = logging.getLogger(__name__)
 
 def create_api_client(settings: Settings | None = None) -> OnboardApiClient:
     settings = settings or get_settings()
-    if not settings.bot_company_id:
-        raise RuntimeError("BOT_COMPANY_ID is required for the Telegram bot")
     if not settings.bot_service_token:
         raise RuntimeError("BOT_SERVICE_TOKEN is required for the Telegram bot")
+    company_id: UUID | None = None
+    if settings.bot_company_id.strip():
+        company_id = UUID(settings.bot_company_id)
     return OnboardApiClient(
         base_url=settings.api_base_url,
-        company_id=UUID(settings.bot_company_id),
+        company_id=company_id,
         service_token=settings.bot_service_token,
     )
 

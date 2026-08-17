@@ -21,6 +21,8 @@ from app.services.email import EmailService
 from app.services.refresh_session import SUBJECT_EMPLOYEE, RefreshSessionService
 from tests.conftest import auth_header, _uow_factory, tenant_tokens_from_response
 
+pytestmark = pytest.mark.security
+
 
 @pytest.fixture
 def bot_service_token(monkeypatch: pytest.MonkeyPatch) -> str:
@@ -93,7 +95,7 @@ async def test_shared_auth_password_disabled_when_flag_off(
     )
 
 
-async def test_bot_login_rejects_foreign_company(
+async def test_bot_login_ignores_foreign_company_id_in_body(
     api_client: AsyncClient,
     company_a,
     company_b,
@@ -109,13 +111,25 @@ async def test_bot_login_rejects_foreign_company(
         "/api/v1/auth/bot/telegram",
         headers={"X-Bot-Service-Token": bot_service_token},
         json={
-            "company_id": str(company_a.id),
             "telegram_user_id": employee_a.telegram_user_id,
         },
     )
     assert ok.status_code == 200, ok.text
+    assert ok.json()["employee"]["company_id"] == str(company_a.id)
 
-    denied = await api_client.post(
+    spoof = await api_client.post(
+        "/api/v1/auth/bot/telegram",
+        headers={"X-Bot-Service-Token": bot_service_token},
+        json={
+            "company_id": str(company_b.id),
+            "telegram_user_id": employee_a.telegram_user_id,
+        },
+    )
+    assert spoof.status_code == 200, spoof.text
+    assert spoof.json()["employee"]["id"] == str(employee_a.id)
+    assert spoof.json()["employee"]["company_id"] == str(company_a.id)
+
+    unknown = await api_client.post(
         "/api/v1/auth/bot/telegram",
         headers={"X-Bot-Service-Token": bot_service_token},
         json={
@@ -123,8 +137,7 @@ async def test_bot_login_rejects_foreign_company(
             "telegram_user_id": 999999001,
         },
     )
-    assert denied.status_code == 403
-    assert "not authorized" in denied.json()["detail"].lower()
+    assert unknown.status_code == 404
 
 
 async def test_hr_cannot_promote_to_admin(

@@ -33,11 +33,17 @@ def _fmt_date(value: datetime | date | None) -> str:
 async def _require_employee(
     message: Message,
     api: OnboardApiClient,
+    *,
+    handler: str,
 ) -> EmployeeDTO | None:
     if message.from_user is None:
         return None
     try:
-        employee = await api.find_employee_by_telegram(message.from_user.id)
+        employee = await api.find_employee_by_telegram(
+            message.from_user.id,
+            handler=handler,
+            chat_id=message.chat.id if message.chat else None,
+        )
     except OnboardApiError:
         await message.answer("Не удалось связаться с сервером. Попробуйте позже.")
         return None
@@ -59,7 +65,7 @@ async def active_assignments(
     api: OnboardApiClient,
     state: FSMContext,
 ) -> None:
-    employee = await _require_employee(message, api)
+    employee = await _require_employee(message, api, handler="active_assignments")
     if employee is None:
         return
     await state.clear()
@@ -117,7 +123,7 @@ async def history_assignments(
     api: OnboardApiClient,
     state: FSMContext,
 ) -> None:
-    employee = await _require_employee(message, api)
+    employee = await _require_employee(message, api, handler="history_assignments")
     if employee is None:
         return
     await state.clear()
@@ -180,7 +186,7 @@ async def calendar_view(
     api: OnboardApiClient,
     state: FSMContext,
 ) -> None:
-    employee = await _require_employee(message, api)
+    employee = await _require_employee(message, api, handler="calendar_view")
     if employee is None:
         return
     await state.clear()
@@ -240,7 +246,7 @@ async def company_view(
     api: OnboardApiClient,
     state: FSMContext,
 ) -> None:
-    employee = await _require_employee(message, api)
+    employee = await _require_employee(message, api, handler="company_view")
     if employee is None:
         return
     await state.clear()
@@ -271,7 +277,7 @@ async def profile_view(
     api: OnboardApiClient,
     state: FSMContext,
 ) -> None:
-    employee = await _require_employee(message, api)
+    employee = await _require_employee(message, api, handler="profile_view")
     if employee is None:
         return
     await state.clear()

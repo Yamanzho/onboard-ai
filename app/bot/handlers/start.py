@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message
 
 from app.bot.api.client import OnboardApiClient, OnboardApiError
+from app.bot.identity_debug import log_identity
 from app.bot.keyboards.menu import main_menu_keyboard
 
 router = Router(name="start")
@@ -50,7 +51,22 @@ async def cmd_start(
                 telegram_username=message.from_user.username,
                 telegram_chat_id=message.chat.id if message.chat else None,
             )
+            log_identity(
+                handler="cmd_start",
+                telegram_user_id=message.from_user.id,
+                chat_id=message.chat.id if message.chat else None,
+                result="INVITE_BOUND",
+                employee_id=employee.id,
+                company_id=employee.company_id,
+            )
         except OnboardApiError as exc:
+            log_identity(
+                handler="cmd_start",
+                telegram_user_id=message.from_user.id,
+                chat_id=message.chat.id if message.chat else None,
+                result="INVITE_ERROR",
+                status_code=exc.status_code,
+            )
             # Do not echo the invite token or leak invite/tenant details.
             await message.answer(
                 _invite_error_message(exc),
@@ -68,7 +84,11 @@ async def cmd_start(
 
     if message.from_user is not None:
         try:
-            employee = await api.find_employee_by_telegram(message.from_user.id)
+            employee = await api.find_employee_by_telegram(
+                message.from_user.id,
+                handler="cmd_start",
+                chat_id=message.chat.id if message.chat else None,
+            )
         except OnboardApiError as exc:
             if exc.status_code == 403:
                 await message.answer(

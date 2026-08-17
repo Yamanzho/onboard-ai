@@ -56,7 +56,7 @@ markers = [
     "integration: multi-step flows against live Postgres",
     "security: tenant isolation, RBAC, IDOR, invites, auth, subscriptions",
     "api: HTTP API tests",
-    "telegram: Telegram binding / bot service-token tests",
+    "telegram: Telegram bot identity, cabinet, and service-token tests",
     "infra: compose, nginx, Docker, CI, and operator docs",
 ]
 

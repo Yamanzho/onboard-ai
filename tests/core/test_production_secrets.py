@@ -114,6 +114,23 @@ def test_production_accepts_strong_super_admin_password() -> None:
     assert settings.super_admin_password == _STRONG_SUPER_ADMIN
 
 
+def test_production_allows_shared_bot_without_company_id() -> None:
+    settings = _production_settings(
+        bot_service_token="unit-test-bot-service-token-32chars",
+        bot_company_id="",
+    )
+    assert settings.bot_company_id == ""
+    assert settings.bot_service_token == "unit-test-bot-service-token-32chars"
+
+
+def test_production_rejects_demo_seed_bot_company_id() -> None:
+    with pytest.raises(ValidationError, match="demo seed company id"):
+        _production_settings(
+            bot_service_token="unit-test-bot-service-token-32chars",
+            bot_company_id="11111111-1111-4111-8111-111111111111",
+        )
+
+
 # --- REDIS (P0-03 interaction; must remain enforced) ---
 
 

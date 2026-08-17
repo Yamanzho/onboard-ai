@@ -93,7 +93,7 @@ _MIN_POSTGRES_PASSWORD_LEN = 12
 _MIN_BOT_SERVICE_TOKEN_LEN = 24
 _MIN_REDIS_PASSWORD_LEN = 12
 _PLACEHOLDER_RE = re.compile(r"^<[^>]+>$")
-# scripts/seed_demo.py well-known tenant — must not be the production bot binding.
+# scripts/seed_demo.py well-known tenant — optional ops metadata only, not identity.
 _DEMO_SEED_COMPANY_ID = "11111111-1111-4111-8111-111111111111"
 
 
@@ -392,11 +392,9 @@ class Settings(BaseSettings):
             if not self.ai_llm_model.strip():
                 raise ValueError("AI_LLM_MODEL must not be empty")
 
-        # Bot service token must always be company-bound (all environments).
-        if self.bot_service_token and not self.bot_company_id:
-            raise ValueError(
-                "BOT_COMPANY_ID is required whenever BOT_SERVICE_TOKEN is set"
-            )
+        # Bot service token authenticates the bot process, not a tenant.
+        # BOT_COMPANY_ID is optional metadata; identity is telegram_user_id
+        # → Employee → employee.company_id. AI tenant comes from the JWT.
 
         if self.app_env.lower() != "production":
             return self
@@ -443,11 +441,13 @@ class Settings(BaseSettings):
                 "APP_ENV=production"
             )
         if (
-            self.bot_company_id.strip().lower() == _DEMO_SEED_COMPANY_ID
+            self.bot_company_id.strip()
+            and self.bot_company_id.strip().lower() == _DEMO_SEED_COMPANY_ID
         ):
             raise ValueError(
                 "BOT_COMPANY_ID must not use the demo seed company id when "
-                "APP_ENV=production (set it to the real pilot tenant UUID)"
+                "APP_ENV=production (leave it empty for the shared bot, or set "
+                "it to a real non-demo UUID if used as ops metadata)"
             )
         invite_base = self.invite_base_url.strip().lower()
         if not invite_base.startswith("https://"):
