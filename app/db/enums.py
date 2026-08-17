@@ -122,5 +122,6 @@ class PlatformAuditAction(StrEnum):
     USER_CREATED = "user.created"
     USER_UPDATED = "user.updated"
     USER_BLOCKED = "user.blocked"
+    USER_RESTORED = "user.restored"
     USER_INVITED = "user.invited"
     SETTINGS_UPDATED = "settings.updated"

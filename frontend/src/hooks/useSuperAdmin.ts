@@ -157,6 +157,10 @@ export function useCompanyUserMutations(companyId: string) {
       mutationFn: (id: string) => api.blockUser(id),
       onSuccess: invalidate,
     }),
+    restore: useMutation({
+      mutationFn: (id: string) => api.restoreUser(id),
+      onSuccess: invalidate,
+    }),
     resendInvite: useMutation({
       mutationFn: (id: string) => api.resendUserInvite(id),
     }),
@@ -178,6 +182,7 @@ export function usePlatformUserMutations() {
   const qc = useQueryClient()
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['super-admin', 'users'] })
+    void qc.invalidateQueries({ queryKey: ['super-admin', 'companies'] })
   }
 
   return {
@@ -193,6 +198,10 @@ export function usePlatformUserMutations() {
     }),
     block: useMutation({
       mutationFn: (id: string) => api.blockUser(id),
+      onSuccess: invalidate,
+    }),
+    restore: useMutation({
+      mutationFn: (id: string) => api.restoreUser(id),
       onSuccess: invalidate,
     }),
     resendInvite: useMutation({

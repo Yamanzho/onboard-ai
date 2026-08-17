@@ -677,6 +677,30 @@ async def block_platform_user(
     return await service.block_company_user(employee_id, super_admin_id=current.id)
 
 
+@router.post(
+    "/users/{employee_id}/restore",
+    response_model=PlatformUserResponse,
+    summary="Restore (unarchive) company user",
+    description=(
+        "Restore an archived employee. Previously activated accounts "
+        "(password or Telegram bind) return to active. Invited-never-activated "
+        "accounts return to invited and must accept an invite. Telegram "
+        "identity, role, company, assignments, and conversations are unchanged."
+    ),
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    },
+)
+async def restore_platform_user(
+    employee_id: UUID,
+    current: SuperAdminUser,
+    service: PlatformServiceDep,
+) -> PlatformUserResponse:
+    return await service.restore_company_user(employee_id, super_admin_id=current.id)
+
+
 @router.get(
     "/audit-logs",
     response_model=list[PlatformAuditLogResponse],

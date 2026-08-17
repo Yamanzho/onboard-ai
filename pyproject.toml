@@ -52,6 +52,7 @@ asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
 markers = [
     "security: tenancy, auth, TLS edge, and ACL tests",
+    "telegram: Telegram bind, bot login, and identity tests",
 ]
 
 [tool.coverage.run]
