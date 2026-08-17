@@ -54,7 +54,7 @@ testpaths = ["tests"]
 markers = [
     "unit: fast checks without the HTTP API (core/knowledge helpers)",
     "integration: multi-step flows against live Postgres",
-    "security: tenant isolation, RBAC, IDOR, invites, auth, subscriptions",
+    "security: tenant isolation, RBAC, IDOR, invites, auth, subscriptions, TLS edge",
     "api: HTTP API tests",
     "telegram: Telegram bot identity, cabinet, and service-token tests",
     "infra: compose, nginx, Docker, CI, and operator docs",

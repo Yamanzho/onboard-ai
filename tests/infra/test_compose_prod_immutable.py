@@ -117,6 +117,8 @@ def test_entrypoint_api_reload_only_outside_production() -> None:
     prod_block = script[prod_block_start:prod_block_end]
     assert "--reload" not in prod_block
     assert "--workers" in prod_block
+    assert "--proxy-headers" in prod_block
+    assert "--forwarded-allow-ips=" in prod_block
 
 
 def test_entrypoint_bot_has_no_reload() -> None:
