@@ -5,14 +5,22 @@ import { Button } from '../components/ui/Button'
 import { Input, Label } from '../components/ui/Field'
 import { useAuth } from '../hooks/useAuth'
 import { homePathForRole } from '../lib/navigation'
+import { workspaceTitleKey } from '../lib/workspace'
 import { t } from '../i18n'
+import type { EmployeeRole } from '../types/auth'
 
-export function LoginPage() {
-  const { login, isAuthenticated, loading, error, clearError, user } = useAuth()
+interface LoginPageProps {
+  expectedRole: EmployeeRole
+}
+
+export function LoginPage({ expectedRole }: LoginPageProps) {
+  const { login, logout, isAuthenticated, loading, error, clearError, user } =
+    useAuth()
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [roleError, setRoleError] = useState<string | null>(null)
 
   if (!loading && isAuthenticated) {
     return <Navigate to={homePathForRole(user?.role)} replace />
@@ -21,9 +29,15 @@ export function LoginPage() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     clearError()
+    setRoleError(null)
     setSubmitting(true)
     try {
       const me = await login(email.trim(), password)
+      if (me.role !== expectedRole) {
+        logout()
+        setRoleError(t('auth.wrongLoginRole'))
+        return
+      }
       navigate(homePathForRole(me.role), { replace: true })
     } catch {
       // error shown via context
@@ -37,10 +51,16 @@ export function LoginPage() {
       onSubmit={onSubmit}
       className="rounded-xl border border-[var(--color-border)] bg-white p-6 shadow-sm"
     >
+      <h2 className="mb-2 text-lg font-semibold">
+        {t(workspaceTitleKey(
+          expectedRole === 'admin' ? 'company' : expectedRole,
+        ))}
+      </h2>
       <p className="mb-4 text-sm text-[var(--color-muted)]">
         {t('auth.loginHint')}
       </p>
       {error ? <ErrorAlert message={error} /> : null}
+      {roleError ? <ErrorAlert message={roleError} /> : null}
       <div className="mb-3">
         <Label htmlFor="email">{t('common.email')}</Label>
         <Input

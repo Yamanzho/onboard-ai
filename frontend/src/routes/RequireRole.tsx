@@ -1,7 +1,8 @@
-import { Navigate, Outlet } from 'react-router-dom'
+import { Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { t } from '../i18n'
 import { homePathForRole, roleAllowed, type AppRole } from '../lib/navigation'
+import { loginPathForPathname } from '../lib/workspace'
 
 interface RequireRoleProps {
   allowed: readonly AppRole[]
@@ -14,6 +15,7 @@ interface RequireRoleProps {
  * UI-only — backend authorization remains authoritative.
  */
 export function RequireRole({ allowed, redirectTo }: RequireRoleProps) {
+  const { pathname } = useLocation()
   const { user, loading, isAuthenticated } = useAuth()
 
   if (loading) {
@@ -25,7 +27,7 @@ export function RequireRole({ allowed, redirectTo }: RequireRoleProps) {
   }
 
   if (!isAuthenticated || !user) {
-    return <Navigate to="/login" replace />
+    return <Navigate to={loginPathForPathname(pathname)} replace />
   }
 
   if (!roleAllowed(user.role, allowed)) {

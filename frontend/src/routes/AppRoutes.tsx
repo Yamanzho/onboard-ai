@@ -7,6 +7,7 @@ import { PlatformAdminLayout } from '../layouts/PlatformAdminLayout'
 import { SuperAdminAuthLayout } from '../layouts/SuperAdminAuthLayout'
 import { DashboardPage } from '../pages/DashboardPage'
 import { LoginPage } from '../pages/LoginPage'
+import { LoginChoicePage } from '../pages/LoginChoicePage'
 import { AssignmentCreatePage } from '../pages/assignments/AssignmentCreatePage'
 import { AssignmentDetailPage } from '../pages/assignments/AssignmentDetailPage'
 import { AssignmentListPage } from '../pages/assignments/AssignmentListPage'
@@ -119,7 +120,13 @@ export function AppRoutes() {
     <BrowserRouter>
       <Routes>
         <Route element={<AuthLayout />}>
-          <Route path="/login" element={<LoginPage />} />
+          <Route index element={<LoginChoicePage />} />
+          <Route path="/admin/login" element={<LoginPage expectedRole="admin" />} />
+          <Route path="/hr/login" element={<LoginPage expectedRole="hr" />} />
+          <Route
+            path="/employee/login"
+            element={<LoginPage expectedRole="employee" />}
+          />
         </Route>
 
         <Route path="/invite" element={<InviteAcceptPage />} />
@@ -129,7 +136,6 @@ export function AppRoutes() {
 
         <Route element={<SuperAdminAuthLayout />}>
           <Route path="/super-admin/login" element={<SuperAdminLoginPage />} />
-          <Route path="/platform/login" element={<SuperAdminLoginPage />} />
         </Route>
 
         <Route element={<SuperAdminProtectedRoute />}>
@@ -236,7 +242,6 @@ export function AppRoutes() {
             </Route>
           </Route>
 
-          <Route path="/" element={<RoleHomeRedirect />} />
           <Route path="/dashboard" element={<RoleHomeRedirect />} />
           <Route path="/profile" element={<RoleHomeRedirect />} />
           <Route path="/security" element={<RoleHomeRedirect />} />
@@ -271,7 +276,7 @@ export function AppRoutes() {
           />
         </Route>
 
-        <Route path="*" element={<RoleHomeRedirect />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )

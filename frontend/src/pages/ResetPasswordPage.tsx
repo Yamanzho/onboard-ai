@@ -72,7 +72,7 @@ export function ResetPasswordPage() {
         new_password: password,
         confirm_password: confirm,
       })
-      navigate('/login', { replace: true })
+      navigate('/', { replace: true })
     } catch (err: unknown) {
       setSubmitError(
         err instanceof ApiError ? err.message : t('resetPassword.failed'),
@@ -94,7 +94,7 @@ export function ResetPasswordPage() {
         {loadError ? (
           <div className="mt-4">
             <ErrorAlert message={loadError} />
-            <Link to="/login" className="mt-3 inline-block text-sm text-[var(--color-primary)]">
+            <Link to="/" className="mt-3 inline-block text-sm text-[var(--color-primary)]">
               {t('common.signIn')}
             </Link>
           </div>

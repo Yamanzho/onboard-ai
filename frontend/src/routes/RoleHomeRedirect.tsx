@@ -29,5 +29,5 @@ export function RoleHomeRedirect() {
     return <Navigate to={homePathForRole(user.role)} replace />
   }
 
-  return <Navigate to="/login" replace />
+  return <Navigate to="/" replace />
 }

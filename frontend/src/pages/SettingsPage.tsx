@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button'
 import { Input, Label } from '../components/ui/Field'
 import { useAuth } from '../hooks/useAuth'
 import { labelEmployeeRole, t } from '../i18n'
+import { loginPathForRole } from '../lib/workspace'
 import { ApiError } from '../services/apiClient'
 import * as authApi from '../services/authApi'
 
@@ -82,8 +83,9 @@ export function SettingsPage({ section = 'all' }: { section?: SettingsSection })
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
+      const loginPath = loginPathForRole(user?.role)
       logout()
-      navigate('/login', { replace: true })
+      navigate(loginPath, { replace: true })
     } catch (err) {
       if (err instanceof ApiError) {
         const detail = err.message.toLowerCase()

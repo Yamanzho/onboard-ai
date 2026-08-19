@@ -5,6 +5,7 @@ import { Button } from '../components/ui/Button'
 import { Input, Label } from '../components/ui/Field'
 import { useAuth } from '../hooks/useAuth'
 import { homePathForRole } from '../lib/navigation'
+import { loginPathForRole } from '../lib/workspace'
 import { t } from '../i18n'
 import * as authApi from '../services/authApi'
 import { ApiError } from '../services/apiClient'
@@ -101,7 +102,7 @@ export function InviteAcceptPage() {
         {loadError ? (
           <>
             <ErrorAlert message={loadError} />
-            <Link to="/login" className="mt-4 inline-block text-sm text-[var(--color-accent)]">
+            <Link to="/" className="mt-4 inline-block text-sm text-[var(--color-accent)]">
               {t('invite.goToSignIn')}
             </Link>
           </>
@@ -117,7 +118,7 @@ export function InviteAcceptPage() {
             {done ? (
               <div className="mt-4 space-y-3">
                 <p className="text-sm text-emerald-800">{t('invite.activatedGoLogin')}</p>
-                <Link to="/login">
+                <Link to={loginPathForRole(preview.role)}>
                   <Button className="w-full">{t('invite.goToSignIn')}</Button>
                 </Link>
               </div>

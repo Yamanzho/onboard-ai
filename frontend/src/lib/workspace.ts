@@ -11,6 +11,13 @@ export const WORKSPACE_BASE: Record<WorkspaceId, string> = {
   employee: '/employee',
 } as const
 
+export const WORKSPACE_LOGIN: Record<WorkspaceId, string> = {
+  platform: '/super-admin/login',
+  company: '/admin/login',
+  hr: '/hr/login',
+  employee: '/employee/login',
+} as const
+
 export const ROLE_WORKSPACE: Record<AppRole, WorkspaceId> = {
   super_admin: 'platform',
   admin: 'company',
@@ -59,7 +66,26 @@ export function workspaceBaseForRole(
   role: AppRole | EmployeeRole | string | null | undefined,
 ): string {
   const ws = workspaceForRole(role)
-  return ws ? WORKSPACE_BASE[ws] : '/login'
+  return ws ? WORKSPACE_BASE[ws] : '/'
+}
+
+export function loginPathForWorkspace(workspace: WorkspaceId): string {
+  return WORKSPACE_LOGIN[workspace]
+}
+
+export function loginPathForRole(
+  role: AppRole | EmployeeRole | string | null | undefined,
+): string {
+  const workspace = workspaceForRole(role)
+  return workspace ? WORKSPACE_LOGIN[workspace] : '/'
+}
+
+export function loginPathForPathname(pathname: string): string {
+  if (pathname.startsWith('/company')) return WORKSPACE_LOGIN.company
+  if (pathname.startsWith('/hr')) return WORKSPACE_LOGIN.hr
+  if (pathname.startsWith('/employee')) return WORKSPACE_LOGIN.employee
+  if (pathname.startsWith('/platform')) return WORKSPACE_LOGIN.platform
+  return '/'
 }
 
 export function roleOwnsWorkspace(

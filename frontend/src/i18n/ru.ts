@@ -236,6 +236,7 @@ export const ru = {
   },
 
   auth: {
+    chooseWorkspace: 'Выберите кабинет для входа',
     loginHint: 'Войдите с email и паролем, заданным при принятии приглашения.',
     employeeUuid: 'UUID сотрудника',
     employeeUuidPlaceholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
@@ -243,6 +244,7 @@ export const ru = {
     networkOrCertFailed:
       'Сеть или сертификат: откройте https://… , примите предупреждение о сертификате и повторите вход. Не используйте порт :3000.',
     roleRequired: 'Панель доступна только ролям admin, hr и employee',
+    wrongLoginRole: 'Эта учётная запись относится к другому кабинету.',
     superAdminLoginHint:
       'Войдите с email и паролем Super Admin (SUPER_ADMIN_EMAIL).',
     superAdminRoleRequired: 'Требуется роль super_admin',

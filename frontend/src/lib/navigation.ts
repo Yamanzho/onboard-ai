@@ -326,7 +326,7 @@ export function homePathForRole(role: AppRole | string | null | undefined): stri
     case 'employee':
       return WORKSPACE_BASE.employee
     default:
-      return '/login'
+      return '/'
   }
 }
 

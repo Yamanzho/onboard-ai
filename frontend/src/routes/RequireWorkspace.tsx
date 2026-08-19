@@ -4,6 +4,7 @@ import { useSuperAdminAuth } from '../hooks/useSuperAdminAuth'
 import { t } from '../i18n'
 import { homePathForRole } from '../lib/navigation'
 import {
+  loginPathForWorkspace,
   roleOwnsWorkspace,
   type WorkspaceId,
 } from '../lib/workspace'
@@ -39,14 +40,14 @@ export function RequireWorkspace({ workspace }: RequireWorkspaceProps) {
     if (isAuthenticated && user) {
       return <Navigate to={homePathForRole(user.role)} replace />
     }
-    return <Navigate to="/super-admin/login" replace />
+    return <Navigate to={loginPathForWorkspace('platform')} replace />
   }
 
   if (!isAuthenticated || !user) {
     if (saAuth && saUser) {
       return <Navigate to={homePathForRole('super_admin')} replace />
     }
-    return <Navigate to="/login" replace />
+    return <Navigate to={loginPathForWorkspace(workspace)} replace />
   }
 
   if (!roleOwnsWorkspace(user.role, workspace)) {
