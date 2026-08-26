@@ -58,6 +58,7 @@ services:
     # Container listens on 8080 as non-root nginx; host bind stays 127.0.0.1:3000.
     ports: !override
       - "127.0.0.1:${FRONTEND_PORT:-3000}:8080"
+    restart: unless-stopped
 
   api:
     environment:
@@ -153,3 +154,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+volumes:
+  # Production PostgreSQL uses the pgvector cluster created 2026-08-17.
+  # The base postgres_data Compose volume is intentionally superseded here.
+  # Do NOT change this name or remove the external flag.
+  postgres_data:
+    name: onboard-ai_postgres_data_pgvector
+    external: true
