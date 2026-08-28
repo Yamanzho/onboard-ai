@@ -91,6 +91,9 @@ export function ArticleForm({
           onChange={(e) => setValues({ ...values, body: e.target.value })}
           required
         />
+        <p className="mt-1 text-right text-xs text-[var(--color-muted)]">
+          {values.body.length.toLocaleString()} / 200,000
+        </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

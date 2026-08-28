@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
-from app.core.ai_constants import KB_CHUNK_VECTOR_DIMENSION
+from app.core.ai_constants import KB_CHUNK_VECTOR_DIMENSION, MAX_CHUNK_CHARS_SAFE
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.db.enums import EmployeeRole, KnowledgeArticleStatus, KnowledgeLinkTargetType, PlatformRole
 from app.db.models.knowledge_article_chunk import KnowledgeArticleChunk
@@ -41,6 +41,12 @@ logger = logging.getLogger("app.kb.index")
 # Explicit: this service is not enlisted in the ArticleService publish transaction.
 INDEXING_RUNS_AFTER_KB_COMMIT = True
 _ARTICLE_LIST_PAGE = 1000
+
+# OpenAI accepts up to 2048 items per /v1/embeddings call but practical latency
+# degrades for very large batches. Use sub-batches of 100 for large articles
+# (~100-160 chunks for 140k-200k char articles) to keep individual API calls
+# fast and avoid timeout risk.
+_EMBED_BATCH_SIZE = 100
 _KB_MANAGEMENT_ROLES = frozenset(
     {
         EmployeeRole.ADMIN.value,
@@ -186,6 +192,7 @@ class KnowledgeChunkIndexer:
             if version.article_id != article_id:
                 raise NotFoundError(f"Knowledge article version {version_id} not found")
 
+            body_char_count = len(version.body or "")
             texts = chunk_article(
                 title=version.title,
                 body=version.body,
@@ -194,10 +201,47 @@ class KnowledgeChunkIndexer:
             if not texts:
                 raise ValidationError("nothing to index: empty title and body")
 
+            logger.info(
+                "kb_index_chunked company_id=%s article_id=%s version_id=%s "
+                "body_chars=%d chunk_count=%d",
+                actor_company_id,
+                article_id,
+                version_id,
+                body_char_count,
+                len(texts),
+            )
+
+            # Pre-flight: every chunk must be within the safe character limit
+            # before we send anything to the embedding provider.
+            for chunk_idx, chunk_text in enumerate(texts):
+                if len(chunk_text) > MAX_CHUNK_CHARS_SAFE:
+                    raise ValidationError(
+                        f"chunk {chunk_idx} exceeds safe embedding character limit: "
+                        f"{len(chunk_text)} chars (max {MAX_CHUNK_CHARS_SAFE}). "
+                        f"article_id={article_id} version_id={version_id}"
+                    )
+
             # Embed before mutating rows so a provider failure cannot leave
             # a deleted-but-unreplaced chunk set (this UoW would roll back
             # anyway; ordering keeps the failure window obvious).
-            embeddings = await provider.embed_batch(texts)
+            # Use sub-batches so very large articles (100+ chunks) do not
+            # exceed practical per-request API limits.
+            embeddings: list[list[float]] = []
+            batch_count = 0
+            for batch_start in range(0, len(texts), _EMBED_BATCH_SIZE):
+                batch = texts[batch_start : batch_start + _EMBED_BATCH_SIZE]
+                batch_vectors = await provider.embed_batch(batch)
+                embeddings.extend(batch_vectors)
+                batch_count += 1
+            logger.info(
+                "kb_index_embedded company_id=%s article_id=%s version_id=%s "
+                "chunk_count=%d embed_batches=%d",
+                actor_company_id,
+                article_id,
+                version_id,
+                len(texts),
+                batch_count,
+            )
             if len(embeddings) != len(texts):
                 raise ValidationError("embedding batch size does not match chunks")
             for vector in embeddings:

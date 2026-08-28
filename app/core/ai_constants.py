@@ -54,8 +54,20 @@ DEFAULT_TELEGRAM_CONVERSATION_TTL_SECONDS = 86_400
 # policies; 1500 chars is one section, overlap keeps a heading with its body.
 DEFAULT_CHUNK_SIZE_CHARS = 1500
 DEFAULT_CHUNK_OVERLAP_CHARS = 200
-MAX_CHUNKS_PER_ARTICLE = 32
+# No per-article chunk cap is enforced; this constant is kept for reference and
+# backward-compatible test assertions only. The old "tail smash" behavior that
+# merged all remaining pieces into one giant final chunk when len(pieces) >
+# MAX_CHUNKS_PER_ARTICLE has been removed. Large articles now produce as many
+# normally-sized chunks as required (e.g. a 140 k-char article → ~100+ chunks).
+MAX_CHUNKS_PER_ARTICLE = 32  # historical reference value; not enforced
 SMALL_ARTICLE_CHARS = 1500
+
+# text-embedding-3-small accepts up to 8191 tokens. Russian Cyrillic text
+# tokenises at roughly 2–3 chars/token in the worst case (tiktoken cl100k_base).
+# A conservative safety ceiling of 6000 characters guarantees that even dense
+# Cyrillic content stays safely below 8191 tokens with headroom.
+# This limit is enforced as a pre-flight check before every embedding call.
+MAX_CHUNK_CHARS_SAFE = 6000
 
 # AI-4 internal retriever (no HTTP API). Exact cosine search over the
 # ArticleService-allowed current published corpus.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from app.core.ai_constants import (
     DEFAULT_CHUNK_OVERLAP_CHARS,
     DEFAULT_CHUNK_SIZE_CHARS,
+    MAX_CHUNK_CHARS_SAFE,
     MAX_CHUNKS_PER_ARTICLE,
 )
 from app.services.ai.chunking import chunk_article, html_to_text, split_windows
@@ -43,7 +44,7 @@ def test_long_text_preserves_order_and_overlap() -> None:
     paragraphs = [f"Section {index}. " + ("word " * 40) for index in range(12)]
     body = "\n\n".join(paragraphs)
     chunks = chunk_article(title="Guide", body=body, body_format="plain")
-    assert 1 < len(chunks) <= MAX_CHUNKS_PER_ARTICLE
+    assert len(chunks) > 1
     for index, chunk in enumerate(chunks):
         assert chunk.startswith("Guide")
         assert chunk == chunks[index]
@@ -111,4 +112,5 @@ def test_split_windows_respects_size_and_overlap() -> None:
 def test_chunk_size_constants_match_architecture() -> None:
     assert DEFAULT_CHUNK_SIZE_CHARS == 1500
     assert DEFAULT_CHUNK_OVERLAP_CHARS == 200
-    assert MAX_CHUNKS_PER_ARTICLE == 32
+    assert MAX_CHUNKS_PER_ARTICLE == 32  # historical reference; no longer enforced
+    assert MAX_CHUNK_CHARS_SAFE == 6000

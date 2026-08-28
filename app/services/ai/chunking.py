@@ -12,7 +12,7 @@ from html import unescape
 from app.core.ai_constants import (
     DEFAULT_CHUNK_OVERLAP_CHARS,
     DEFAULT_CHUNK_SIZE_CHARS,
-    MAX_CHUNKS_PER_ARTICLE,
+    MAX_CHUNK_CHARS_SAFE,
     SMALL_ARTICLE_CHARS,
 )
 from app.core.exceptions import ValidationError
@@ -108,16 +108,23 @@ def chunk_article(
     body_format: str = KnowledgeBodyFormat.MARKDOWN.value,
     chunk_size: int = DEFAULT_CHUNK_SIZE_CHARS,
     overlap: int = DEFAULT_CHUNK_OVERLAP_CHARS,
-    max_chunks: int = MAX_CHUNKS_PER_ARTICLE,
+    max_chunk_chars: int = MAX_CHUNK_CHARS_SAFE,
 ) -> list[str]:
     """Deterministic chunks: same inputs always yield the same list.
 
     Each chunk is prefixed with the article title so retrieval can match
     policy names. Empty title+body returns an empty list (no blank chunks).
-    """
-    if max_chunks < 1:
-        raise ValidationError("max_chunks must be >= 1")
 
+    There is no per-article chunk count limit. A 140 k-char article produces
+    ~100+ chunks; a 200 k-char article produces ~160+ chunks. All chunks are
+    within ``max_chunk_chars`` characters, which keeps them safely below the
+    embedding model's token limit (text-embedding-3-small: 8191 tokens;
+    6000 chars is a conservative ceiling for dense Cyrillic text).
+
+    The old "tail smash" behavior (merging all remaining pieces into a single
+    giant chunk when the count exceeded MAX_CHUNKS_PER_ARTICLE) has been
+    removed. No article content is ever silently discarded.
+    """
     title_n, body_n = extract_index_text(title=title, body=body, body_format=body_format)
     if not title_n and not body_n:
         return []
@@ -136,15 +143,17 @@ def chunk_article(
         body_window = chunk_size
 
     pieces = split_windows(body_n, size=body_window, overlap=overlap)
-    if len(pieces) > max_chunks:
-        head = pieces[: max_chunks - 1]
-        tail = "\n".join(pieces[max_chunks - 1 :])
-        pieces = [*head, tail]
 
     chunks: list[str] = []
     for piece in pieces:
         content = f"{prefix}{piece}" if prefix else piece
         content = content.strip()
-        if content:
-            chunks.append(content)
+        if not content:
+            continue
+        if len(content) > max_chunk_chars:
+            raise ValidationError(
+                f"chunk exceeds safe embedding limit: {len(content)} chars "
+                f"(max {max_chunk_chars}). Reduce chunk_size or max_chunk_chars."
+            )
+        chunks.append(content)
     return chunks
