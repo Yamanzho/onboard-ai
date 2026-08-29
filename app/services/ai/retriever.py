@@ -124,6 +124,7 @@ class KnowledgeRetriever:
         top_k: int = DEFAULT_RETRIEVAL_TOP_K,
         claimed_company_id: UUID | None = None,
         min_score: float | None = None,
+        embedding_query: str | None = None,
     ) -> list[RetrievalHit]:
         """ACL-first hybrid retrieval. ``claimed_company_id`` is untrusted if provided.
 
@@ -131,10 +132,13 @@ class KnowledgeRetriever:
         merging. Default ``None`` applies no cutoff — fake embeddings cannot
         calibrate a production no-answer threshold.
 
-        The ``query`` parameter must already be the (possibly expanded) retrieval
-        query. The LLM user-prompt always receives the original user question,
-        never this expanded string (expansion is applied by AIChatService before
-        calling this method).
+        ``query`` is the original user question. Lexical/FTS always tokenises
+        this string so conversation history cannot flip AND/OR or inject
+        assistant terms into ``to_tsquery``.
+
+        ``embedding_query`` is optional and used only for the vector embedding.
+        Chat may pass a history-expanded string here; the LLM still receives
+        the original question from AIChatService, never this value.
         """
         started = time.perf_counter()
         result_status = "error"
@@ -145,6 +149,11 @@ class KnowledgeRetriever:
         resolved_top_k: int | None = None
         try:
             normalized = _validate_query(query)
+            embed_text = (
+                _validate_query(embedding_query)
+                if embedding_query is not None
+                else normalized
+            )
             resolved_top_k = _validate_top_k(top_k)
             _validate_min_score(min_score)
 
@@ -177,7 +186,7 @@ class KnowledgeRetriever:
                     "embedding dimension mismatch: provider="
                     f"{provider.dimension}, column={KB_CHUNK_VECTOR_DIMENSION}"
                 )
-            vector = await provider.embed(normalized)
+            vector = await provider.embed(embed_text)
             if len(vector) != KB_CHUNK_VECTOR_DIMENSION:
                 raise ValidationError(
                     "embedding dimension mismatch: expected "
@@ -188,6 +197,7 @@ class KnowledgeRetriever:
                 MAX_RETRIEVAL_CANDIDATES,
                 max(resolved_top_k * MAX_CHUNKS_PER_ARTICLE_RESULT, resolved_top_k),
             )
+            # FTS always uses the original question, never the embedding expansion.
             tsquery = _build_tsquery(normalized)
 
             async with self._uow_factory() as uow:

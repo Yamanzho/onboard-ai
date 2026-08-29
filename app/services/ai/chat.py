@@ -114,16 +114,17 @@ class AIChatService:
             )
             llm = self._llm()
             model_name = llm.model
-            # Expand short follow-up queries for RETRIEVAL ONLY.
-            # The LLM always receives `normalized` (the original question).
-            retrieval_query = _expand_query_with_history(normalized, history)
+            # Expand short follow-ups for the embedding query only.
+            # Lexical/FTS and the LLM always use `normalized` (original question).
+            embedding_query = _expand_query_with_history(normalized, history)
             hits = await self._retriever.retrieve(
-                retrieval_query,
+                normalized,
                 actor_company_id=actor_company_id,
                 actor_employee_id=actor_employee_id,
                 actor_role=actor_role,
                 claimed_company_id=claimed_company_id,
                 top_k=top_k,
+                embedding_query=embedding_query,
             )
             hit_count = len(hits)
             if not hits:
@@ -343,9 +344,12 @@ def _expand_query_with_history(
     """Return a retrieval-only expansion of ``query`` using conversation history.
 
     Purpose: short proper-name follow-ups such as "Евгений" can be expanded
-    with the last assistant reply so that both vector and lexical search have
-    richer signal.  The expanded string is used ONLY for retrieval; the LLM
-    always receives the original ``query`` as the user question.
+    with the last assistant reply so the *vector* embedding has richer
+    context. Lexical/FTS must keep the original ``query`` so assistant text
+    cannot change tsquery AND/OR or drown exact-name matches.
+
+    The expanded string is used ONLY as ``embedding_query``. The LLM always
+    receives the original ``query`` as the user question.
 
     Trigger conditions (both must hold):
     * ``query`` contains at most ``SHORT_QUERY_EXPANSION_WORDS`` whitespace-

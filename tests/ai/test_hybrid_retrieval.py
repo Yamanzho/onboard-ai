@@ -47,7 +47,7 @@ from app.services.ai.embeddings import FakeEmbeddingProvider
 from app.services.ai.history import HistoryTurn
 from app.services.ai.retriever import KnowledgeRetriever, _build_tsquery
 from app.services.knowledge.article_service import ArticleService
-from tests.conftest import _uow_factory
+from tests.conftest import _create_employee, _uow_factory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -655,3 +655,120 @@ async def test_semantic_query_still_works_after_hybrid(
     )
     assert hits
     assert any("Прочие поименованные лица" in h.content for h in hits)
+
+
+# ===========================================================================
+# Same-ACL users must get equivalent retrieval; expansion must not hijack FTS
+# ===========================================================================
+
+_PERSONNEL_BODY = (
+    "Прочие поименованные лица\n\n"
+    "Тей Евгений Г., Темир Ельнур Н., Гылымбек Алгыс,\n"
+    "Джумадуллаева Н. И., Омарова Г. М., Рамиль\n\n"
+    "Главный бухгалтер: Омарова Г. М."
+)
+
+
+async def test_unrelated_embedding_expansion_does_not_hide_lexical_name(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    """Assistant history used for embeddings must not change FTS tokens.
+
+    A short follow-up like "Евгений" after an unrelated answer used to be
+    concatenated into to_tsquery, flipping AND→OR and drowning the name.
+    """
+    await _publish(
+        article_service,
+        company_a,
+        title="общее сведение",
+        body=_PERSONNEL_BODY,
+    )
+    unrelated = (
+        "Евгений История Азерота древние эпохи возникновение основных конфликтов "
+        "Артас Менетил Сильвана Ветрокрылая"
+    )
+    hits = await retriever.retrieve(
+        "Евгений",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        embedding_query=unrelated,
+        **_KWARGS,
+    )
+    assert hits, "Original-name FTS must still retrieve the personnel chunk"
+    assert any("Евгений" in h.content for h in hits)
+
+
+async def test_two_same_company_employees_same_hits_for_name_and_accountant(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    """Two employees with the same company ACL must retrieve the same articles."""
+    employee_peer = await _create_employee(
+        company_id=company_a.id,
+        role=EmployeeRole.EMPLOYEE.value,
+    )
+    await _publish(
+        article_service,
+        company_a,
+        title="общее сведение",
+        body=_PERSONNEL_BODY,
+    )
+
+    questions = ("Евгений", "Кто главный бухгалтер?")
+    for question in questions:
+        hits_a = await retriever.retrieve(
+            question,
+            actor_company_id=company_a.id,
+            actor_employee_id=employee_a.id,
+            **_KWARGS,
+        )
+        hits_b = await retriever.retrieve(
+            question,
+            actor_company_id=company_a.id,
+            actor_employee_id=employee_peer.id,
+            embedding_query=f"{question} unrelated prior assistant warcraft lore",
+            **_KWARGS,
+        )
+        assert hits_a, f"employee A must retrieve KB for {question!r}"
+        assert hits_b, f"employee B must retrieve KB for {question!r}"
+        articles_a = {h.article_id for h in hits_a}
+        articles_b = {h.article_id for h in hits_b}
+        assert articles_a == articles_b, (
+            f"same-ACL employees must retrieve the same articles for {question!r}"
+        )
+
+
+async def test_other_company_employee_cannot_retrieve_personnel_kb(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    company_b: Company,
+    employee_a: Employee,
+    employee_b: Employee,
+) -> None:
+    """Unauthorized tenant must not receive the other company's personnel KB."""
+    await _publish(
+        article_service,
+        company_a,
+        title="общее сведение",
+        body=_PERSONNEL_BODY,
+    )
+    hits_b = await retriever.retrieve(
+        "Евгений",
+        actor_company_id=company_b.id,
+        actor_employee_id=employee_b.id,
+        **_KWARGS,
+    )
+    assert all("Евгений" not in h.content for h in hits_b)
+    hits_a = await retriever.retrieve(
+        "Евгений",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert any("Евгений" in h.content for h in hits_a)
