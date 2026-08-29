@@ -1,6 +1,7 @@
 import type {
   Employee,
   EmployeeCreate,
+  EmployeeInviteHistoryResponse,
   EmployeeListParams,
   EmployeeUpdate,
 } from '../types/employee'
@@ -77,4 +78,12 @@ export async function resendInvite(employeeId: string): Promise<Employee> {
     method: 'POST',
     body: {},
   })
+}
+
+export async function listInvites(
+  employeeId: string,
+): Promise<EmployeeInviteHistoryResponse> {
+  return apiRequest<EmployeeInviteHistoryResponse>(
+    `/api/v1/employees/${employeeId}/invites`,
+  )
 }

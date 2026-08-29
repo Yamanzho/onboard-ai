@@ -39,6 +39,10 @@ export function labelEmployeeStatus(status: string): string {
   return labelEnum('employeeStatus', status)
 }
 
+export function labelInviteStatus(status: string): string {
+  return labelEnum('inviteStatus', status)
+}
+
 export function labelAssignmentStatus(status: string): string {
   return labelEnum('assignmentStatus', status)
 }

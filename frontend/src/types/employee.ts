@@ -53,3 +53,20 @@ export interface EmployeeListParams {
 
 export const EMPLOYEE_ROLES: EmployeeRole[] = ['employee', 'hr', 'admin']
 export const EMPLOYEE_STATUSES: EmployeeStatus[] = ['invited', 'active', 'archived']
+
+export type InviteHistoryStatus = 'active' | 'used' | 'expired'
+export type OnboardingInvitePurpose = 'employee' | 'hr' | 'admin'
+
+export interface EmployeeInviteHistoryItem {
+  id: string
+  purpose: OnboardingInvitePurpose | string
+  status: InviteHistoryStatus | string
+  invited_email: string
+  created_at: string
+  expires_at: string
+  used_at: string | null
+}
+
+export interface EmployeeInviteHistoryResponse {
+  items: EmployeeInviteHistoryItem[]
+}

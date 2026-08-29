@@ -37,6 +37,14 @@ export function useEmployee(employeeId: string | undefined) {
   })
 }
 
+export function useEmployeeInvites(employeeId: string | undefined) {
+  return useQuery({
+    queryKey: ['employee-invites', employeeId],
+    queryFn: () => employeesApi.listInvites(employeeId!),
+    enabled: Boolean(employeeId),
+  })
+}
+
 export function useEmployeeMutations() {
   const qc = useQueryClient()
   const { user } = useAuth()
@@ -44,6 +52,7 @@ export function useEmployeeMutations() {
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['employees'] })
     void qc.invalidateQueries({ queryKey: ['employee'] })
+    void qc.invalidateQueries({ queryKey: ['employee-invites'] })
   }
 
   const create = useMutation({

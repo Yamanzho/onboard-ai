@@ -101,3 +101,23 @@ class EmployeeResponse(BaseModel):
     invite_url: str | None = None
     invite_detail: str | None = None
     telegram_invite_url: str | None = None
+
+
+InviteHistoryStatusLiteral = Literal["active", "used", "expired"]
+OnboardingInvitePurposeLiteral = Literal["employee", "hr", "admin"]
+
+
+class EmployeeInviteHistoryItem(BaseModel):
+    """Onboarding invite metadata for admin history — never includes secrets."""
+
+    id: UUID
+    purpose: OnboardingInvitePurposeLiteral
+    status: InviteHistoryStatusLiteral
+    invited_email: str
+    created_at: datetime
+    expires_at: datetime
+    used_at: datetime | None = None
+
+
+class EmployeeInviteHistoryResponse(BaseModel):
+    items: list[EmployeeInviteHistoryItem]

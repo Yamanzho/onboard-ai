@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Callable
-from datetime import date
+from datetime import UTC, date, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
@@ -18,6 +18,7 @@ from app.core.security import hash_password, verify_employee_password, verify_pa
 from app.db.enums import CompanyAuditAction, EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
+from app.schemas.employee import EmployeeInviteHistoryItem
 from app.services.company_audit import record_company_audit
 from app.services.email import InviteEmailResult
 from app.services.platform_management import InviteService
@@ -178,6 +179,63 @@ class EmployeeService:
                     not_found_message=f"Employee {employee_id} not found",
                 )
             return employee
+
+    @staticmethod
+    def _invite_history_status(
+        *,
+        used_at: datetime | None,
+        expires_at: datetime,
+        now: datetime,
+    ) -> str:
+        if used_at is not None:
+            return "used"
+        if expires_at <= now:
+            return "expired"
+        return "active"
+
+    async def list_invites(
+        self,
+        employee_id: UUID,
+        *,
+        company_id: UUID,
+    ) -> list[EmployeeInviteHistoryItem]:
+        """List onboarding invite history for an employee in the actor's company.
+
+        Tenant-checks the employee first, then reads invite rows under platform
+        RLS (invite table has no tenant SELECT). Never returns token_hash.
+        """
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            employee = await uow.employees.get_by_id(employee_id)
+            if employee is None:
+                raise NotFoundError(f"Employee {employee_id} not found")
+            ensure_same_company(
+                resource_company_id=employee.company_id,
+                actor_company_id=company_id,
+                not_found_message=f"Employee {employee_id} not found",
+            )
+            await uow.enter_platform()
+            rows = await uow.employee_invites.list_by_employee_id(
+                employee_id,
+                employee.company_id,
+            )
+            now = datetime.now(UTC)
+            return [
+                EmployeeInviteHistoryItem(
+                    id=row.id,
+                    purpose=row.purpose,  # type: ignore[arg-type]
+                    status=self._invite_history_status(
+                        used_at=row.used_at,
+                        expires_at=row.expires_at,
+                        now=now,
+                    ),  # type: ignore[arg-type]
+                    invited_email=row.invited_email,
+                    created_at=row.created_at,
+                    expires_at=row.expires_at,
+                    used_at=row.used_at,
+                )
+                for row in rows
+            ]
 
     async def list_employees(
         self,

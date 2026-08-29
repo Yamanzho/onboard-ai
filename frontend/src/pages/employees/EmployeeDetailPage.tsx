@@ -11,12 +11,17 @@ import {
   EmployeeStatusBadge,
 } from '../../components/employees/EmployeeBadges'
 import { Button } from '../../components/ui/Button'
-import { useEmployee, useEmployeeMutations } from '../../hooks/useEmployees'
+import {
+  useEmployee,
+  useEmployeeInvites,
+  useEmployeeMutations,
+} from '../../hooks/useEmployees'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
-import { t } from '../../i18n'
+import { labelEmployeeRole, labelInviteStatus, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as employeesApi from '../../services/employeesApi'
-import type { Employee } from '../../types/employee'
+import type { Employee, EmployeeInviteHistoryItem } from '../../types/employee'
+import { Badge } from '../../components/ui/Badge'
 
 function formatDate(value: string | null) {
   if (!value) return t('common.emDash')
@@ -27,11 +32,32 @@ function formatDate(value: string | null) {
   }
 }
 
+function formatInviteDate(value: string | null) {
+  if (!value) return t('common.emDash')
+  try {
+    return new Date(value).toLocaleString('ru-RU', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return value
+  }
+}
+
+function InviteStatusBadge({ status }: { status: string }) {
+  const tone =
+    status === 'active' ? 'success' : status === 'expired' ? 'warning' : 'neutral'
+  return <Badge tone={tone}>{labelInviteStatus(status)}</Badge>
+}
+
 async function copyText(value: string): Promise<void> {
   await navigator.clipboard.writeText(value)
 }
 
-type Tab = 'profile' | 'assignments'
+type Tab = 'profile' | 'assignments' | 'invitations'
 
 export function EmployeeDetailPage() {
   const { employeeId } = useParams<{ employeeId: string }>()
@@ -43,6 +69,12 @@ export function EmployeeDetailPage() {
   const editPath = (id: string) =>
     inHrMgmt ? paths.path(`/hr/${id}/edit`) : paths.employeeEdit(id)
   const { data: employee, isLoading, error, refetch } = useEmployee(employeeId)
+  const {
+    data: inviteHistory,
+    isLoading: invitesLoading,
+    error: invitesError,
+    refetch: refetchInvites,
+  } = useEmployeeInvites(employeeId)
   const { remove } = useEmployeeMutations()
   const [actionError, setActionError] = useState<string | null>(null)
   const [actionSuccess, setActionSuccess] = useState<string | null>(null)
@@ -119,6 +151,7 @@ export function EmployeeDetailPage() {
         setActionSuccess(t('employees.inviteSmtpOff'))
       }
       void refetch()
+      void refetchInvites()
     } catch (err) {
       setActionError(
         err instanceof ApiError ? err.message : t('employees.resendInviteFailed'),
@@ -305,6 +338,7 @@ export function EmployeeDetailPage() {
           [
             ['profile', t('employees.tabProfile')],
             ['assignments', t('employees.tabAssignments')],
+            ['invitations', t('employees.tabInvitations')],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -336,8 +370,172 @@ export function EmployeeDetailPage() {
             ))}
           </dl>
         </div>
-      ) : (
+      ) : tab === 'assignments' ? (
         <EmployeeAssignmentsPanel employeeId={employeeId} />
+      ) : (
+        <InvitationsPanel
+          items={inviteHistory?.items ?? []}
+          loading={invitesLoading}
+          error={invitesError}
+          canCreate={canResendInvite}
+          creating={invitePending}
+          inviteLinks={inviteLinks}
+          copyHint={copyHint}
+          onCreate={() => void onResendInvite()}
+          onCopy={onCopy}
+        />
+      )}
+    </div>
+  )
+}
+
+function InvitationsPanel({
+  items,
+  loading,
+  error,
+  canCreate,
+  creating,
+  inviteLinks,
+  copyHint,
+  onCreate,
+  onCopy,
+}: {
+  items: EmployeeInviteHistoryItem[]
+  loading: boolean
+  error: unknown
+  canCreate: boolean
+  creating: boolean
+  inviteLinks: {
+    invite_url?: string | null
+    telegram_invite_url?: string | null
+    invite_email_sent?: boolean | null
+  } | null
+  copyHint: string | null
+  onCreate: () => void
+  onCopy: (label: string, value: string) => void
+}) {
+  if (loading) return <LoadingBlock />
+  if (error) {
+    return (
+      <ErrorAlert
+        message={
+          error instanceof Error
+            ? error.message
+            : t('employees.invitationsLoadFailed')
+        }
+      />
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {canCreate ? (
+        <div className="space-y-2 rounded-lg border border-[var(--color-border)] bg-white p-4 text-sm">
+          <Button type="button" disabled={creating} onClick={onCreate}>
+            {creating ? t('common.saving') : t('employees.createNewInvitation')}
+          </Button>
+          <p className="text-[var(--color-muted)]">
+            {t('employees.createInvitationHint')}
+          </p>
+        </div>
+      ) : null}
+
+      {inviteLinks ? (
+        <div className="space-y-3 rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm">
+          <p className="font-medium text-emerald-900">
+            {t('employees.newInvitationCreated')}
+          </p>
+          {inviteLinks.invite_url ? (
+            <div className="space-y-2">
+              <p className="font-medium">{t('employees.inviteWebUrl')}</p>
+              <code className="block break-all rounded bg-white p-2 text-xs">
+                {inviteLinks.invite_url}
+              </code>
+              <Button
+                type="button"
+                onClick={() =>
+                  onCopy(t('employees.inviteWebUrl'), inviteLinks.invite_url!)
+                }
+              >
+                {t('employees.copyInviteUrl')}
+              </Button>
+            </div>
+          ) : null}
+          {inviteLinks.telegram_invite_url ? (
+            <div className="space-y-2">
+              <p className="font-medium">{t('employees.inviteTelegramUrl')}</p>
+              <code className="block break-all rounded bg-white p-2 text-xs">
+                {inviteLinks.telegram_invite_url}
+              </code>
+              <Button
+                type="button"
+                onClick={() =>
+                  onCopy(
+                    t('employees.inviteTelegramUrl'),
+                    inviteLinks.telegram_invite_url!,
+                  )
+                }
+              >
+                {t('employees.copyTelegramInvitation')}
+              </Button>
+            </div>
+          ) : null}
+          {copyHint ? (
+            <p className="text-[var(--color-muted)]">{copyHint}</p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {items.length === 0 ? (
+        <p className="text-sm text-[var(--color-muted)]">
+          {t('employees.invitationsEmpty')}
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-[var(--color-border)] bg-white">
+          <table className="min-w-full text-left text-sm">
+            <thead className="bg-[var(--color-bg)] text-[var(--color-muted)]">
+              <tr>
+                <th className="px-4 py-2 font-medium">{t('common.status')}</th>
+                <th className="px-4 py-2 font-medium">
+                  {t('employees.inviteColPurpose')}
+                </th>
+                <th className="px-4 py-2 font-medium">
+                  {t('employees.inviteColCreated')}
+                </th>
+                <th className="px-4 py-2 font-medium">
+                  {t('employees.inviteColExpires')}
+                </th>
+                <th className="px-4 py-2 font-medium">
+                  {t('employees.inviteColUsed')}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.map((invite) => (
+                <tr
+                  key={invite.id}
+                  className="border-t border-[var(--color-border)]"
+                >
+                  <td className="px-4 py-2">
+                    <InviteStatusBadge status={invite.status} />
+                  </td>
+                  <td className="px-4 py-2">
+                    {labelEmployeeRole(invite.purpose)}
+                  </td>
+                  <td className="px-4 py-2">
+                    {formatInviteDate(invite.created_at)}
+                  </td>
+                  <td className="px-4 py-2">
+                    {formatInviteDate(invite.expires_at)}
+                  </td>
+                  <td className="px-4 py-2">
+                    {formatInviteDate(invite.used_at)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   )

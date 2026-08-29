@@ -7,7 +7,12 @@ from app.api.auth_deps import HRUser
 from app.api.deps import get_employee_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.auth import PasswordResetInitiateResponse
-from app.schemas.employee import EmployeeCreate, EmployeeResponse, EmployeeUpdate
+from app.schemas.employee import (
+    EmployeeCreate,
+    EmployeeInviteHistoryResponse,
+    EmployeeResponse,
+    EmployeeUpdate,
+)
 from app.services.employee import EmployeeService
 
 router = APIRouter(prefix="/employees", tags=["Employees"])
@@ -141,6 +146,35 @@ async def get_employee(
         company_id=current_user.company_id,
     )
     return EmployeeResponse.model_validate(employee)
+
+
+@router.get(
+    "/{employee_id}/invites",
+    response_model=EmployeeInviteHistoryResponse,
+    summary="List employee onboarding invitations",
+    description=(
+        "Return onboarding invite history for an employee in the caller's "
+        "company. Metadata only — never includes token_hash, raw token, or "
+        "invite URLs. Password-reset tokens are excluded."
+    ),
+    responses={
+        **_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
+            status.HTTP_422_UNPROCESSABLE_CONTENT
+        ],
+    },
+)
+async def list_employee_invites(
+    employee_id: UUID,
+    current_user: HRUser,
+    service: ServiceDep,
+) -> EmployeeInviteHistoryResponse:
+    items = await service.list_invites(
+        employee_id,
+        company_id=current_user.company_id,
+    )
+    return EmployeeInviteHistoryResponse(items=items)
 
 
 @router.patch(
