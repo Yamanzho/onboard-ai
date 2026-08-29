@@ -78,3 +78,20 @@ MAX_RETRIEVAL_QUERY_CHARS = 2000
 # without dumping an entire policy into a future prompt.
 MAX_CHUNKS_PER_ARTICLE_RESULT = 2
 MAX_RETRIEVAL_CANDIDATES = 100
+
+# AI-hybrid-1: hybrid vector + FTS retrieval.
+# LEXICAL_FLOOR_SCORE: synthetic score assigned to chunks found only by FTS
+#   (not in vector top-N). Must be > typical irrelevant vector scores so that
+#   a confirmed exact-text match can enter the final top-K pool.
+# LEXICAL_BOOST: added to the vector score when a chunk is found by both
+#   vector and FTS retrieval. Applied exactly once per chunk.
+# LEXICAL_OVERFETCH: number of FTS candidates to retrieve before merging.
+# SHORT_QUERY_EXPANSION_WORDS: queries with at most this many whitespace-
+#   separated words trigger retrieval-query expansion using conversation history.
+# SHORT_QUERY_EXPANSION_MAX_CHARS: hard cap on the expanded retrieval string
+#   sent to the embedding provider; keeps it within MAX_RETRIEVAL_QUERY_CHARS.
+LEXICAL_FLOOR_SCORE: float = 0.25
+LEXICAL_BOOST: float = 0.15
+LEXICAL_OVERFETCH: int = 10
+SHORT_QUERY_EXPANSION_WORDS: int = 2
+SHORT_QUERY_EXPANSION_MAX_CHARS: int = 512

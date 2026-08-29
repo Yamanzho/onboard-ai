@@ -21,6 +21,8 @@ from app.core.ai_constants import (
     MAX_CHAT_HISTORY_MESSAGES,
     MAX_CHAT_QUESTION_CHARS,
     MAX_CONVERSATION_MESSAGE_CHARS,
+    SHORT_QUERY_EXPANSION_MAX_CHARS,
+    SHORT_QUERY_EXPANSION_WORDS,
 )
 from app.core.config import get_settings
 from app.core.exceptions import ForbiddenError, ServiceUnavailableError, ValidationError
@@ -112,8 +114,11 @@ class AIChatService:
             )
             llm = self._llm()
             model_name = llm.model
+            # Expand short follow-up queries for RETRIEVAL ONLY.
+            # The LLM always receives `normalized` (the original question).
+            retrieval_query = _expand_query_with_history(normalized, history)
             hits = await self._retriever.retrieve(
-                normalized,
+                retrieval_query,
                 actor_company_id=actor_company_id,
                 actor_employee_id=actor_employee_id,
                 actor_role=actor_role,
@@ -329,6 +334,43 @@ def _public_citations(citations: tuple[Citation, ...]) -> list[dict[str, str]] |
         }
         for citation in citations
     ]
+
+
+def _expand_query_with_history(
+    query: str,
+    history: tuple[HistoryTurn, ...],
+) -> str:
+    """Return a retrieval-only expansion of ``query`` using conversation history.
+
+    Purpose: short proper-name follow-ups such as "Евгений" can be expanded
+    with the last assistant reply so that both vector and lexical search have
+    richer signal.  The expanded string is used ONLY for retrieval; the LLM
+    always receives the original ``query`` as the user question.
+
+    Trigger conditions (both must hold):
+    * ``query`` contains at most ``SHORT_QUERY_EXPANSION_WORDS`` whitespace-
+      separated words (default 2).
+    * ``history`` contains at least one assistant turn.
+
+    The expansion concatenates ``query`` and the latest assistant content,
+    trimmed to ``SHORT_QUERY_EXPANSION_MAX_CHARS``.  If no assistant turn
+    exists, or the query is not short, the original query is returned unchanged.
+
+    Security: the expanded string is sent to the embedding provider only.
+    It is never used as an LLM instruction or as the user-visible question.
+    """
+    if len(query.split()) > SHORT_QUERY_EXPANSION_WORDS:
+        return query
+    if not history:
+        return query
+    last_assistant = next(
+        (t.content for t in reversed(history) if t.role == "assistant"),
+        None,
+    )
+    if not last_assistant:
+        return query
+    combined = f"{query} {last_assistant}"
+    return combined[:SHORT_QUERY_EXPANSION_MAX_CHARS]
 
 
 def _validate_question(question: object) -> str:

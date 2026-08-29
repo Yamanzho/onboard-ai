@@ -1,4 +1,4 @@
-"""ACL-first KB retriever. Vector search is not an authorization source.
+"""ACL-first KB retriever with hybrid vector + FTS retrieval.
 
 Authorization path (the only one):
 
@@ -9,9 +9,26 @@ Chunk ``metadata`` / ``extra`` is never read for access control. Tenant comes
 from the authenticated actor, never from query text, UUIDs in the query, or
 spoofed JSON. Super Admin is ForbiddenError without impersonation.
 
-No public `/ai/search` API. Chat is POST /api/v1/ai/chat via AIChatService.
+No public ``/ai/search`` API. Chat is POST /api/v1/ai/chat via AIChatService.
 Embeddings come from the configured EmbeddingProvider (fake in CI; OpenAI
 text-embedding-3-small in production).
+
+Hybrid retrieval (AI-hybrid-1)
+-------------------------------
+``retrieve()`` runs two independent searches and merges by ``chunk_id``:
+
+1. Vector search — pgvector cosine distance (unchanged from AI-4).
+2. Lexical search — PostgreSQL FTS with ``to_tsvector('simple', content)``
+   and a sanitised ``to_tsquery`` built from alphanumeric query tokens.
+
+Merged scoring:
+
+* Vector-only: ``score = clamp(1 - cosine_distance, 0, 1)``
+* Vector + lexical: ``score += LEXICAL_BOOST`` (applied exactly once)
+* Lexical-only (not in vector top-N): ``score = LEXICAL_FLOOR_SCORE``
+
+The ``lexical_score`` from ``ts_rank_cd`` is dimensionless and NOT added to
+cosine similarity. It is only used to rank FTS candidates before merging.
 
 Score is ``clamp(1 - cosine_distance, 0, 1)`` for ranking. Fake embeddings
 are not calibrated semantic relevance; there is no production threshold.
@@ -20,6 +37,7 @@ are not calibrated semantic relevance; there is no production threshold.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -29,6 +47,9 @@ from uuid import UUID
 from app.core.ai_constants import (
     DEFAULT_RETRIEVAL_TOP_K,
     KB_CHUNK_VECTOR_DIMENSION,
+    LEXICAL_BOOST,
+    LEXICAL_FLOOR_SCORE,
+    LEXICAL_OVERFETCH,
     MAX_CHUNKS_PER_ARTICLE_RESULT,
     MAX_RETRIEVAL_CANDIDATES,
     MAX_RETRIEVAL_QUERY_CHARS,
@@ -49,6 +70,11 @@ logger = logging.getLogger("app.kb.retrieve")
 
 _ARTICLE_LIST_PAGE = 1000
 
+# Matches safe alphanumeric tokens in Cyrillic + Latin + digits.
+# Strips punctuation, operators, and any character that could inject
+# PostgreSQL tsquery syntax before the string reaches the DB.
+_TOKEN_RE = re.compile(r"[a-zа-яё0-9]+", re.IGNORECASE | re.UNICODE)
+
 
 @dataclass(frozen=True, slots=True)
 class RetrievalHit:
@@ -64,7 +90,12 @@ class RetrievalHit:
 
 
 class KnowledgeRetriever:
-    """Return ranked current-published chunks the actor may already read."""
+    """Return ranked current-published chunks the actor may already read.
+
+    Uses hybrid retrieval: vector cosine search + PostgreSQL FTS merged by
+    chunk_id. Both paths enforce the same ACL (allowed_article_ids) and the
+    same tenant RLS context. See module docstring for scoring details.
+    """
 
     def __init__(
         self,
@@ -94,16 +125,23 @@ class KnowledgeRetriever:
         claimed_company_id: UUID | None = None,
         min_score: float | None = None,
     ) -> list[RetrievalHit]:
-        """ACL-first retrieval. ``claimed_company_id`` is untrusted if provided.
+        """ACL-first hybrid retrieval. ``claimed_company_id`` is untrusted if provided.
 
-        ``min_score`` is an optional 0..1 cosine-similarity floor. Default
-        ``None`` applies no cutoff — fake embeddings cannot calibrate a
-        production no-answer threshold.
+        ``min_score`` is an optional 0..1 cosine-similarity floor applied after
+        merging. Default ``None`` applies no cutoff — fake embeddings cannot
+        calibrate a production no-answer threshold.
+
+        The ``query`` parameter must already be the (possibly expanded) retrieval
+        query. The LLM user-prompt always receives the original user question,
+        never this expanded string (expansion is applied by AIChatService before
+        calling this method).
         """
         started = time.perf_counter()
         result_status = "error"
         hit_count = 0
         allowed_count = 0
+        vector_candidates = 0
+        lexical_candidates = 0
         resolved_top_k: int | None = None
         try:
             normalized = _validate_query(query)
@@ -150,15 +188,32 @@ class KnowledgeRetriever:
                 MAX_RETRIEVAL_CANDIDATES,
                 max(resolved_top_k * MAX_CHUNKS_PER_ARTICLE_RESULT, resolved_top_k),
             )
+            tsquery = _build_tsquery(normalized)
+
             async with self._uow_factory() as uow:
                 await uow.enter_tenant(actor_company_id)
-                rows = await uow.knowledge_article_chunks.search_similar_current_published(
+                vector_rows = await uow.knowledge_article_chunks.search_similar_current_published(
                     allowed_article_ids=allowed_ids,
                     query_embedding=vector,
                     limit=overfetch,
                 )
+                lexical_rows = []
+                if tsquery:
+                    lexical_rows = await uow.knowledge_article_chunks.search_lexical_current_published(
+                        allowed_article_ids=allowed_ids,
+                        tsquery_text=tsquery,
+                        limit=LEXICAL_OVERFETCH,
+                    )
 
-            hits = _dedupe_and_score(rows, top_k=resolved_top_k, min_score=min_score)
+            vector_candidates = len(vector_rows)
+            lexical_candidates = len(lexical_rows)
+
+            hits = _merge_and_score(
+                vector_rows=vector_rows,
+                lexical_rows=lexical_rows,
+                top_k=resolved_top_k,
+                min_score=min_score,
+            )
             hit_count = len(hits)
             result_status = "success"
             return hits
@@ -180,6 +235,8 @@ class KnowledgeRetriever:
                 actor_employee_id=actor_employee_id,
                 actor_role=actor_role,
                 allowed_articles=allowed_count,
+                vector_candidates=vector_candidates,
+                lexical_candidates=lexical_candidates,
                 hit_count=hit_count,
                 top_k=resolved_top_k if resolved_top_k is not None else top_k,
                 result=result_status,
@@ -218,12 +275,81 @@ class KnowledgeRetriever:
         return collected
 
 
+def _build_tsquery(query: str) -> str | None:
+    """Convert a user query into a safe PostgreSQL ``to_tsquery('simple', ...)`` string.
+
+    Only alphanumeric Cyrillic/Latin/digit tokens are extracted.  Single-char
+    tokens (e.g. Cyrillic initials such as "Г." → "г") are discarded because
+    they produce excessive false positives.
+
+    Token joining:
+    * ≤ 3 meaningful tokens  →  AND (``&``) for higher precision.
+    * > 3 meaningful tokens  →  OR  (``|``) for higher recall.
+
+    Returns ``None`` when no valid tokens remain (e.g. punctuation-only input)
+    so callers can skip the lexical path entirely.
+
+    **Security:** raw user input MUST NOT reach ``to_tsquery()`` directly.
+    This function ensures only safe lowercase alphanumeric tokens are used.
+    PostgreSQL tsquery operators (``&``, ``|``, ``!``, ``(``, ``)``, ``:``)
+    are never present in the output because they are excluded by the regex.
+    """
+    tokens = [t.lower() for t in _TOKEN_RE.findall(query) if len(t) > 1]
+    if not tokens:
+        return None
+    operator = " & " if len(tokens) <= 3 else " | "
+    return operator.join(tokens)
+
+
+def _merge_and_score(
+    *,
+    vector_rows: list[tuple[KnowledgeArticleChunk, float, str]],
+    lexical_rows: list[tuple[KnowledgeArticleChunk, float, str]],
+    top_k: int,
+    min_score: float | None,
+) -> list[RetrievalHit]:
+    """Merge vector and lexical candidates, assign hybrid scores, deduplicate.
+
+    Scoring rules (see module docstring for rationale):
+    * Vector-only:       ``final_score = clamp(1 - distance, 0, 1)``
+    * Vector + lexical:  ``final_score = vector_score + LEXICAL_BOOST``
+    * Lexical-only:      ``final_score = LEXICAL_FLOOR_SCORE``
+
+    The ``ts_rank_cd`` value from lexical rows is used only to order FTS
+    candidates before the merge; it is NOT added to the cosine score.
+
+    After scoring, the pool is sorted descending by ``final_score`` and the
+    existing ``MAX_CHUNKS_PER_ARTICLE_RESULT`` cap and ``top_k`` limit are
+    applied via ``_dedupe_and_score``.
+    """
+    # chunk_id → (chunk, final_score, title)
+    pool: dict[UUID, tuple[KnowledgeArticleChunk, float, str]] = {}
+
+    for chunk, distance, title in vector_rows:
+        score = _cosine_similarity_score(distance)
+        pool[chunk.id] = (chunk, score, title)
+
+    for chunk, _lex_score, title in lexical_rows:
+        # _lex_score (ts_rank_cd) is intentionally not added to the cosine
+        # scale — the two metrics are not comparable.
+        if chunk.id in pool:
+            existing_chunk, existing_score, existing_title = pool[chunk.id]
+            pool[chunk.id] = (existing_chunk, existing_score + LEXICAL_BOOST, existing_title)
+        else:
+            pool[chunk.id] = (chunk, LEXICAL_FLOOR_SCORE, title)
+
+    sorted_pool = sorted(pool.values(), key=lambda x: x[1], reverse=True)
+    return _dedupe_and_score(sorted_pool, top_k=top_k, min_score=min_score)
+
+
 def _log_retrieve(
     *,
     actor_company_id: UUID,
     actor_employee_id: UUID,
     actor_role: str,
     allowed_articles: int,
+    vector_candidates: int,
+    lexical_candidates: int,
     hit_count: int,
     top_k: object,
     result: str,
@@ -232,12 +358,15 @@ def _log_retrieve(
     """Operational retrieve log. Never include query, body, embeddings, or secrets."""
     logger.info(
         "kb_retrieve request_id=%s company_id=%s employee_id=%s actor_role=%s "
-        "allowed_articles=%s hit_count=%s top_k=%s result=%s duration_ms=%.1f",
+        "allowed_articles=%s vector_candidates=%s lexical_candidates=%s "
+        "hit_count=%s top_k=%s result=%s duration_ms=%.1f",
         request_id_log_value(),
         actor_company_id,
         actor_employee_id,
         actor_role,
         allowed_articles,
+        vector_candidates,
+        lexical_candidates,
         hit_count,
         top_k,
         result,
@@ -287,15 +416,18 @@ def _cosine_similarity_score(distance: float) -> float:
 
 
 def _dedupe_and_score(
-    rows: list[tuple[KnowledgeArticleChunk, float, str]],
+    sorted_pool: list[tuple[KnowledgeArticleChunk, float, str]],
     *,
     top_k: int,
     min_score: float | None,
 ) -> list[RetrievalHit]:
+    """Apply per-article chunk cap and top_k limit to a pre-sorted pool.
+
+    ``sorted_pool`` must already be sorted descending by final score.
+    """
     seen_article: dict[UUID, int] = {}
     hits: list[RetrievalHit] = []
-    for chunk, distance, title in rows:
-        score = _cosine_similarity_score(distance)
+    for chunk, score, title in sorted_pool:
         if min_score is not None and score < min_score:
             continue
         used = seen_article.get(chunk.article_id, 0)

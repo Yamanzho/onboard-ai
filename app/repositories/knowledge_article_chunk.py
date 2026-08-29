@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.enums import KnowledgeArticleStatus
@@ -90,4 +90,63 @@ class KnowledgeArticleChunkRepository(BaseRepository[KnowledgeArticleChunk]):
         rows: list[tuple[KnowledgeArticleChunk, float, str]] = []
         for chunk, dist, title in result.all():
             rows.append((chunk, float(dist), str(title)))
+        return rows
+
+    async def search_lexical_current_published(
+        self,
+        *,
+        allowed_article_ids: Sequence[UUID],
+        tsquery_text: str,
+        limit: int,
+    ) -> list[tuple[KnowledgeArticleChunk, float, str]]:
+        """FTS search over chunk content inside an already-authorized article id set.
+
+        Uses the same ACL guards as ``search_similar_current_published``:
+        - ``allowed_article_ids`` computed by ArticleService before this call
+        - ``current_version_id`` join excludes historical chunk versions
+        - ``status = 'published'`` filter
+        - tenant RLS enforced by the session's ``app.company_id`` setting
+
+        The ``tsquery_text`` must already be sanitised (alphanumeric tokens only).
+        Never pass raw user input directly.
+
+        Returns ``(chunk, lexical_score, article_title)`` ordered by
+        ``ts_rank_cd`` descending.  ``lexical_score`` is a dimensionless float
+        in the ``[0, 1]`` range (rank / (rank + 1) normalisation) and is NOT
+        comparable to cosine similarity; callers must not add the two scales.
+        """
+        self._ensure_rls_context()
+        if not allowed_article_ids or limit < 1 or not tsquery_text:
+            return []
+
+        tsv = func.to_tsvector(text("'simple'"), KnowledgeArticleChunk.content)
+        tsq = func.to_tsquery(text("'simple'"), tsquery_text)
+        # ts_rank_cd normalisation flag 32 → rank / (rank + 1), bounded 0..1.
+        rank = func.ts_rank_cd(tsv, tsq, 32)
+
+        stmt = (
+            select(KnowledgeArticleChunk, rank, KnowledgeArticleVersion.title)
+            .join(
+                KnowledgeArticle,
+                KnowledgeArticle.id == KnowledgeArticleChunk.article_id,
+            )
+            .join(
+                KnowledgeArticleVersion,
+                KnowledgeArticleVersion.id == KnowledgeArticle.current_version_id,
+            )
+            .where(KnowledgeArticleChunk.article_id.in_(tuple(allowed_article_ids)))
+            .where(KnowledgeArticleChunk.version_id == KnowledgeArticle.current_version_id)
+            .where(KnowledgeArticle.status == KnowledgeArticleStatus.PUBLISHED.value)
+            .where(tsv.op("@@")(tsq))
+            .order_by(
+                rank.desc(),
+                KnowledgeArticleChunk.article_id.asc(),
+                KnowledgeArticleChunk.chunk_index.asc(),
+            )
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        rows: list[tuple[KnowledgeArticleChunk, float, str]] = []
+        for chunk, lex_score, title in result.all():
+            rows.append((chunk, float(lex_score), str(title)))
         return rows

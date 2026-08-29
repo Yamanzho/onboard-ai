@@ -10,6 +10,7 @@ import pytest
 from app.core.ai_constants import (
     DEFAULT_RETRIEVAL_TOP_K,
     KB_CHUNK_VECTOR_DIMENSION,
+    LEXICAL_BOOST,
     MAX_CHUNKS_PER_ARTICLE_RESULT,
     MAX_RETRIEVAL_QUERY_CHARS,
     MAX_RETRIEVAL_TOP_K,
@@ -174,8 +175,11 @@ async def test_exact_chunk_text_ranks_first(
     assert hits[0].article_id == article_a.id
     assert hits[0].article_title == "Alpha policy"
     assert unique_a in hits[0].content
-    assert hits[0].score == pytest.approx(1.0)
-    assert 0.0 <= hits[-1].score <= 1.0
+    # Hybrid mode: an exact-text match fires both vector (score=1.0) and lexical
+    # retrieval, so the merged score is 1.0 + LEXICAL_BOOST (≥1.0).
+    assert hits[0].score >= 1.0
+    assert hits[0].score <= 1.0 + LEXICAL_BOOST + 1e-9
+    assert 0.0 <= hits[-1].score
     assert hits == sorted(hits, key=lambda h: (-h.score, h.article_id, h.chunk_index))
 
 
