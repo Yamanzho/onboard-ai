@@ -114,8 +114,9 @@ class AIChatService:
             )
             llm = self._llm()
             model_name = llm.model
-            # Expand short follow-ups for the embedding query only.
-            # Lexical/FTS and the LLM always use `normalized` (original question).
+            # Expand conversational follow-ups for the embedding query only.
+            # Standalone topic nouns are not expanded. Lexical/FTS and the
+            # LLM always use `normalized` (original question).
             embedding_query = _expand_query_with_history(normalized, history)
             hits = await self._retriever.retrieve(
                 normalized,
@@ -337,33 +338,93 @@ def _public_citations(citations: tuple[Citation, ...]) -> list[dict[str, str]] |
     ]
 
 
+# Discourse / pronoun / question-word heads that mark a short follow-up.
+# Standalone topic nouns (CRM, AI-ассистент, Евгений) are not in this set.
+_FOLLOW_UP_HEADS = frozenset(
+    {
+        "а",
+        "кто",
+        "что",
+        "где",
+        "когда",
+        "почему",
+        "зачем",
+        "как",
+        "какой",
+        "какая",
+        "какие",
+        "который",
+        "которая",
+        "он",
+        "она",
+        "они",
+        "это",
+        "этот",
+        "эта",
+        "дальше",
+        "потом",
+        "ещё",
+        "еще",
+        "подробнее",
+        "who",
+        "what",
+        "where",
+        "why",
+        "how",
+        "which",
+        "more",
+        "continue",
+    }
+)
+_FOLLOW_UP_STRIP = "?!.,:;…"
+
+
+def _is_conversational_follow_up(query: str) -> bool:
+    """True when ``query`` is a short anaphoric follow-up, not a topic noun."""
+    words = [part.strip(_FOLLOW_UP_STRIP) for part in query.split()]
+    words = [part for part in words if part]
+    if not words:
+        return False
+    head = words[0].casefold()
+    return head in _FOLLOW_UP_HEADS
+
+
 def _expand_query_with_history(
     query: str,
     history: tuple[HistoryTurn, ...],
 ) -> str:
     """Return a retrieval-only expansion of ``query`` using conversation history.
 
-    Purpose: short proper-name follow-ups such as "Евгений" can be expanded
-    with the last assistant reply so the *vector* embedding has richer
-    context. Lexical/FTS must keep the original ``query`` so assistant text
-    cannot change tsquery AND/OR or drown exact-name matches.
+    Purpose: short *conversational follow-ups* such as "а дальше?" or
+    "кто отвечает?" can be expanded with the last assistant reply so the
+    *vector* embedding has richer context. Standalone topic queries
+    ("CRM", "AI-ассистент", "Евгений") must keep their own embedding so a
+    previous answer cannot dominate retrieval.
+
+    Lexical/FTS must keep the original ``query`` so assistant text cannot
+    change tsquery AND/OR or drown exact-name matches.
 
     The expanded string is used ONLY as ``embedding_query``. The LLM always
     receives the original ``query`` as the user question.
 
-    Trigger conditions (both must hold):
+    Trigger conditions (all must hold):
     * ``query`` contains at most ``SHORT_QUERY_EXPANSION_WORDS`` whitespace-
       separated words (default 2).
-    * ``history`` contains at least one assistant turn.
+    * ``query`` is a conversational follow-up (pronoun / question-word /
+      continuation), not a standalone topic noun.
+    * ``history`` contains at least one assistant turn whose content is not
+      the exact ``NO_ANSWER_MESSAGE``.
 
     The expansion concatenates ``query`` and the latest assistant content,
-    trimmed to ``SHORT_QUERY_EXPANSION_MAX_CHARS``.  If no assistant turn
-    exists, or the query is not short, the original query is returned unchanged.
+    trimmed to ``SHORT_QUERY_EXPANSION_MAX_CHARS``. Otherwise the original
+    query is returned unchanged.
 
     Security: the expanded string is sent to the embedding provider only.
     It is never used as an LLM instruction or as the user-visible question.
     """
     if len(query.split()) > SHORT_QUERY_EXPANSION_WORDS:
+        return query
+    if not _is_conversational_follow_up(query):
         return query
     if not history:
         return query
@@ -372,6 +433,8 @@ def _expand_query_with_history(
         None,
     )
     if not last_assistant:
+        return query
+    if last_assistant.strip() == NO_ANSWER_MESSAGE:
         return query
     combined = f"{query} {last_assistant}"
     return combined[:SHORT_QUERY_EXPANSION_MAX_CHARS]

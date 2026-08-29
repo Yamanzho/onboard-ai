@@ -81,17 +81,24 @@ MAX_RETRIEVAL_CANDIDATES = 100
 
 # AI-hybrid-1: hybrid vector + FTS retrieval.
 # LEXICAL_FLOOR_SCORE: synthetic score assigned to chunks found only by FTS
-#   (not in vector top-N). Must be > typical irrelevant vector scores so that
-#   a confirmed exact-text match can enter the final top-K pool.
+#   (not in vector top-N). Not a production no-answer threshold. Strong FTS
+#   hits are preserved by LEXICAL_RESERVED_PER_ARTICLE, not by raising this
+#   floor above cosine scores.
 # LEXICAL_BOOST: added to the vector score when a chunk is found by both
 #   vector and FTS retrieval. Applied exactly once per chunk.
 # LEXICAL_OVERFETCH: number of FTS candidates to retrieve before merging.
-# SHORT_QUERY_EXPANSION_WORDS: queries with at most this many whitespace-
-#   separated words trigger retrieval-query expansion using conversation history.
+# LEXICAL_RESERVED_PER_ARTICLE: per-article slots filled by the strongest
+#   FTS hit(s) before remaining MAX_CHUNKS_PER_ARTICLE_RESULT slots go to
+#   score order. Keeps a high-ts_rank definition chunk when vector neighbors
+#   from the same large article would otherwise consume the cap.
+# SHORT_QUERY_EXPANSION_WORDS: upper bound on whitespace-separated words
+#   for *conversational follow-up* embedding expansion. Standalone topic
+#   nouns are not expanded even when they are this short.
 # SHORT_QUERY_EXPANSION_MAX_CHARS: hard cap on the expanded retrieval string
 #   sent to the embedding provider; keeps it within MAX_RETRIEVAL_QUERY_CHARS.
 LEXICAL_FLOOR_SCORE: float = 0.25
 LEXICAL_BOOST: float = 0.15
 LEXICAL_OVERFETCH: int = 10
+LEXICAL_RESERVED_PER_ARTICLE: int = 1
 SHORT_QUERY_EXPANSION_WORDS: int = 2
 SHORT_QUERY_EXPANSION_MAX_CHARS: int = 512

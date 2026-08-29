@@ -28,10 +28,17 @@ Merged scoring:
 * Lexical-only (not in vector top-N): ``score = LEXICAL_FLOOR_SCORE``
 
 The ``lexical_score`` from ``ts_rank_cd`` is dimensionless and NOT added to
-cosine similarity. It is only used to rank FTS candidates before merging.
+cosine similarity. It is used to (1) order FTS candidates before merging and
+(2) pick the per-article reserved FTS slot so a strong lexical hit is not
+dropped by higher-cosine neighbors from the same article.
 
 Score is ``clamp(1 - cosine_distance, 0, 1)`` for ranking. Fake embeddings
 are not calibrated semantic relevance; there is no production threshold.
+
+Hyphenated Cyrillic compounds (``Стоп-фактор``) append a tsquery prefix
+operator (``фактор:*``) on those Cyrillic hyphen parts only, so
+``simple`` matching can hit inflected index forms such as ``факторы``
+without changing the database text-search configuration.
 """
 
 from __future__ import annotations
@@ -50,6 +57,7 @@ from app.core.ai_constants import (
     LEXICAL_BOOST,
     LEXICAL_FLOOR_SCORE,
     LEXICAL_OVERFETCH,
+    LEXICAL_RESERVED_PER_ARTICLE,
     MAX_CHUNKS_PER_ARTICLE_RESULT,
     MAX_RETRIEVAL_CANDIDATES,
     MAX_RETRIEVAL_QUERY_CHARS,
@@ -74,6 +82,12 @@ _ARTICLE_LIST_PAGE = 1000
 # Strips punctuation, operators, and any character that could inject
 # PostgreSQL tsquery syntax before the string reaches the DB.
 _TOKEN_RE = re.compile(r"[a-zа-яё0-9]+", re.IGNORECASE | re.UNICODE)
+_CYRILLIC_RE = re.compile(r"[а-яё]", re.IGNORECASE | re.UNICODE)
+# ASCII hyphen plus common Unicode dashes used in KB headings.
+_HYPHEN_COMPOUND_RE = re.compile(
+    r"[a-zа-яё0-9]+(?:[\-\u2010\u2011\u2013\u2014][a-zа-яё0-9]+)+",
+    re.IGNORECASE | re.UNICODE,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,6 +299,30 @@ class KnowledgeRetriever:
         return collected
 
 
+def _hyphenated_cyrillic_tokens(query: str) -> frozenset[str]:
+    """Cyrillic alphanumeric parts of hyphenated compounds in ``query``.
+
+    Used to add a query-side ``:*`` prefix so ``simple`` FTS can match
+    inflected forms (``фактор`` → ``факторы``) without stemming. Latin and
+    numeric hyphen parts are left exact to avoid broad prefix matches
+    (``cl:*``, ``p13:*``).
+    """
+    found: set[str] = set()
+    for compound in _HYPHEN_COMPOUND_RE.findall(query):
+        for part in _TOKEN_RE.findall(compound):
+            token = part.lower()
+            if len(token) > 1 and _CYRILLIC_RE.search(token):
+                found.add(token)
+    return frozenset(found)
+
+
+def _tsquery_term(token: str, *, prefix_tokens: frozenset[str]) -> str:
+    """Alphanumeric token, optionally with a server-added prefix operator."""
+    if token in prefix_tokens:
+        return f"{token}:*"
+    return token
+
+
 def _build_tsquery(query: str) -> str | None:
     """Convert a user query into a safe PostgreSQL ``to_tsquery('simple', ...)`` string.
 
@@ -296,19 +334,26 @@ def _build_tsquery(query: str) -> str | None:
     * ≤ 3 meaningful tokens  →  AND (``&``) for higher precision.
     * > 3 meaningful tokens  →  OR  (``|``) for higher recall.
 
+    Hyphenated Cyrillic components receive a ``:*`` prefix operator so
+    ``Стоп-фактор`` matches indexed ``стоп-факторы``. The colon is added
+    by this function; it is never taken from user input.
+
     Returns ``None`` when no valid tokens remain (e.g. punctuation-only input)
     so callers can skip the lexical path entirely.
 
     **Security:** raw user input MUST NOT reach ``to_tsquery()`` directly.
     This function ensures only safe lowercase alphanumeric tokens are used.
-    PostgreSQL tsquery operators (``&``, ``|``, ``!``, ``(``, ``)``, ``:``)
-    are never present in the output because they are excluded by the regex.
+    User-supplied tsquery operators (``&``, ``|``, ``!``, ``(``, ``)``, ``:``)
+    are stripped by the token regex. The only ``:`` in the output is the
+    prefix operator appended to selected hyphenated Cyrillic tokens.
     """
     tokens = [t.lower() for t in _TOKEN_RE.findall(query) if len(t) > 1]
     if not tokens:
         return None
+    prefix_tokens = _hyphenated_cyrillic_tokens(query)
+    terms = [_tsquery_term(token, prefix_tokens=prefix_tokens) for token in tokens]
     operator = " & " if len(tokens) <= 3 else " | "
-    return operator.join(tokens)
+    return operator.join(terms)
 
 
 def _merge_and_score(
@@ -325,28 +370,34 @@ def _merge_and_score(
     * Vector + lexical:  ``final_score = vector_score + LEXICAL_BOOST``
     * Lexical-only:      ``final_score = LEXICAL_FLOOR_SCORE``
 
-    The ``ts_rank_cd`` value from lexical rows is used only to order FTS
-    candidates before the merge; it is NOT added to the cosine score.
+    The ``ts_rank_cd`` value from lexical rows is not added to the cosine
+    scale. It selects the per-article reserved FTS slot in
+    ``_dedupe_and_score``.
 
     After scoring, the pool is sorted descending by ``final_score`` and the
     existing ``MAX_CHUNKS_PER_ARTICLE_RESULT`` cap and ``top_k`` limit are
-    applied via ``_dedupe_and_score``.
+    applied, with ``LEXICAL_RESERVED_PER_ARTICLE`` FTS slots reserved first.
     """
-    # chunk_id → (chunk, final_score, title)
-    pool: dict[UUID, tuple[KnowledgeArticleChunk, float, str]] = {}
+    # chunk_id → (chunk, final_score, title, lexical_rank or None)
+    pool: dict[UUID, tuple[KnowledgeArticleChunk, float, str, float | None]] = {}
 
     for chunk, distance, title in vector_rows:
         score = _cosine_similarity_score(distance)
-        pool[chunk.id] = (chunk, score, title)
+        pool[chunk.id] = (chunk, score, title, None)
 
-    for chunk, _lex_score, title in lexical_rows:
-        # _lex_score (ts_rank_cd) is intentionally not added to the cosine
+    for chunk, lex_score, title in lexical_rows:
+        # lex_score (ts_rank_cd) is intentionally not added to the cosine
         # scale — the two metrics are not comparable.
         if chunk.id in pool:
-            existing_chunk, existing_score, existing_title = pool[chunk.id]
-            pool[chunk.id] = (existing_chunk, existing_score + LEXICAL_BOOST, existing_title)
+            existing_chunk, existing_score, existing_title, _ = pool[chunk.id]
+            pool[chunk.id] = (
+                existing_chunk,
+                existing_score + LEXICAL_BOOST,
+                existing_title,
+                float(lex_score),
+            )
         else:
-            pool[chunk.id] = (chunk, LEXICAL_FLOOR_SCORE, title)
+            pool[chunk.id] = (chunk, LEXICAL_FLOOR_SCORE, title, float(lex_score))
 
     sorted_pool = sorted(pool.values(), key=lambda x: x[1], reverse=True)
     return _dedupe_and_score(sorted_pool, top_k=top_k, min_score=min_score)
@@ -425,36 +476,93 @@ def _cosine_similarity_score(distance: float) -> float:
     return max(0.0, min(1.0, 1.0 - distance))
 
 
+def _hit_from_pool(
+    chunk: KnowledgeArticleChunk,
+    score: float,
+    title: str,
+) -> RetrievalHit:
+    return RetrievalHit(
+        chunk_id=chunk.id,
+        article_id=chunk.article_id,
+        version_id=chunk.version_id,
+        chunk_index=chunk.chunk_index,
+        article_title=title,
+        content=chunk.content,
+        score=score,
+    )
+
+
+def _reserved_lexical_chunks(
+    sorted_pool: list[tuple[KnowledgeArticleChunk, float, str, float | None]],
+    *,
+    min_score: float | None,
+) -> list[tuple[KnowledgeArticleChunk, float, str]]:
+    """Strongest FTS hits per article, up to ``LEXICAL_RESERVED_PER_ARTICLE``.
+
+    Ranking inside an article is ``ts_rank`` descending, then hybrid score.
+    These slots are filled before score-order neighbors consume the
+    per-article cap.
+    """
+    per_article: dict[
+        UUID, list[tuple[float, float, KnowledgeArticleChunk, str]]
+    ] = {}
+    for chunk, score, title, lex_rank in sorted_pool:
+        if lex_rank is None:
+            continue
+        if min_score is not None and score < min_score:
+            continue
+        per_article.setdefault(chunk.article_id, []).append(
+            (lex_rank, score, chunk, title)
+        )
+
+    reserved: list[tuple[KnowledgeArticleChunk, float, str]] = []
+    for rows in per_article.values():
+        rows.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        for _lex_rank, score, chunk, title in rows[:LEXICAL_RESERVED_PER_ARTICLE]:
+            reserved.append((chunk, score, title))
+    # Higher hybrid score first among reserved so boosted FTS stays visible.
+    reserved.sort(key=lambda item: item[1], reverse=True)
+    return reserved
+
+
 def _dedupe_and_score(
-    sorted_pool: list[tuple[KnowledgeArticleChunk, float, str]],
+    sorted_pool: list[tuple[KnowledgeArticleChunk, float, str, float | None]],
     *,
     top_k: int,
     min_score: float | None,
 ) -> list[RetrievalHit]:
-    """Apply per-article chunk cap and top_k limit to a pre-sorted pool.
+    """Apply reserved FTS slots, per-article chunk cap, and top_k.
 
-    ``sorted_pool`` must already be sorted descending by final score.
+    ``sorted_pool`` must already be sorted descending by final hybrid score.
+    Queries with no lexical hits keep score-order ranking unchanged.
     """
+    seen_ids: set[UUID] = set()
     seen_article: dict[UUID, int] = {}
     hits: list[RetrievalHit] = []
-    for chunk, score, title in sorted_pool:
+
+    for chunk, score, title in _reserved_lexical_chunks(
+        sorted_pool, min_score=min_score
+    ):
+        if len(hits) >= top_k:
+            break
+        used = seen_article.get(chunk.article_id, 0)
+        if used >= MAX_CHUNKS_PER_ARTICLE_RESULT:
+            continue
+        seen_ids.add(chunk.id)
+        seen_article[chunk.article_id] = used + 1
+        hits.append(_hit_from_pool(chunk, score, title))
+
+    for chunk, score, title, _lex_rank in sorted_pool:
+        if len(hits) >= top_k:
+            break
+        if chunk.id in seen_ids:
+            continue
         if min_score is not None and score < min_score:
             continue
         used = seen_article.get(chunk.article_id, 0)
         if used >= MAX_CHUNKS_PER_ARTICLE_RESULT:
             continue
+        seen_ids.add(chunk.id)
         seen_article[chunk.article_id] = used + 1
-        hits.append(
-            RetrievalHit(
-                chunk_id=chunk.id,
-                article_id=chunk.article_id,
-                version_id=chunk.version_id,
-                chunk_index=chunk.chunk_index,
-                article_title=title,
-                content=chunk.content,
-                score=score,
-            )
-        )
-        if len(hits) >= top_k:
-            break
+        hits.append(_hit_from_pool(chunk, score, title))
     return hits

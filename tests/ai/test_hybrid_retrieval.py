@@ -36,13 +36,12 @@ from app.core.ai_constants import (
     LEXICAL_FLOOR_SCORE,
     MAX_CHUNKS_PER_ARTICLE_RESULT,
     SHORT_QUERY_EXPANSION_MAX_CHARS,
-    SHORT_QUERY_EXPANSION_WORDS,
 )
 from app.db.enums import EmployeeRole
 from app.db.models.company import Company
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
-from app.services.ai.chat import _expand_query_with_history
+from app.services.ai.chat import NO_ANSWER_MESSAGE, _expand_query_with_history
 from app.services.ai.embeddings import FakeEmbeddingProvider
 from app.services.ai.history import HistoryTurn
 from app.services.ai.retriever import KnowledgeRetriever, _build_tsquery
@@ -142,7 +141,28 @@ def test_build_tsquery_no_tsquery_operators_in_output() -> None:
     # They can only appear inside token strings (not here since they're ASCII ops).
     tokens = result.replace(" & ", " ").replace(" | ", " ").split()
     for tok in tokens:
-        assert tok.isalpha() or tok.isdigit() or tok.isalnum()
+        bare = tok.removesuffix(":*")
+        assert bare.isalnum()
+        assert "|" not in tok and "!" not in tok
+
+
+def test_build_tsquery_hyphenated_cyrillic_uses_prefix() -> None:
+    """Стоп-фактор must prefix Cyrillic hyphen parts so 'факторы' can match."""
+    assert _build_tsquery("Стоп-фактор") == "стоп:* & фактор:*"
+
+
+def test_build_tsquery_ai_assistant_prefixes_cyrillic_part_only() -> None:
+    """AI-ассистент: Latin 'ai' stays exact; Cyrillic part is prefixed."""
+    assert _build_tsquery("AI-ассистент") == "ai & ассистент:*"
+
+
+def test_build_tsquery_latin_hyphen_and_plain_terms_unchanged() -> None:
+    """English, numbers, and non-hyphenated Russian keep exact tokens."""
+    assert _build_tsquery("CRM") == "crm"
+    assert _build_tsquery("CHECKLISTS") == "checklists"
+    assert _build_tsquery("Сквозной порядок") == "сквозной & порядок"
+    assert _build_tsquery("P13 Доставка по РК") == "p13 | доставка | по | рк"
+    assert _build_tsquery("CHECKLIST CL-PREOTPRAVKA") == "checklist & cl & preotpravka"
 
 
 # ===========================================================================
@@ -497,7 +517,7 @@ async def test_tenant_isolation_in_lexical_search(
 
 
 def test_short_query_with_history_is_expanded() -> None:
-    """Test 16: query ≤ SHORT_QUERY_EXPANSION_WORDS words + history → expanded."""
+    """Genuine follow-up ≤ SHORT_QUERY_EXPANSION_WORDS + history → expanded."""
     history = (
         HistoryTurn(role="user", content="Прочие поименованные лица"),
         HistoryTurn(
@@ -505,21 +525,20 @@ def test_short_query_with_history_is_expanded() -> None:
             content="Прочие поименованные лица включают: Тей Евгений Г., Омарова Г. М.",
         ),
     )
-    result = _expand_query_with_history("Евгений", history)
-    assert result.startswith("Евгений ")
+    result = _expand_query_with_history("а дальше?", history)
+    assert result.startswith("а дальше? ")
     assert "Тей Евгений Г." in result
 
 
 def test_original_query_unchanged_in_expansion() -> None:
-    """Test 17: the original query string is the prefix of the expansion."""
-    original = "Евгений"
+    """The original query string is the prefix of the expansion."""
+    original = "кто отвечает?"
     history = (
         HistoryTurn(role="assistant", content="Тей Евгений Г. — сотрудник."),
     )
     result = _expand_query_with_history(original, history)
     assert result.startswith(original)
-    # The original must never be modified in isolation — caller passes it to LLM
-    assert original == "Евгений"  # immutable string; function does not mutate
+    assert original == "кто отвечает?"
 
 
 def test_no_history_means_no_rewrite() -> None:
@@ -543,8 +562,9 @@ def test_expansion_capped_at_max_chars() -> None:
     history = (
         HistoryTurn(role="assistant", content="X" * 600),
     )
-    result = _expand_query_with_history("Ок", history)
+    result = _expand_query_with_history("а дальше?", history)
     assert len(result) <= SHORT_QUERY_EXPANSION_MAX_CHARS
+    assert result.startswith("а дальше?")
 
 
 def test_no_assistant_turn_means_no_rewrite() -> None:
@@ -772,3 +792,318 @@ async def test_other_company_employee_cannot_retrieve_personnel_kb(
         **_KWARGS,
     )
     assert any("Евгений" in h.content for h in hits_a)
+
+
+def _mock_chunk(
+    *,
+    article_id,
+    content: str,
+    chunk_index: int = 0,
+    chunk_id=None,
+):
+    from app.db.models.knowledge_article_chunk import KnowledgeArticleChunk
+
+    chunk = MagicMock(spec=KnowledgeArticleChunk)
+    chunk.id = chunk_id or uuid4()
+    chunk.article_id = article_id
+    chunk.version_id = uuid4()
+    chunk.chunk_index = chunk_index
+    chunk.content = content
+    return chunk
+
+
+def test_standalone_topic_queries_are_not_expanded() -> None:
+    """Production failures: topic nouns must not absorb the previous answer."""
+    history = (
+        HistoryTurn(role="assistant", content="Омарова Г. М. — специалист по сертификации [S1]."),
+    )
+    for query in ("AI-ассистент", "CRM", "Стоп-фактор", "CHECKLISTS", "Евгений"):
+        assert _expand_query_with_history(query, history) == query
+        assert "Омарова" not in _expand_query_with_history(query, history)
+
+
+def test_skvoznoy_and_p13_and_checklist_code_not_expanded() -> None:
+    """Successful production queries stay unexpanded (not follow-ups / too long)."""
+    history = (
+        HistoryTurn(role="assistant", content="Previous long answer about personnel."),
+    )
+    assert _expand_query_with_history("Сквозной порядок", history) == "Сквозной порядок"
+    assert _expand_query_with_history("P13 Доставка по РК", history) == "P13 Доставка по РК"
+    assert (
+        _expand_query_with_history("CHECKLIST CL-PREOTPRAVKA", history)
+        == "CHECKLIST CL-PREOTPRAVKA"
+    )
+
+
+def test_follow_up_queries_still_expand() -> None:
+    """Short anaphoric follow-ups still use the last assistant for embeddings."""
+    history = (
+        HistoryTurn(role="assistant", content="Сквозной порядок: P01 затем P02."),
+    )
+    for query in ("а дальше?", "а кто?", "кто отвечает?"):
+        result = _expand_query_with_history(query, history)
+        assert result.startswith(query)
+        assert "P01" in result
+
+
+def test_no_answer_history_never_expands_embedding_query() -> None:
+    """Exact NO_ANSWER assistant text must not distort embedding_query."""
+    history = (
+        HistoryTurn(role="assistant", content=NO_ANSWER_MESSAGE),
+    )
+    assert _expand_query_with_history("а дальше?", history) == "а дальше?"
+    assert _expand_query_with_history("CRM", history) == "CRM"
+
+
+def test_crm_definition_chunk_survives_per_article_cap() -> None:
+    """Highest-ts_rank CRM definition is reserved even when neighbors score higher."""
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    definition = _mock_chunk(
+        article_id=article_id,
+        chunk_index=29,
+        content="CRM 4logist aliases: текущая CRM. Действующая CRM: сделки, грузы.",
+    )
+    neighbor_a = _mock_chunk(
+        article_id=article_id,
+        chunk_index=56,
+        content="Груз должен быть заведён в CRM до момента забора.",
+    )
+    neighbor_b = _mock_chunk(
+        article_id=article_id,
+        chunk_index=57,
+        content="domains: CRM, TRANSPORT_LOGISTICS tags: CRM",
+    )
+    hits = _merge_and_score(
+        vector_rows=[
+            (neighbor_a, 0.44, "общее сведение"),  # sim 0.56
+            (neighbor_b, 0.47, "общее сведение"),  # sim 0.53
+            (definition, 0.65, "общее сведение"),  # sim 0.35
+        ],
+        lexical_rows=[
+            (definition, 0.41, "общее сведение"),
+            (neighbor_a, 0.37, "общее сведение"),
+            (neighbor_b, 0.20, "общее сведение"),
+        ],
+        top_k=5,
+        min_score=None,
+    )
+    assert len(hits) <= MAX_CHUNKS_PER_ARTICLE_RESULT
+    assert any(h.chunk_id == definition.id for h in hits), (
+        "CRM definition chunk 29 must survive the per-article cap"
+    )
+    assert any("4logist" in h.content for h in hits)
+
+
+def test_ai_assistant_lexical_chunk_survives_unrelated_vector_neighbors() -> None:
+    """FTS AI-ассистент chunk is reserved when vector is dominated by another topic."""
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    other_article = uuid4()
+    ai_chunk = _mock_chunk(
+        article_id=article_id,
+        chunk_index=65,
+        content="AI-ассистент всегда указывает источник и дату актуальности.",
+    )
+    unrelated_same = _mock_chunk(
+        article_id=article_id,
+        chunk_index=103,
+        content="Сертификация и таможенное оформление без упоминания ассистента.",
+    )
+    other_topic = _mock_chunk(
+        article_id=other_article,
+        chunk_index=0,
+        content="Омарова Г. М. — специалист по сертификации.",
+    )
+    hits = _merge_and_score(
+        vector_rows=[
+            (other_topic, 0.46, "ответственные лица"),  # sim 0.54
+            (unrelated_same, 0.50, "общее сведение"),  # sim 0.50
+        ],
+        lexical_rows=[(ai_chunk, 0.09, "общее сведение")],
+        top_k=5,
+        min_score=None,
+    )
+    assert any(h.chunk_id == ai_chunk.id for h in hits)
+    assert any("AI-ассистент" in h.content for h in hits)
+
+
+def test_stop_factor_lexical_only_survives_same_article_vector_cap() -> None:
+    """Lexical-only стоп-факторы chunk is reserved ahead of higher-cosine neighbors."""
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    stop_chunk = _mock_chunk(
+        article_id=article_id,
+        chunk_index=77,
+        content="Квалификация входящего запроса (стоп-факторы). Не принимаются: алкоголь.",
+    )
+    pipeline_a = _mock_chunk(
+        article_id=article_id,
+        chunk_index=66,
+        content="Сквозной порядок P01 P02 P03 без стоп слова в этом окне.",
+    )
+    pipeline_b = _mock_chunk(
+        article_id=article_id,
+        chunk_index=97,
+        content="Сбор расчётов формирование КП и сделки в CRM.",
+    )
+    hits = _merge_and_score(
+        vector_rows=[
+            (pipeline_a, 0.33, "общее сведение"),  # sim 0.67
+            (pipeline_b, 0.37, "общее сведение"),  # sim 0.63
+        ],
+        lexical_rows=[(stop_chunk, 0.12, "общее сведение")],
+        top_k=5,
+        min_score=None,
+    )
+    assert any(h.chunk_id == stop_chunk.id for h in hits)
+    assert any("стоп-факторы" in h.content for h in hits)
+    assert len([h for h in hits if h.article_id == article_id]) <= MAX_CHUNKS_PER_ARTICLE_RESULT
+
+
+def test_vector_only_ranking_unchanged_without_lexical_hits() -> None:
+    """No FTS matches → per-article cap still keeps the highest cosine chunks."""
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    high = _mock_chunk(article_id=article_id, chunk_index=1, content="best")
+    mid = _mock_chunk(article_id=article_id, chunk_index=2, content="mid")
+    low = _mock_chunk(article_id=article_id, chunk_index=3, content="low")
+    hits = _merge_and_score(
+        vector_rows=[
+            (high, 0.10, "t"),
+            (mid, 0.20, "t"),
+            (low, 0.80, "t"),
+        ],
+        lexical_rows=[],
+        top_k=5,
+        min_score=None,
+    )
+    assert [h.chunk_id for h in hits] == [high.id, mid.id]
+
+
+def test_checklists_lexical_hit_remains_in_final_retrieval() -> None:
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    checklists = _mock_chunk(
+        article_id=article_id,
+        chunk_index=75,
+        content="CHECKLISTS\nCHECKLIST CL-PREOTPRAVKA\nОбязательные сверки перед отправкой.",
+    )
+    p13_neighbor = _mock_chunk(
+        article_id=article_id,
+        chunk_index=92,
+        content="Доставка по Казахстану (P13) ежедневно.",
+    )
+    hits = _merge_and_score(
+        vector_rows=[
+            (p13_neighbor, 0.27, "общее сведение"),
+            (checklists, 0.33, "общее сведение"),
+        ],
+        lexical_rows=[(checklists, 0.09, "общее сведение")],
+        top_k=5,
+        min_score=None,
+    )
+    assert any(h.chunk_id == checklists.id for h in hits)
+    assert any("CHECKLISTS" in h.content for h in hits)
+
+
+async def test_hyphenated_stop_factor_fts_matches_plural(
+    article_service: ArticleService,
+    company_a: Company,
+) -> None:
+    """Postgres simple FTS: Стоп-фактор query hits indexed стоп-факторы."""
+    article = await _publish(
+        article_service,
+        company_a,
+        title="общее сведение",
+        body="Не принимаются стоп-факторы по грузам: алкоголь, табак, скоропорт.",
+    )
+    tsquery = _build_tsquery("Стоп-фактор")
+    assert tsquery is not None
+    async with _uow_factory() as uow:
+        await uow.enter_tenant(company_a.id)
+        rows = await uow.knowledge_article_chunks.search_lexical_current_published(
+            allowed_article_ids=[article.id],
+            tsquery_text=tsquery,
+            limit=10,
+        )
+    assert rows, "Prefix tsquery must match plural стоп-факторы"
+    assert any("стоп-фактор" in row[0].content.lower() for row in rows)
+
+
+async def test_production_queries_retrieve_matching_chunks(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    """Live Telegram queries find the KB passages they failed or succeeded on."""
+    body = (
+        "Назначение корпуса: система для AI-ассистента, RAG и операционного поиска.\n\n"
+        "ENTITY CRM 4logist. aliases: 4logist; текущая CRM. "
+        "description: Действующая CRM: сделки, грузы, рейсы, документы, статусы.\n\n"
+        "MODULE M-COMMON-STOP — стоп-факторы по грузам. Не принимаются: алкоголь.\n\n"
+        "Сквозной порядок (основной поток сделки): P01 Квалификация запроса "
+        "→ P02 Сбор данных о грузе → P03 Расчёт ставки.\n\n"
+        "P13 Доставка по РК. Владелец: менеджер и логист по РК. Частота: ежедневно.\n\n"
+        "CHECKLISTS\nCHECKLIST CL-PREOTPRAVKA\n"
+        "title: Обязательные сверки перед отправкой груза. role: Логист ТЛО."
+    )
+    await _publish(article_service, company_a, title="общее сведение", body=body)
+    kwargs = dict(
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    cases = (
+        ("AI-ассистент", "AI-ассистент"),
+        ("CRM", "CRM"),
+        ("Стоп-фактор", "стоп-фактор"),
+        ("CHECKLISTS", "CHECKLISTS"),
+        ("Сквозной порядок", "Сквозной порядок"),
+        ("P13 Доставка по РК", "P13"),
+        ("CHECKLIST CL-PREOTPRAVKA", "CL-PREOTPRAVKA"),
+    )
+    unrelated = (
+        "Омарова Г. М. специалист по сертификации Warcraft lore ancient kingdoms"
+    )
+    for query, needle in cases:
+        hits = await retriever.retrieve(query, embedding_query=unrelated, **kwargs)
+        assert hits, f"{query!r} must return hybrid hits"
+        assert any(needle.lower() in h.content.lower() for h in hits), (
+            f"{query!r} must keep a chunk containing {needle!r}"
+        )
+
+
+async def test_unrelated_embedding_does_not_drop_ai_assistant_lexical(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    """Previous-topic embedding_query must not hide FTS AI-ассистент chunks."""
+    await _publish(
+        article_service,
+        company_a,
+        title="общее сведение",
+        body=(
+            "Политика AI-ассистента: всегда указывает источник. "
+            "AI-ассистент не отвечает при отсутствии данных."
+        ),
+    )
+    hits = await retriever.retrieve(
+        "AI-ассистент",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        embedding_query=(
+            "AI-ассистент Омарова Г. М. — специалист по сертификации [S1]."
+        ),
+        **_KWARGS,
+    )
+    assert hits
+    assert any("AI-ассистент" in h.content for h in hits)
