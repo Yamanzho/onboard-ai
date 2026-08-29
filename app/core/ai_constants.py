@@ -91,6 +91,10 @@ MAX_RETRIEVAL_CANDIDATES = 100
 #   FTS hit(s) before remaining MAX_CHUNKS_PER_ARTICLE_RESULT slots go to
 #   score order. Keeps a high-ts_rank definition chunk when vector neighbors
 #   from the same large article would otherwise consume the cap.
+# DEFINITION_RESERVED: global slots filled by the strongest definition-like
+#   exact match before LEXICAL_RESERVED_PER_ARTICLE and the per-article cap.
+#   Applied only for standalone entity queries and explicit definition
+#   questions. Does not inflate hybrid scores.
 # SHORT_QUERY_EXPANSION_WORDS: upper bound on whitespace-separated words
 #   for *conversational follow-up* embedding expansion. Standalone topic
 #   nouns are not expanded even when they are this short.
@@ -100,5 +104,6 @@ LEXICAL_FLOOR_SCORE: float = 0.25
 LEXICAL_BOOST: float = 0.15
 LEXICAL_OVERFETCH: int = 10
 LEXICAL_RESERVED_PER_ARTICLE: int = 1
+DEFINITION_RESERVED: int = 1
 SHORT_QUERY_EXPANSION_WORDS: int = 2
 SHORT_QUERY_EXPANSION_MAX_CHARS: int = 512

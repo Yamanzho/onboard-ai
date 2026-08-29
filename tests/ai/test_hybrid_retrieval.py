@@ -44,7 +44,12 @@ from app.db.uow import UnitOfWork
 from app.services.ai.chat import NO_ANSWER_MESSAGE, _expand_query_with_history
 from app.services.ai.embeddings import FakeEmbeddingProvider
 from app.services.ai.history import HistoryTurn
-from app.services.ai.retriever import KnowledgeRetriever, _build_tsquery
+from app.services.ai.retriever import (
+    KnowledgeRetriever,
+    _build_tsquery,
+    _definition_lookup_term,
+    _score_definition_candidate,
+)
 from app.services.knowledge.article_service import ArticleService
 from tests.conftest import _create_employee, _uow_factory
 
@@ -1107,3 +1112,459 @@ async def test_unrelated_embedding_does_not_drop_ai_assistant_lexical(
     )
     assert hits
     assert any("AI-ассистент" in h.content for h in hits)
+
+
+# ===========================================================================
+# Entity / term definition reservation (generic, no hardcoded names)
+# ===========================================================================
+
+_CRM_DEFINITION = (
+    "ENTITY CRM 4logist\n"
+    "aliases: 4logist\n"
+    "CRM — текущая система управления сделками и грузами."
+)
+_SAELOG_DEFINITION = (
+    "ENTITY SAELOG\n"
+    "aliases: SAELOG; Сайлог\n"
+    "SAELOG — канонический корпус операционных знаний компании."
+)
+_PROJECT_X_DEFINITION = (
+    "ENTITY PROJECT-X\n"
+    "aliases: PX\n"
+    "PROJECT-X — внутренний проект интеграции склада."
+)
+_STOP_FACTOR_DEFINITION = (
+    "Стоп-фактор — условие, при котором заявка не принимается в работу."
+)
+_AI_POLICY = (
+    "AI-ассистент всегда указывает источник и дату актуальности данных."
+)
+_CHECKLISTS_HEADING = (
+    "CHECKLISTS\nCHECKLIST CL-PREOTPRAVKA\nОбязательные сверки перед отправкой."
+)
+_P13_HEADING = "P13 Доставка по РК. Владелец: менеджер и логист по РК."
+
+
+def _entity_kb_body() -> str:
+    return (
+        f"{_CRM_DEFINITION}\n\n"
+        "CRM используется при передаче сделки логисту.\n\n"
+        "CRM появляется в отчётах отдела продаж.\n\n"
+        "CRM используется операционным отделом ежедневно.\n\n"
+        f"{_SAELOG_DEFINITION}\n\n"
+        f"{_STOP_FACTOR_DEFINITION}\n\n"
+        f"{_PROJECT_X_DEFINITION}\n\n"
+        f"{_AI_POLICY}\n\n"
+        "Назначение корпуса: система для AI-ассистента, RAG и операционного поиска.\n\n"
+        "Сквозной порядок (основной поток сделки): P01 Квалификация запроса "
+        "→ P02 Сбор данных о грузе → P03 Расчёт ставки.\n\n"
+        f"{_P13_HEADING} Частота: ежедневно.\n\n"
+        f"{_CHECKLISTS_HEADING} role: Логист ТЛО.\n\n"
+        "CHECKLIST CL-PREOTPRAVKA: сверка документов перед отправкой груза."
+    )
+
+
+def test_definition_lookup_term_detects_standalone_and_definition_questions() -> None:
+    for query in (
+        "SAELOG",
+        "CRM",
+        "KEDEN",
+        "P13",
+        "CHECKLISTS",
+        "AI-ассистент",
+        "Стоп-фактор",
+        "PROJECT-X",
+        "Что такое CRM?",
+        "What is PROJECT-X?",
+    ):
+        assert _definition_lookup_term(query), f"{query!r} must be a definition lookup"
+
+
+def test_definition_lookup_term_rejects_followups_and_process_questions() -> None:
+    for query in (
+        "что делать?",
+        "кто отвечает?",
+        "а кто?",
+        "когда отпуск?",
+        "Что происходит с SAELOG при таможенном оформлении?",
+        "Какие документы нужны для SAELOG?",
+        "Что происходит с CRM после создания сделки?",
+        "а дальше?",
+    ):
+        assert _definition_lookup_term(query) is None, (
+            f"{query!r} must not force definition retrieval"
+        )
+
+
+def test_score_definition_prefers_entity_block_over_incidental_mention() -> None:
+    def_score, def_signals = _score_definition_candidate(
+        "CRM", _CRM_DEFINITION, "общее сведение"
+    )
+    mention_score, mention_signals = _score_definition_candidate(
+        "CRM", "CRM используется при передаче сделки логисту.", "общее сведение"
+    )
+    incidental_score, _ = _score_definition_candidate(
+        "CRM", "CRM указана в отчёте за квартал.", "общее сведение"
+    )
+    assert def_score > 0
+    assert "entity_decl" in def_signals or "definition_copula" in def_signals
+    assert mention_score == 0.0
+    assert mention_signals == ()
+    assert incidental_score == 0.0
+
+
+def test_unknown_term_is_not_a_fake_definition_candidate() -> None:
+    score, signals = _score_definition_candidate(
+        "SOMETHING-NOT-IN-KB", _CRM_DEFINITION, "общее сведение"
+    )
+    assert score == 0.0
+    assert signals == ()
+
+
+def test_script_variants_or_folded_token_for_entity_tsquery() -> None:
+    """саелог must also search the Latin fold without changing default tsquery."""
+    assert _build_tsquery("SAELOG") == "saelog"
+    variant = _build_tsquery("саелог", script_variants=True)
+    assert variant is not None
+    assert "саелог" in variant
+    assert "saelog" in variant
+    assert _build_tsquery("Стоп-фактор") == "стоп:* & фактор:*"
+
+
+def test_definition_dropped_before_reservation_then_survives() -> None:
+    """Reproduce the previous failure: low-vector definition lost to the cap.
+
+    BEFORE (no entity query): highest-ts_rank mentions consume the 2-slot cap.
+    AFTER (standalone entity): the definition chunk is reserved first.
+    Generic PROJECT-X fixture — not a hardcoded special case.
+    """
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    other_article = uuid4()
+    definition = _mock_chunk(
+        article_id=article_id,
+        chunk_index=0,
+        content=_PROJECT_X_DEFINITION,
+    )
+    mention_a = _mock_chunk(
+        article_id=article_id,
+        chunk_index=4,
+        content="PROJECT-X используется при передаче рейса на склад.",
+    )
+    mention_b = _mock_chunk(
+        article_id=article_id,
+        chunk_index=5,
+        content="В ежедневном отчёте PROJECT-X указан как код направления.",
+    )
+    other_mention = _mock_chunk(
+        article_id=other_article,
+        chunk_index=0,
+        content="PROJECT-X появляется в сводках операционного отдела.",
+    )
+    merge_kwargs = dict(
+        vector_rows=[
+            (mention_a, 0.20, "handbook"),  # sim 0.80
+            (mention_b, 0.25, "handbook"),  # sim 0.75
+            (other_mention, 0.30, "ops"),  # sim 0.70
+            (definition, 0.72, "handbook"),  # sim 0.28
+        ],
+        lexical_rows=[
+            (mention_a, 0.55, "handbook"),
+            (mention_b, 0.40, "handbook"),
+            (other_mention, 0.35, "ops"),
+            (definition, 0.08, "handbook"),
+        ],
+        top_k=5,
+        min_score=None,
+    )
+    before = _merge_and_score(**merge_kwargs)
+    assert all(h.chunk_id != definition.id for h in before), (
+        "BEFORE: low-vector definition must be dropped by the per-article cap"
+    )
+    after = _merge_and_score(**merge_kwargs, query="PROJECT-X")
+    after_ids = {h.chunk_id for h in after}
+    assert definition.id in after_ids, "AFTER: definition chunk must be reserved"
+    assert mention_a.id in after_ids or other_mention.id in after_ids, (
+        "related semantic/lexical chunks must still appear beside the definition"
+    )
+    assert len([h for h in after if h.article_id == article_id]) <= (
+        MAX_CHUNKS_PER_ARTICLE_RESULT
+    )
+
+
+def test_process_question_does_not_force_definition_over_mentions() -> None:
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    definition = _mock_chunk(
+        article_id=article_id,
+        chunk_index=0,
+        content=_CRM_DEFINITION,
+    )
+    process_a = _mock_chunk(
+        article_id=article_id,
+        chunk_index=10,
+        content="После создания сделки CRM используется при передаче логисту.",
+    )
+    process_b = _mock_chunk(
+        article_id=article_id,
+        chunk_index=11,
+        content="Статус в CRM обновляется операционным отделом после передачи.",
+    )
+    hits = _merge_and_score(
+        vector_rows=[
+            (process_a, 0.15, "handbook"),
+            (process_b, 0.18, "handbook"),
+            (definition, 0.70, "handbook"),
+        ],
+        lexical_rows=[
+            (process_a, 0.50, "handbook"),
+            (process_b, 0.40, "handbook"),
+            (definition, 0.10, "handbook"),
+        ],
+        top_k=5,
+        min_score=None,
+        query="Что происходит с CRM после создания сделки?",
+    )
+    hit_ids = {h.chunk_id for h in hits}
+    assert process_a.id in hit_ids
+    assert definition.id not in hit_ids, (
+        "process questions must not force definition-only retrieval"
+    )
+
+
+def test_definition_question_ranks_definition_first() -> None:
+    from app.services.ai.retriever import _merge_and_score
+
+    article_id = uuid4()
+    definition = _mock_chunk(
+        article_id=article_id,
+        chunk_index=0,
+        content=_CRM_DEFINITION,
+    )
+    mention = _mock_chunk(
+        article_id=article_id,
+        chunk_index=8,
+        content="CRM используется при передаче сделки логисту.",
+    )
+    hits = _merge_and_score(
+        vector_rows=[
+            (mention, 0.20, "handbook"),
+            (definition, 0.70, "handbook"),
+        ],
+        lexical_rows=[
+            (mention, 0.50, "handbook"),
+            (definition, 0.10, "handbook"),
+        ],
+        top_k=5,
+        min_score=None,
+        query="Что такое CRM?",
+    )
+    assert hits[0].chunk_id == definition.id
+    assert any("4logist" in h.content for h in hits)
+
+
+@pytest.mark.parametrize(
+    ("query", "needle"),
+    [
+        ("SAELOG", "канонический корпус"),
+        ("saelog", "канонический корпус"),
+        ("саелог", "канонический корпус"),
+        ("CRM", "4logist"),
+        ("AI-ассистент", "AI-ассистент"),
+        ("Стоп-фактор", "Стоп-фактор"),
+        ("CHECKLISTS", "CHECKLISTS"),
+        ("P13", "P13"),
+        ("PROJECT-X", "PROJECT-X"),
+    ],
+)
+async def test_standalone_entity_queries_keep_definition_chunk(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+    query: str,
+    needle: str,
+) -> None:
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    hits = await retriever.retrieve(
+        query,
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert hits, f"{query!r} must retrieve hybrid hits"
+    assert any(needle.lower() in h.content.lower() for h in hits), (
+        f"{query!r} must keep a definition/heading chunk containing {needle!r}"
+    )
+
+
+async def test_unknown_term_does_not_invent_definition(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    hits = await retriever.retrieve(
+        "SOMETHING-NOT-IN-KB",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert all("SOMETHING-NOT-IN-KB" not in h.content for h in hits)
+    for hit in hits:
+        score, _ = _score_definition_candidate(
+            "SOMETHING-NOT-IN-KB", hit.content, hit.article_title
+        )
+        assert score == 0.0
+
+
+async def test_semantic_crm_question_keeps_process_chunks(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    hits = await retriever.retrieve(
+        "Что происходит с CRM после создания сделки?",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert hits
+    joined = " ".join(h.content for h in hits)
+    assert "CRM" in joined
+    processish = any(
+        token in joined
+        for token in ("передаче", "сделк", "операцион", "отчёт", "отчет")
+    )
+    assert processish or "CRM" in joined
+
+
+async def test_definition_question_retrieves_crm_definition(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    hits = await retriever.retrieve(
+        "Что такое CRM?",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert hits
+    assert any("4logist" in h.content or "ENTITY CRM" in h.content for h in hits)
+
+
+async def test_definition_reservation_respects_tenant_isolation(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    company_b: Company,
+    employee_a: Employee,
+    employee_b: Employee,
+) -> None:
+    await _publish(
+        article_service,
+        company_a,
+        title="A entities",
+        body=(
+            "ENTITY SHAREDNAME\naliases: SN\n"
+            "SHAREDNAME — определение тенанта A, token-AAA-ONLY."
+        ),
+    )
+    await _publish(
+        article_service,
+        company_b,
+        title="B entities",
+        body=(
+            "ENTITY SHAREDNAME\naliases: SN\n"
+            "SHAREDNAME — определение тенанта B, token-BBB-ONLY."
+        ),
+    )
+    hits_a = await retriever.retrieve(
+        "SHAREDNAME",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    hits_b = await retriever.retrieve(
+        "SHAREDNAME",
+        actor_company_id=company_b.id,
+        actor_employee_id=employee_b.id,
+        **_KWARGS,
+    )
+    joined_a = " ".join(h.content for h in hits_a)
+    joined_b = " ".join(h.content for h in hits_b)
+    assert "token-AAA-ONLY" in joined_a
+    assert "token-BBB-ONLY" not in joined_a
+    assert "token-BBB-ONLY" in joined_b
+    assert "token-AAA-ONLY" not in joined_b
+
+
+async def test_unpublished_definition_is_not_reserved(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    draft = await article_service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Draft entity",
+        body=(
+            "ENTITY DRAFTNAME\naliases: DN\n"
+            "DRAFTNAME — скрытое определение, token-DRAFT-ONLY."
+        ),
+    )
+    assert draft.status != "published"
+    hits = await retriever.retrieve(
+        "DRAFTNAME",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert all("token-DRAFT-ONLY" not in h.content for h in hits)
+    assert all("DRAFTNAME" not in h.content for h in hits)
+
+
+async def test_empty_allowed_ids_cannot_surface_definition(
+    article_service: ArticleService,
+    company_a: Company,
+) -> None:
+    article = await _publish(
+        article_service,
+        company_a,
+        title="ACL entity",
+        body="ENTITY ACLNAME\naliases: AN\nACLNAME — определение внутри ACL.",
+    )
+    tsquery = _build_tsquery("ACLNAME", script_variants=True)
+    assert tsquery is not None
+    async with _uow_factory() as uow:
+        await uow.enter_tenant(company_a.id)
+        empty = await uow.knowledge_article_chunks.search_lexical_current_published(
+            allowed_article_ids=[],
+            tsquery_text=tsquery,
+            limit=10,
+        )
+        allowed = await uow.knowledge_article_chunks.search_lexical_current_published(
+            allowed_article_ids=[article.id],
+            tsquery_text=tsquery,
+            limit=10,
+        )
+    assert empty == []
+    assert allowed
+    assert any("ACLNAME" in row[0].content for row in allowed)

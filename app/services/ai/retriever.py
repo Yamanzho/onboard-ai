@@ -39,6 +39,11 @@ Hyphenated Cyrillic compounds (``Стоп-фактор``) append a tsquery prefi
 operator (``фактор:*``) on those Cyrillic hyphen parts only, so
 ``simple`` matching can hit inflected index forms such as ``факторы``
 without changing the database text-search configuration.
+
+Standalone entity queries and explicit definition questions additionally
+reserve the best definition-like exact match (ENTITY / aliases / copula /
+heading) before the per-article cap. Process questions and follow-ups skip
+this path. Hybrid scoring and FTS reservation are unchanged.
 """
 
 from __future__ import annotations
@@ -53,6 +58,7 @@ from uuid import UUID
 
 from app.core.ai_constants import (
     DEFAULT_RETRIEVAL_TOP_K,
+    DEFINITION_RESERVED,
     KB_CHUNK_VECTOR_DIMENSION,
     LEXICAL_BOOST,
     LEXICAL_FLOOR_SCORE,
@@ -88,6 +94,209 @@ _HYPHEN_COMPOUND_RE = re.compile(
     r"[a-zа-яё0-9]+(?:[\-\u2010\u2011\u2013\u2014][a-zа-яё0-9]+)+",
     re.IGNORECASE | re.UNICODE,
 )
+_DASH_RE = re.compile(r"[\u2010\u2011\u2013\u2014]")
+_QUERY_PUNCT = "?!.,:;…"
+# Conversational / process heads — not standalone entity lookups.
+# Kept local to avoid importing chat.py (circular).
+_FOLLOW_UP_HEADS = frozenset(
+    {
+        "а",
+        "кто",
+        "что",
+        "где",
+        "когда",
+        "почему",
+        "зачем",
+        "как",
+        "какой",
+        "какая",
+        "какие",
+        "который",
+        "которая",
+        "он",
+        "она",
+        "они",
+        "это",
+        "этот",
+        "эта",
+        "дальше",
+        "потом",
+        "ещё",
+        "еще",
+        "подробнее",
+        "who",
+        "what",
+        "where",
+        "why",
+        "how",
+        "which",
+        "more",
+        "continue",
+        "when",
+        "whose",
+        "whom",
+    }
+)
+_FUNCTION_WORDS = frozenset(
+    {
+        "в",
+        "на",
+        "с",
+        "со",
+        "для",
+        "по",
+        "от",
+        "до",
+        "из",
+        "к",
+        "ко",
+        "о",
+        "об",
+        "и",
+        "или",
+        "но",
+        "не",
+        "ни",
+        "после",
+        "при",
+        "без",
+        "над",
+        "под",
+        "между",
+        "нужны",
+        "нужно",
+        "происходит",
+        "делать",
+        "документы",
+        "the",
+        "a",
+        "an",
+        "of",
+        "for",
+        "to",
+        "in",
+        "on",
+        "at",
+        "by",
+        "with",
+        "after",
+        "before",
+        "about",
+        "from",
+        "into",
+        "needed",
+        "documents",
+        "happens",
+    }
+)
+_DEFINITION_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"что\s+такое|"
+    r"что\s+это(?:\s+такое)?|"
+    r"что\s+означает|"
+    r"что\s+значит|"
+    r"кто\s+так(?:ой|ая|ое|ие)|"
+    r"дай(?:те)?\s+определение(?:\s+(?:для|слова))?|"
+    r"определение(?:\s+(?:для|слова))?|"
+    r"what\s+is(?:\s+an?)?|"
+    r"what's|"
+    r"define|"
+    r"definition\s+of"
+    r")\s+",
+    re.IGNORECASE | re.UNICODE,
+)
+_COPULA_AFTER_RE = re.compile(
+    r"(?:\s*(?:—|–|−|-)\s*(?:это\s+)?|"
+    r"\s+это\s+|"
+    r"\s+представляет\s+собой\s+|"
+    r"\s+является\s+|"
+    r"\s+определяется\s+как\s+|"
+    r"\s+означает\s+|"
+    r"\s+значит\s+|"
+    r"\s+is\s+(?:a|an|the)\s+|"
+    r"\s+means\s+)",
+    re.IGNORECASE | re.UNICODE,
+)
+_COPULA_BEFORE_RE = re.compile(
+    r"(?:это|called|named)\s+$",
+    re.IGNORECASE | re.UNICODE,
+)
+_USAGE_RE = re.compile(
+    r"использует(?:ся)?|указан[аоы]?|появля(?:ет(?:ся)?|ют(?:ся)?)|"
+    r"примен(?:яет(?:ся)?|ени)|передач|"
+    r"\bused\b|\bappears\b|\bmentioned\b",
+    re.IGNORECASE | re.UNICODE,
+)
+_CANONICAL_RE = re.compile(
+    r"каноническ|определени|основн(?:ой|ая|ое|ые)|canonical|definition",
+    re.IGNORECASE | re.UNICODE,
+)
+_MAX_ENTITY_QUERY_WORDS = 3
+_MIN_DEFINITION_SCORE = 3.0
+# Cyrillic → Latin fold for identifier matching (visual + phonetic).
+_CYR_TO_LAT: dict[str, str] = {
+    "а": "a",
+    "б": "b",
+    "в": "v",
+    "г": "g",
+    "д": "d",
+    "е": "e",
+    "ё": "e",
+    "ж": "zh",
+    "з": "z",
+    "и": "i",
+    "й": "i",
+    "к": "k",
+    "л": "l",
+    "м": "m",
+    "н": "n",
+    "о": "o",
+    "п": "p",
+    "р": "r",
+    "с": "s",
+    "т": "t",
+    "у": "u",
+    "ф": "f",
+    "х": "h",
+    "ц": "ts",
+    "ч": "ch",
+    "ш": "sh",
+    "щ": "sh",
+    "ъ": "",
+    "ы": "y",
+    "ь": "",
+    "э": "e",
+    "ю": "yu",
+    "я": "ya",
+}
+_LAT_TO_CYR: dict[str, str] = {
+    "a": "а",
+    "b": "б",
+    "c": "с",
+    "d": "д",
+    "e": "е",
+    "f": "ф",
+    "g": "г",
+    "h": "х",
+    "i": "и",
+    "j": "дж",
+    "k": "к",
+    "l": "л",
+    "m": "м",
+    "n": "н",
+    "o": "о",
+    "p": "п",
+    "q": "к",
+    "r": "р",
+    "s": "с",
+    "t": "т",
+    "u": "у",
+    "v": "в",
+    "w": "в",
+    "x": "кс",
+    "y": "и",
+    "z": "з",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,6 +369,9 @@ class KnowledgeRetriever:
         allowed_count = 0
         vector_candidates = 0
         lexical_candidates = 0
+        definition_candidate = False
+        definition_score: float | None = None
+        definition_signals = ""
         resolved_top_k: int | None = None
         try:
             normalized = _validate_query(query)
@@ -212,7 +424,12 @@ class KnowledgeRetriever:
                 max(resolved_top_k * MAX_CHUNKS_PER_ARTICLE_RESULT, resolved_top_k),
             )
             # FTS always uses the original question, never the embedding expansion.
-            tsquery = _build_tsquery(normalized)
+            # Standalone entity / definition questions also OR a script-folded
+            # token so mixed Latin/Cyrillic identifiers can match.
+            lookup_term = _definition_lookup_term(normalized)
+            tsquery = _build_tsquery(
+                normalized, script_variants=lookup_term is not None
+            )
 
             async with self._uow_factory() as uow:
                 await uow.enter_tenant(actor_company_id)
@@ -223,7 +440,8 @@ class KnowledgeRetriever:
                 )
                 lexical_rows = []
                 if tsquery:
-                    lexical_rows = await uow.knowledge_article_chunks.search_lexical_current_published(
+                    repo = uow.knowledge_article_chunks
+                    lexical_rows = await repo.search_lexical_current_published(
                         allowed_article_ids=allowed_ids,
                         tsquery_text=tsquery,
                         limit=LEXICAL_OVERFETCH,
@@ -232,12 +450,23 @@ class KnowledgeRetriever:
             vector_candidates = len(vector_rows)
             lexical_candidates = len(lexical_rows)
 
+            merge_debug: dict[str, object] = {}
             hits = _merge_and_score(
                 vector_rows=vector_rows,
                 lexical_rows=lexical_rows,
                 top_k=resolved_top_k,
                 min_score=min_score,
+                query=normalized,
+                debug=merge_debug,
             )
+            definition_candidate = bool(merge_debug.get("definition_candidate"))
+            raw_score = merge_debug.get("definition_score")
+            definition_score = (
+                float(raw_score) if isinstance(raw_score, int | float) else None
+            )
+            raw_signals = merge_debug.get("definition_signals")
+            if isinstance(raw_signals, str):
+                definition_signals = raw_signals
             hit_count = len(hits)
             result_status = "success"
             return hits
@@ -265,6 +494,9 @@ class KnowledgeRetriever:
                 top_k=resolved_top_k if resolved_top_k is not None else top_k,
                 result=result_status,
                 duration_ms=(time.perf_counter() - started) * 1000,
+                definition_candidate=definition_candidate,
+                definition_score=definition_score,
+                definition_signals=definition_signals,
             )
 
     async def _allowed_published_article_ids(
@@ -323,7 +555,7 @@ def _tsquery_term(token: str, *, prefix_tokens: frozenset[str]) -> str:
     return token
 
 
-def _build_tsquery(query: str) -> str | None:
+def _build_tsquery(query: str, *, script_variants: bool = False) -> str | None:
     """Convert a user query into a safe PostgreSQL ``to_tsquery('simple', ...)`` string.
 
     Only alphanumeric Cyrillic/Latin/digit tokens are extracted.  Single-char
@@ -338,6 +570,10 @@ def _build_tsquery(query: str) -> str | None:
     ``Стоп-фактор`` matches indexed ``стоп-факторы``. The colon is added
     by this function; it is never taken from user input.
 
+    ``script_variants`` ORs a Latin↔Cyrillic fold of each token so a
+    standalone identifier typed in the other script can still match. Default
+    is off so existing exact tsquery tests stay unchanged.
+
     Returns ``None`` when no valid tokens remain (e.g. punctuation-only input)
     so callers can skip the lexical path entirely.
 
@@ -351,9 +587,269 @@ def _build_tsquery(query: str) -> str | None:
     if not tokens:
         return None
     prefix_tokens = _hyphenated_cyrillic_tokens(query)
-    terms = [_tsquery_term(token, prefix_tokens=prefix_tokens) for token in tokens]
+    terms: list[str] = []
+    for token in tokens:
+        primary = _tsquery_term(token, prefix_tokens=prefix_tokens)
+        if script_variants:
+            alt = _script_variant_token(token)
+            if alt is not None:
+                alt_prefix = prefix_tokens if token in prefix_tokens else frozenset()
+                alt_term = _tsquery_term(alt, prefix_tokens=alt_prefix)
+                if token in prefix_tokens and ":*" not in alt_term:
+                    alt_term = f"{alt}:*"
+                terms.append(f"({primary} | {alt_term})")
+                continue
+        terms.append(primary)
     operator = " & " if len(tokens) <= 3 else " | "
     return operator.join(terms)
+
+
+def _script_variant_token(token: str) -> str | None:
+    """Other-script form of a single-script alphanumeric token, or None."""
+    lowered = token.lower()
+    has_cyr = bool(_CYRILLIC_RE.search(lowered))
+    has_lat = bool(re.search(r"[a-z]", lowered))
+    if has_cyr and has_lat:
+        return None
+    if has_cyr:
+        alt = "".join(_CYR_TO_LAT.get(ch, ch) for ch in lowered)
+    elif has_lat:
+        alt = "".join(_LAT_TO_CYR.get(ch, ch) for ch in lowered)
+    else:
+        return None
+    alt = "".join(ch for ch in alt.lower() if ch.isalnum())
+    if len(alt) <= 1 or alt == lowered:
+        return None
+    if not _TOKEN_RE.fullmatch(alt):
+        return None
+    return alt
+
+
+def _fold_scripts(text: str) -> str:
+    """Casefold and map Cyrillic letters to Latin so identifiers can match."""
+    return "".join(_CYR_TO_LAT.get(ch, ch) for ch in text.casefold())
+
+
+def _normalize_dashes(text: str) -> str:
+    return _DASH_RE.sub("-", text)
+
+
+def _definition_lookup_term(query: str) -> str | None:
+    """Entity term when ``query`` is a definition lookup; otherwise None.
+
+    Returns a term for:
+    * standalone identifiers (CRM, PROJECT-X, AI-ассистент)
+    * explicit definition questions (Что такое CRM?, What is X?)
+
+    Follow-ups, process questions, and long natural-language queries return
+    None so existing hybrid / expansion behavior is unchanged.
+    """
+    stripped = query.strip()
+    if not stripped:
+        return None
+    prefix = _DEFINITION_PREFIX_RE.match(stripped)
+    if prefix is not None:
+        remainder = stripped[prefix.end() :].strip().strip(_QUERY_PUNCT).strip()
+        words = [part for part in remainder.split() if part]
+        if 1 <= len(words) <= _MAX_ENTITY_QUERY_WORDS:
+            return remainder
+        return None
+    return stripped if _is_standalone_entity_query(stripped) else None
+
+
+def _is_standalone_entity_query(query: str) -> bool:
+    """True for a short identifier/name, not a follow-up or process question."""
+    cleaned = query.strip().strip(_QUERY_PUNCT).strip()
+    if not cleaned:
+        return False
+    words = [part.strip(_QUERY_PUNCT) for part in cleaned.split()]
+    words = [part for part in words if part]
+    if not words or len(words) > _MAX_ENTITY_QUERY_WORDS:
+        return False
+    if words[0].casefold() in _FOLLOW_UP_HEADS:
+        return False
+    if any(part.casefold() in _FUNCTION_WORDS for part in words):
+        return False
+    return all(_TOKEN_RE.search(part) for part in words)
+
+
+def _entity_needles(term: str) -> tuple[str, ...]:
+    dashed = _normalize_dashes(term).casefold().strip()
+    if not dashed:
+        return ()
+    needles = {dashed, dashed.replace("-", " "), dashed.replace("-", "")}
+    folded = _fold_scripts(dashed)
+    needles.add(folded)
+    needles.add(folded.replace("-", " "))
+    needles.add(folded.replace("-", ""))
+    return tuple(n for n in needles if len(n) > 1)
+
+
+def _term_in_text(term: str, text: str) -> bool:
+    if len(term) <= 2:
+        pattern = rf"(?<![a-zа-яё0-9]){re.escape(term)}(?![a-zа-яё0-9])"
+        return re.search(pattern, text, re.IGNORECASE | re.UNICODE) is not None
+    return term in text
+
+
+def _any_needle_in(text: str, needles: tuple[str, ...]) -> bool:
+    folded = _fold_scripts(text)
+    for needle in needles:
+        if _term_in_text(needle, text) or _term_in_text(_fold_scripts(needle), folded):
+            return True
+    return False
+
+
+def _first_term_pos(text: str, needles: tuple[str, ...]) -> int | None:
+    positions: list[int] = []
+    folded = _fold_scripts(text)
+    for needle in needles:
+        idx = text.find(needle)
+        if idx >= 0:
+            positions.append(idx)
+        folded_needle = _fold_scripts(needle)
+        folded_idx = folded.find(folded_needle)
+        if folded_idx >= 0:
+            positions.append(folded_idx)
+    return min(positions) if positions else None
+
+
+def _has_entity_decl(content_fold: str, needles: tuple[str, ...]) -> bool:
+    for needle in needles:
+        if re.search(
+            rf"\bentity\s+{re.escape(needle)}\b", content_fold, re.UNICODE
+        ):
+            return True
+        folded = _fold_scripts(needle)
+        if folded != needle and re.search(
+            rf"\bentity\s+{re.escape(folded)}\b", _fold_scripts(content_fold), re.UNICODE
+        ):
+            return True
+    return False
+
+
+def _has_aliases_decl(content_fold: str, needles: tuple[str, ...]) -> bool:
+    for line in content_fold.splitlines():
+        if re.search(r"aliases\s*:", line) is None:
+            continue
+        if _any_needle_in(line, needles):
+            return True
+    return False
+
+
+def _has_definition_copula(content_fold: str, needles: tuple[str, ...]) -> bool:
+    folded = _fold_scripts(content_fold)
+    search_pairs = [(content_fold, needles)]
+    folded_needles = tuple(_fold_scripts(n) for n in needles if len(_fold_scripts(n)) > 1)
+    if folded_needles:
+        search_pairs.append((folded, folded_needles))
+    for text, terms in search_pairs:
+        for needle in terms:
+            for match in re.finditer(re.escape(needle), text):
+                tail = text[match.end() : match.end() + 48]
+                if _COPULA_AFTER_RE.match(tail):
+                    return True
+                head = text[max(0, match.start() - 16) : match.start()]
+                if _COPULA_BEFORE_RE.search(head):
+                    return True
+    return False
+
+
+def _score_definition_candidate(
+    term: str, content: str, title: str
+) -> tuple[float, tuple[str, ...]]:
+    """Score how much ``content`` looks like a definition of ``term``.
+
+    Returns ``(0.0, ())`` when the chunk is not a definition candidate.
+    Operates on one already-retrieved candidate; never scans the full KB.
+    """
+    if not content or not term:
+        return 0.0, ()
+    content_norm = _normalize_dashes(content)
+    term_norm = _normalize_dashes(term.strip())
+    content_fold = content_norm.casefold()
+    title_fold = _normalize_dashes(title).casefold() if title else ""
+    needles = _entity_needles(term_norm)
+    if not needles or not _any_needle_in(content_fold, needles):
+        return 0.0, ()
+
+    signals: list[str] = ["exact_match"]
+    score = 1.0
+    first_line = content_norm.splitlines()[0].strip() if content_norm else ""
+    first_sentence = re.split(r"[\n.]", content_norm, maxsplit=1)[0].strip()
+
+    if _has_entity_decl(content_fold, needles):
+        score += 4.0
+        signals.append("entity_decl")
+    if _has_aliases_decl(content_fold, needles):
+        score += 3.0
+        signals.append("aliases")
+    if _has_definition_copula(content_fold, needles):
+        score += 4.0
+        signals.append("definition_copula")
+
+    heading_source = first_line if first_line else first_sentence
+    if first_sentence and len(first_sentence) <= 80:
+        heading_source = first_sentence
+    heading_ok = (
+        bool(heading_source)
+        and len(heading_source) <= 80
+        and _any_needle_in(heading_source.casefold(), needles)
+        and _USAGE_RE.search(heading_source) is None
+    )
+    if heading_ok or heading_source.lstrip().startswith("#"):
+        if _any_needle_in(heading_source.casefold(), needles):
+            score += 3.0
+            signals.append("heading")
+
+    pos = _first_term_pos(content_fold, needles)
+    if pos is not None and pos <= 80:
+        score += 1.5
+        signals.append("term_at_start")
+    if _CANONICAL_RE.search(content_fold[:500]):
+        score += 2.0
+        signals.append("canonical_language")
+    if title_fold and _any_needle_in(title_fold, needles):
+        score += 1.0
+        signals.append("title_match")
+
+    strong = {"entity_decl", "aliases", "definition_copula", "heading"}
+    if not strong.intersection(signals):
+        return 0.0, ()
+    if score < _MIN_DEFINITION_SCORE:
+        return 0.0, ()
+    return score, tuple(signals)
+
+
+def _reserved_definition_chunks(
+    sorted_pool: list[tuple[KnowledgeArticleChunk, float, str, float | None]],
+    *,
+    query: str | None,
+    min_score: float | None,
+) -> list[tuple[KnowledgeArticleChunk, float, str, float, tuple[str, ...]]]:
+    """Best definition-like exact match, up to ``DEFINITION_RESERVED`` globally.
+
+    Only runs for standalone entity / definition questions. Candidates come
+    from the existing hybrid pool (vector + FTS overfetch), not a full scan.
+    """
+    term = _definition_lookup_term(query) if query else None
+    if term is None:
+        return []
+
+    ranked: list[tuple[float, float, KnowledgeArticleChunk, str, tuple[str, ...]]] = []
+    for chunk, score, title, _lex_rank in sorted_pool:
+        if min_score is not None and score < min_score:
+            continue
+        def_score, signals = _score_definition_candidate(term, chunk.content, title)
+        if def_score <= 0.0:
+            continue
+        ranked.append((def_score, score, chunk, title, signals))
+    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+
+    reserved: list[tuple[KnowledgeArticleChunk, float, str, float, tuple[str, ...]]] = []
+    for def_score, score, chunk, title, signals in ranked[:DEFINITION_RESERVED]:
+        reserved.append((chunk, score, title, def_score, signals))
+    return reserved
 
 
 def _merge_and_score(
@@ -362,6 +858,8 @@ def _merge_and_score(
     lexical_rows: list[tuple[KnowledgeArticleChunk, float, str]],
     top_k: int,
     min_score: float | None,
+    query: str | None = None,
+    debug: dict[str, object] | None = None,
 ) -> list[RetrievalHit]:
     """Merge vector and lexical candidates, assign hybrid scores, deduplicate.
 
@@ -374,9 +872,11 @@ def _merge_and_score(
     scale. It selects the per-article reserved FTS slot in
     ``_dedupe_and_score``.
 
-    After scoring, the pool is sorted descending by ``final_score`` and the
-    existing ``MAX_CHUNKS_PER_ARTICLE_RESULT`` cap and ``top_k`` limit are
-    applied, with ``LEXICAL_RESERVED_PER_ARTICLE`` FTS slots reserved first.
+    After scoring, the pool is sorted descending by ``final_score``. For
+    standalone entity / definition questions a definition candidate is
+    reserved first (original hybrid score, no inflation). Then
+    ``LEXICAL_RESERVED_PER_ARTICLE`` FTS slots, the per-article cap, and
+    ``top_k`` are applied.
     """
     # chunk_id → (chunk, final_score, title, lexical_rank or None)
     pool: dict[UUID, tuple[KnowledgeArticleChunk, float, str, float | None]] = {}
@@ -400,7 +900,13 @@ def _merge_and_score(
             pool[chunk.id] = (chunk, LEXICAL_FLOOR_SCORE, title, float(lex_score))
 
     sorted_pool = sorted(pool.values(), key=lambda x: x[1], reverse=True)
-    return _dedupe_and_score(sorted_pool, top_k=top_k, min_score=min_score)
+    return _dedupe_and_score(
+        sorted_pool,
+        top_k=top_k,
+        min_score=min_score,
+        query=query,
+        debug=debug,
+    )
 
 
 def _log_retrieve(
@@ -415,12 +921,16 @@ def _log_retrieve(
     top_k: object,
     result: str,
     duration_ms: float,
+    definition_candidate: bool = False,
+    definition_score: float | None = None,
+    definition_signals: str = "",
 ) -> None:
     """Operational retrieve log. Never include query, body, embeddings, or secrets."""
     logger.info(
         "kb_retrieve request_id=%s company_id=%s employee_id=%s actor_role=%s "
         "allowed_articles=%s vector_candidates=%s lexical_candidates=%s "
-        "hit_count=%s top_k=%s result=%s duration_ms=%.1f",
+        "hit_count=%s top_k=%s result=%s duration_ms=%.1f "
+        "definition_candidate=%s definition_score=%s definition_signals=%s",
         request_id_log_value(),
         actor_company_id,
         actor_employee_id,
@@ -432,6 +942,9 @@ def _log_retrieve(
         top_k,
         result,
         duration_ms,
+        str(definition_candidate).lower(),
+        f"{definition_score:.2f}" if definition_score is not None else "",
+        definition_signals,
     )
 
 
@@ -530,21 +1043,43 @@ def _dedupe_and_score(
     *,
     top_k: int,
     min_score: float | None,
+    query: str | None = None,
+    debug: dict[str, object] | None = None,
 ) -> list[RetrievalHit]:
-    """Apply reserved FTS slots, per-article chunk cap, and top_k.
+    """Reserve definition + FTS slots, then apply per-article cap and top_k.
 
     ``sorted_pool`` must already be sorted descending by final hybrid score.
     Queries with no lexical hits keep score-order ranking unchanged.
+    Definition reservation does not change hybrid scores.
     """
     seen_ids: set[UUID] = set()
     seen_article: dict[UUID, int] = {}
     hits: list[RetrievalHit] = []
+
+    for chunk, score, title, def_score, signals in _reserved_definition_chunks(
+        sorted_pool, query=query, min_score=min_score
+    ):
+        if len(hits) >= top_k:
+            break
+        used = seen_article.get(chunk.article_id, 0)
+        if used >= MAX_CHUNKS_PER_ARTICLE_RESULT:
+            continue
+        seen_ids.add(chunk.id)
+        seen_article[chunk.article_id] = used + 1
+        hits.append(_hit_from_pool(chunk, score, title))
+        if debug is not None:
+            debug["definition_candidate"] = True
+            debug["definition_score"] = def_score
+            debug["definition_signals"] = ",".join(signals)
+            debug["exact_match"] = "exact_match" in signals
 
     for chunk, score, title in _reserved_lexical_chunks(
         sorted_pool, min_score=min_score
     ):
         if len(hits) >= top_k:
             break
+        if chunk.id in seen_ids:
+            continue
         used = seen_article.get(chunk.article_id, 0)
         if used >= MAX_CHUNKS_PER_ARTICLE_RESULT:
             continue
