@@ -53,6 +53,19 @@ def test_dev_compose_keeps_localhost_postgres_with_default_password() -> None:
 
 
 @pytest.mark.skipif(not _compose_available(), reason="docker not available")
+def test_prod_compose_uses_existing_external_postgres_volume() -> None:
+    """Production must bind to the live volume, never a new empty named volume."""
+    cfg = _compose_config(prod=True, env=_COMPOSE_SECRETS)
+    volumes = cfg.get("volumes") or {}
+    postgres = volumes.get("postgres_data") or {}
+    assert postgres.get("name") == "onboard-ai_postgres_data"
+    assert postgres.get("external") is True or (
+        isinstance(postgres.get("external"), dict) and postgres["external"]
+    )
+    assert "pgvector" not in str(postgres.get("name", ""))
+
+
+@pytest.mark.skipif(not _compose_available(), reason="docker not available")
 def test_prod_compose_requires_postgres_password_and_hides_ports() -> None:
     cfg = _compose_config(prod=True, env=_COMPOSE_SECRETS)
     api = cfg["services"]["api"]

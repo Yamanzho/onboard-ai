@@ -104,6 +104,9 @@ services:
       APP_ENV: production
       DEBUG: "false"
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required for docker-compose.prod.yml}
+      # Settings() is imported at bot startup and validates this when APP_ENV=production.
+      # env_file=.env does not load .env.production; interpolate it here like the API.
+      SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD:?SUPER_ADMIN_PASSWORD is required for docker-compose.prod.yml}
       BOT_SERVICE_TOKEN: ${BOT_SERVICE_TOKEN:?BOT_SERVICE_TOKEN is required for docker-compose.prod.yml}
       # Optional demo/ops metadata only. Not a tenant bind for the shared bot.
       BOT_COMPANY_ID: ${BOT_COMPANY_ID:-}
@@ -156,9 +159,10 @@ services:
       retries: 10
 
 volumes:
-  # Production PostgreSQL uses the pgvector cluster created 2026-08-17.
-  # The base postgres_data Compose volume is intentionally superseded here.
-  # Do NOT change this name or remove the external flag.
+  # Production PostgreSQL uses the existing Compose volume onboard-ai_postgres_data
+  # (created with the default project_volume name). Keep external: true so Compose
+  # never creates a replacement empty volume. Do NOT introduce a new named volume
+  # (e.g. onboard-ai_postgres_data_pgvector) — that would detach the live database.
   postgres_data:
-    name: onboard-ai_postgres_data_pgvector
+    name: onboard-ai_postgres_data
     external: true

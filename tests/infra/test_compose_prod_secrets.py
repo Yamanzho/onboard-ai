@@ -58,6 +58,9 @@ def test_prod_compose_passes_with_required_secrets() -> None:
     assert str(api_env.get("SEED_DEMO")).lower() in {"false", "0"}
     assert api_env.get("SECRET_KEY") == _COMPOSE_SECRETS["SECRET_KEY"]
     assert api_env.get("SUPER_ADMIN_PASSWORD") == _COMPOSE_SECRETS["SUPER_ADMIN_PASSWORD"]
+    bot_env = cfg["services"]["bot"].get("environment") or {}
+    assert bot_env.get("APP_ENV") == "production"
+    assert bot_env.get("SUPER_ADMIN_PASSWORD") == _COMPOSE_SECRETS["SUPER_ADMIN_PASSWORD"]
     assert api_env.get("BOT_SERVICE_TOKEN") == _COMPOSE_SECRETS["BOT_SERVICE_TOKEN"]
     assert api_env.get("BOT_COMPANY_ID") == _COMPOSE_SECRETS["BOT_COMPANY_ID"]
     assert api_env.get("INVITE_BASE_URL") == _COMPOSE_SECRETS["INVITE_BASE_URL"]
