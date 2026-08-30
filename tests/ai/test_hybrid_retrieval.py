@@ -46,9 +46,13 @@ from app.services.ai.embeddings import FakeEmbeddingProvider
 from app.services.ai.history import HistoryTurn
 from app.services.ai.retriever import (
     KnowledgeRetriever,
+    _best_structured_entity_match,
     _build_tsquery,
+    _content_without_title_prefix,
     _definition_lookup_term,
+    _entity_needles,
     _folded_entity_embed_text,
+    _iter_structured_entities,
     _score_definition_candidate,
     _script_variant_token,
     _union_vector_rows,
@@ -1218,7 +1222,7 @@ def test_score_definition_prefers_entity_block_over_incidental_mention() -> None
         "CRM", "CRM указана в отчёте за квартал.", "общее сведение"
     )
     assert def_score > 0
-    assert "entity_decl" in def_signals or "definition_copula" in def_signals
+    assert "structured_entity" in def_signals or "definition_copula" in def_signals
     assert mention_score == 0.0
     assert mention_signals == ()
     assert incidental_score == 0.0
@@ -1624,13 +1628,12 @@ def test_title_prefix_does_not_make_every_chunk_a_definition() -> None:
         score_c, signals_c = _score_definition_candidate(query, claims, title)
         assert score_c == 0.0, f"{query!r}: claims chunk must not be a definition"
         assert signals_c == ()
-        assert score_a > score_b, (
-            f"{query!r}: canonical intro must beat entity registry "
-            f"({score_a} vs {score_b})"
-        )
+        assert "structured_entity" in signals_b
         assert "lead_heading" in signals_a
         assert "lead_heading" not in signals_b
-        assert "entity_decl" in signals_b
+        assert "structured_entity" not in signals_a
+        assert score_b > 0.0
+        assert score_a > 0.0
 
     article_id = uuid4()
     chunk_a = _mock_chunk(
@@ -1656,8 +1659,9 @@ def test_title_prefix_does_not_make_every_chunk_a_definition() -> None:
         min_score=None,
         query="Saelog",
     )
-    assert hits[0].chunk_id == chunk_a.id, (
-        "definition reservation must select the canonical intro, not the registry"
+    assert hits[0].chunk_id == chunk_b.id, (
+        "definition reservation must select the structured organization, "
+        "not the corpus intro"
     )
 
 
@@ -1675,8 +1679,8 @@ def test_title_prefix_ignored_for_heading_and_term_at_start() -> None:
     ) == (0.0, ())
 
 
-def test_merge_reserves_canonical_intro_not_entity_registry() -> None:
-    """Production-like distances: definition slot is the canonical intro."""
+def test_merge_reserves_structured_organization_not_corpus_intro() -> None:
+    """Production-like distances: definition slot is the structured org."""
     from app.services.ai.retriever import _merge_and_score
 
     title = _SAELOG_ARTICLE_TITLE
@@ -1704,7 +1708,7 @@ def test_merge_reserves_canonical_intro_not_entity_registry() -> None:
         vector_rows=[
             (registry, 0.28, title),  # sim 0.72 — production-like mid-doc
             (process, 0.32, title),  # sim 0.68 — production-like neighbor
-            (intro, 0.48, title),  # sim 0.52 — canonical intro, weaker vector
+            (intro, 0.48, title),  # sim 0.52 — corpus heading, weaker vector
         ],
         lexical_rows=[
             (registry, 0.41, title),
@@ -1717,18 +1721,19 @@ def test_merge_reserves_canonical_intro_not_entity_registry() -> None:
         debug=debug,
     )
     assert hits, "Saelog must return hybrid hits"
-    assert hits[0].chunk_id == intro.id
+    assert hits[0].chunk_id == registry.id
+    assert hits[0].chunk_index == 17
     assert hits[0].content.startswith(_SAELOG_TITLE_PREFIX), (
         "stored chunk text must keep the synthetic title prefix"
     )
-    assert all(h.chunk_id != registry.id or i != 0 for i, h in enumerate(hits))
+    assert all(hit.chunk_id != intro.id or i != 0 for i, hit in enumerate(hits))
     assert debug.get("definition_candidate") is True
     signals = str(debug.get("definition_signals") or "")
-    assert "lead_heading" in signals
-    intro_ids = [h.chunk_id for h in hits]
-    if registry.id in intro_ids:
-        assert intro_ids.index(registry.id) > 0, (
-            "entity registry must not occupy the definition slot"
+    assert "structured_entity" in signals
+    hit_ids = [hit.chunk_id for hit in hits]
+    if intro.id in hit_ids:
+        assert hit_ids.index(intro.id) > 0, (
+            "corpus intro must not occupy the definition slot"
         )
 
 
@@ -2030,3 +2035,339 @@ async def test_folded_entity_vector_search_reuses_acl_article_ids(
     assert recorder.batch_calls and len(recorder.batch_calls[0]) == 2
     assert hits
     assert any("канонический корпус" in hit.content.lower() for hit in hits)
+
+
+# ===========================================================================
+# Structured ENTITY reservation (canonical_name / aliases)
+# ===========================================================================
+
+_PROD_INTRO = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "# SAELOG — КАНОНИЧЕСКИЙ КОРПУС ЗНАНИЙ (v1.0)\n"
+    "> **Назначение:** структурированный корпус знаний SAELOG для AI-ассистента.\n"
+)
+
+_PROD_ORG = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "## ORGANIZATION\n"
+    "### ENTITY SAELOG-ORG-0001\n"
+    "- `entity_type:` ORGANIZATION\n"
+    "- `canonical_name:` ТОО «SAELOG»\n"
+    "- `aliases:` SAELOG; Сайлог\n"
+    "- `description:` Основной офис в Алматы; экспедирование с 2003 года.\n"
+)
+
+_PROD_CRM = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "## SYSTEM\n"
+    "### ENTITY SAELOG-SYS-0001\n"
+    "- `entity_type:` SYSTEM\n"
+    "- `canonical_name:` CRM 4logist\n"
+    "- `aliases:` 4logist; текущая CRM\n"
+    "- `description:` Действующая CRM: сделки, грузы, рейсы, документы, статусы.\n"
+    "### ENTITY SAELOG-SYS-0002\n"
+    "- `entity_type:` SYSTEM\n"
+    "- `canonical_name:` Собственная CRM (в разработке)\n"
+    "- `aliases:` новая CRM\n"
+    "- `description:` Замена 4logist.\n"
+)
+
+_PROD_SERVICE = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "## SERVICE\n"
+    "### ENTITY SAELOG-SVC-0001\n"
+    "- `entity_type:` SERVICE\n"
+    "- `canonical_name:` Услуги SAELOG\n"
+    "- `aliases:` —\n"
+    "- `description:` Международная перевозка и экспедирование.\n"
+)
+
+
+def _merge_prod_pool(*, query: str, include_service: bool = False):
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    intro = _mock_chunk(article_id=article_id, chunk_index=0, content=_PROD_INTRO)
+    org = _mock_chunk(article_id=article_id, chunk_index=17, content=_PROD_ORG)
+    crm = _mock_chunk(article_id=article_id, chunk_index=39, content=_PROD_CRM)
+    vector_rows = [
+        (intro, 0.48, title),
+        (org, 0.30, title),
+        (crm, 0.34, title),
+    ]
+    lexical_rows = [
+        (intro, 0.12, title),
+        (org, 0.40, title),
+        (crm, 0.22, title),
+    ]
+    extra = {}
+    if include_service:
+        service = _mock_chunk(
+            article_id=article_id, chunk_index=47, content=_PROD_SERVICE
+        )
+        vector_rows.append((service, 0.26, title))
+        lexical_rows.append((service, 0.38, title))
+        extra["service"] = service
+    debug: dict[str, object] = {}
+    hits = _merge_and_score(
+        vector_rows=vector_rows,
+        lexical_rows=lexical_rows,
+        top_k=5,
+        min_score=None,
+        query=query,
+        debug=debug,
+    )
+    extra.update(intro=intro, org=org, crm=crm, hits=hits, debug=debug)
+    return extra
+
+
+@pytest.mark.parametrize("query", ("Саелог", "SAELOG", "Saelog", "Сайлог"))
+def test_structured_org_reserved_over_corpus_heading(query: str) -> None:
+    result = _merge_prod_pool(query=query)
+    assert result["hits"][0].chunk_id == result["org"].id
+    assert result["hits"][0].chunk_index == 17
+    assert result["hits"][0].chunk_id != result["intro"].id
+    assert result["debug"].get("definition_candidate") is True
+    signals = str(result["debug"].get("definition_signals") or "")
+    assert "structured_entity" in signals
+
+
+@pytest.mark.parametrize("query", ("CRM", "4logist", "текущая CRM"))
+def test_structured_crm_system_reserved(query: str) -> None:
+    result = _merge_prod_pool(query=query)
+    assert result["hits"][0].chunk_id == result["crm"].id
+    assert result["hits"][0].chunk_index == 39
+    signals = str(result["debug"].get("definition_signals") or "")
+    assert "structured_entity" in signals
+
+
+@pytest.mark.parametrize("query", ("Kaspi", "XYZ123", "Saelgo"))
+def test_unknown_terms_have_no_structured_reservation(query: str) -> None:
+    result = _merge_prod_pool(query=query)
+    assert result["debug"].get("definition_candidate") in {None, False}
+    for content in (_PROD_INTRO, _PROD_ORG, _PROD_CRM):
+        score, signals = _score_definition_candidate(
+            query, content, _SAELOG_ARTICLE_TITLE
+        )
+        assert score == 0.0
+        assert signals == ()
+        body = _content_without_title_prefix(content, _SAELOG_ARTICLE_TITLE)
+        assert _best_structured_entity_match(body, _entity_needles(query)) is None
+
+
+def test_entity_id_is_never_a_structured_name_match() -> None:
+    body = _content_without_title_prefix(_PROD_CRM, _SAELOG_ARTICLE_TITLE)
+    records = _iter_structured_entities(body)
+    assert records
+    assert all(record.canonical_name != "SAELOG-SYS-0001" for record in records)
+    assert _best_structured_entity_match(body, _entity_needles("Саелог")) is None
+    score, signals = _score_definition_candidate(
+        "Саелог", _PROD_CRM, _SAELOG_ARTICLE_TITLE
+    )
+    assert score == 0.0
+    assert "structured_entity" not in signals
+    assert "entity_decl" not in signals
+
+
+def test_organization_outranks_service_sharing_saelog_token() -> None:
+    result = _merge_prod_pool(query="Саелог", include_service=True)
+    assert result["hits"][0].chunk_id == result["org"].id
+    assert result["hits"][0].chunk_id != result["service"].id
+    org_body = _content_without_title_prefix(_PROD_ORG, _SAELOG_ARTICLE_TITLE)
+    svc_body = _content_without_title_prefix(_PROD_SERVICE, _SAELOG_ARTICLE_TITLE)
+    needles = _entity_needles("Саелог")
+    org_match = _best_structured_entity_match(org_body, needles)
+    svc_match = _best_structured_entity_match(svc_body, needles)
+    assert org_match is not None and org_match.entity_type == "ORGANIZATION"
+    assert svc_match is not None and svc_match.entity_type == "SERVICE"
+
+
+def test_corpus_heading_does_not_create_structured_match() -> None:
+    body = _content_without_title_prefix(_PROD_INTRO, _SAELOG_ARTICLE_TITLE)
+    assert _best_structured_entity_match(body, _entity_needles("Саелог")) is None
+    score, signals = _score_definition_candidate(
+        "Саелог", _PROD_INTRO, _SAELOG_ARTICLE_TITLE
+    )
+    assert "lead_heading" in signals
+    assert "structured_entity" not in signals
+    assert score > 0.0
+
+
+def test_article_title_is_not_a_structured_entity_name() -> None:
+    content = (
+        f"{_SAELOG_TITLE_PREFIX}"
+        "unrelated body about claims deadlines and escalation, no company identifier."
+    )
+    body = _content_without_title_prefix(content, _SAELOG_ARTICLE_TITLE)
+    assert _best_structured_entity_match(body, _entity_needles("Саелог")) is None
+    assert _iter_structured_entities(body) == ()
+
+
+def test_definition_lookup_fts_uses_term_not_question_words() -> None:
+    term = _definition_lookup_term("Что такое Саелог?")
+    assert term == "Саелог"
+    tsquery = _build_tsquery(term, script_variants=True)
+    assert tsquery is not None
+    assert "что" not in tsquery
+    assert "такое" not in tsquery
+    assert "саелог" in tsquery
+    assert "saelog" in tsquery
+    process = _build_tsquery(
+        "Что происходит с CRM после создания сделки?", script_variants=False
+    )
+    assert process is not None
+    assert "происходит" in process
+    assert "crm" in process
+
+
+async def test_process_crm_question_skips_definition_path_and_single_embed(
+    article_service: ArticleService,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    query = "Что происходит с CRM после создания сделки?"
+    assert _definition_lookup_term(query) is None
+    recorder = _RecordingEmbeddings()
+    retriever = KnowledgeRetriever(
+        uow_factory=_uow_factory,
+        article_service=article_service,
+        embedding_provider=recorder,
+    )
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    hits = await retriever.retrieve(
+        query,
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert hits
+    assert recorder.batch_calls == [(query,)]
+
+
+async def test_leave_process_question_has_lookup_none_and_one_embedding(
+    article_service: ArticleService,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    assert _definition_lookup_term(_PROCESS_LEAVE_QUERY) is None
+    recorder = _RecordingEmbeddings()
+    retriever = KnowledgeRetriever(
+        uow_factory=_uow_factory,
+        article_service=article_service,
+        embedding_provider=recorder,
+    )
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    await retriever.retrieve(
+        _PROCESS_LEAVE_QUERY,
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert recorder.batch_calls == [(_PROCESS_LEAVE_QUERY,)]
+    assert len(recorder.batch_calls[0]) == 1
+
+
+async def test_definition_query_embeds_at_most_two_texts(
+    article_service: ArticleService,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    recorder = _RecordingEmbeddings()
+    retriever = KnowledgeRetriever(
+        uow_factory=_uow_factory,
+        article_service=article_service,
+        embedding_provider=recorder,
+    )
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    await retriever.retrieve(
+        "Что такое Саелог?",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert recorder.batch_calls
+    assert len(recorder.batch_calls[0]) <= 2
+    assert len(recorder.batch_calls[0]) == 2
+
+
+async def test_structured_reservation_cannot_use_other_tenant_entity(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    company_b: Company,
+    employee_a: Employee,
+    employee_b: Employee,
+) -> None:
+    await _publish(
+        article_service,
+        company_a,
+        title=_SAELOG_ARTICLE_TITLE,
+        body=_PROD_ORG.replace(_SAELOG_TITLE_PREFIX, "") + "\nTOKEN-AAA-ORG\n",
+    )
+    await _publish(
+        article_service,
+        company_b,
+        title=_SAELOG_ARTICLE_TITLE,
+        body=_PROD_ORG.replace(_SAELOG_TITLE_PREFIX, "") + "\nTOKEN-BBB-ORG\n",
+    )
+    hits_a = await retriever.retrieve(
+        "Саелог",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    hits_b = await retriever.retrieve(
+        "Саелог",
+        actor_company_id=company_b.id,
+        actor_employee_id=employee_b.id,
+        **_KWARGS,
+    )
+    joined_a = " ".join(hit.content for hit in hits_a)
+    joined_b = " ".join(hit.content for hit in hits_b)
+    assert "TOKEN-AAA-ORG" in joined_a
+    assert "TOKEN-BBB-ORG" not in joined_a
+    assert "TOKEN-BBB-ORG" in joined_b
+    assert "TOKEN-AAA-ORG" not in joined_b
+    assert any("ТОО" in hit.content and "SAELOG" in hit.content for hit in hits_a)
+
+
+async def test_llm_smoke_reserved_org_answers_unknown_stays_no_answer() -> None:
+    """In-memory FakeLLM + production prompt. Does not persist. Does not call hosted LLM."""
+    from app.services.ai.context import ContextDocument
+    from app.services.ai.llm import FakeLLMProvider, parse_llm_text
+    from app.services.ai.prompts import RAG_SYSTEM_PROMPT, build_user_prompt
+
+    org = ContextDocument(
+        source_id="S1",
+        article_id=uuid4(),
+        version_id=uuid4(),
+        title=_SAELOG_ARTICLE_TITLE,
+        chunk_index=17,
+        content=_PROD_ORG,
+    )
+    llm = FakeLLMProvider()
+    answered = await llm.generate(
+        system_prompt=RAG_SYSTEM_PROMPT,
+        user_prompt=build_user_prompt("Что такое Саелог?", [org]),
+    )
+    parsed = parse_llm_text(answered.text)
+    assert parsed.no_answer is False
+    assert "[S1]" in answered.text
+
+    missing = await llm.generate(
+        system_prompt=RAG_SYSTEM_PROMPT,
+        user_prompt=build_user_prompt("Что такое Kaspi?", []),
+    )
+    assert parse_llm_text(missing.text).no_answer is True
+    xyz = await llm.generate(
+        system_prompt=RAG_SYSTEM_PROMPT,
+        user_prompt=build_user_prompt("Что такое XYZ123?", []),
+    )
+    assert parse_llm_text(xyz.text).no_answer is True

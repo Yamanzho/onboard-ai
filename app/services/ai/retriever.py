@@ -43,10 +43,13 @@ without changing the database text-search configuration.
 Standalone entity queries and explicit definition questions additionally
 embed a script-folded identifier (same Latin↔Cyrillic token fold as FTS),
 union those vector hits with the normal query embedding by ``chunk_id``,
-and reserve the best definition-like exact match (ENTITY / aliases / copula /
-heading) before the per-article cap. Only the lookup term is folded — not
-an arbitrary natural-language sentence. Process questions and follow-ups
-skip this path. Hybrid scoring and FTS reservation are unchanged.
+and reserve the best definition-like match before the per-article cap.
+Structured ``canonical_name`` / ``aliases`` records outrank heading/copula
+matches. ENTITY identifiers are never names. Only the lookup term is
+folded — not an arbitrary natural-language sentence. Process questions
+and follow-ups skip this path. Hybrid scoring is unchanged. Definition
+lookups run FTS on the lookup term (plus script variants), not question
+words such as ``что`` / ``такое``.
 """
 
 from __future__ import annotations
@@ -209,7 +212,9 @@ _DEFINITION_PREFIX_RE = re.compile(
     re.IGNORECASE | re.UNICODE,
 )
 _COPULA_AFTER_RE = re.compile(
-    r"(?:\s*(?:—|–|−|-)\s*(?:это\s+)?|"
+    r"(?:\s*(?:—|–|−)\s*(?:это\s+)?|"
+    r"\s+-\s+(?:это\s+)?|"
+    r"-\s+это\s+|"
     r"\s+это\s+|"
     r"\s+представляет\s+собой\s+|"
     r"\s+является\s+|"
@@ -236,6 +241,26 @@ _CANONICAL_RE = re.compile(
 )
 _MAX_ENTITY_QUERY_WORDS = 3
 _MIN_DEFINITION_SCORE = 3.0
+# Production IDs look like SAELOG-ORG-0001 / SAELOG-SYS-0001. Never names.
+_ENTITY_ID_RE = re.compile(r"^[A-Za-z0-9]+-[A-Z]+-\d+$")
+_ENTITY_HEADER_RE = re.compile(
+    r"^(?:#{1,6}\s+)?ENTITY\s+(\S.*?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ENTITY_FIELD_RE = re.compile(
+    r"^[`\s\-\*]*`?(entity_type|canonical_name|aliases|description)"
+    r"\s*:?\s*`?\s*:?\s*(.+?)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ENTITY_TYPE_RANK = {
+    "ORGANIZATION": 6,
+    "SYSTEM": 5,
+    "PRODUCT": 4,
+    "SERVICE": 3,
+    "DEPARTMENT": 2,
+    "DOCUMENT": 1,
+    "PERSON": 0,
+}
 # Cyrillic → Latin fold for identifier matching (visual + phonetic).
 _CYR_TO_LAT: dict[str, str] = {
     "а": "a",
@@ -358,9 +383,10 @@ class KnowledgeRetriever:
         merging. Default ``None`` applies no cutoff — fake embeddings cannot
         calibrate a production no-answer threshold.
 
-        ``query`` is the original user question. Lexical/FTS always tokenises
-        this string so conversation history cannot flip AND/OR or inject
-        assistant terms into ``to_tsquery``.
+        ``query`` is the original user question. Lexical/FTS tokenises this
+        string for process/follow-up queries so conversation history cannot
+        flip AND/OR or inject assistant terms into ``to_tsquery``.
+        Definition lookups tokenise the extracted lookup term instead.
 
         ``embedding_query`` is optional and used only for the vector embedding.
         Chat may pass a history-expanded string here; the LLM still receives
@@ -416,9 +442,9 @@ class KnowledgeRetriever:
                     f"{provider.dimension}, column={KB_CHUNK_VECTOR_DIMENSION}"
                 )
 
-            # FTS always uses the original question, never the embedding expansion.
-            # Standalone entity / definition questions also OR a script-folded
-            # token so mixed Latin/Cyrillic identifiers can match.
+            # FTS never uses embedding_query. Process/follow-up queries tokenise
+            # the original question. Definition lookups tokenise lookup_term so
+            # question words (что / такое) cannot fill the lexical slot.
             lookup_term = _definition_lookup_term(normalized)
             embed_texts = [embed_text]
             # Extra vector search embeds only the folded identifier, never a
@@ -446,8 +472,9 @@ class KnowledgeRetriever:
                 MAX_RETRIEVAL_CANDIDATES,
                 max(resolved_top_k * MAX_CHUNKS_PER_ARTICLE_RESULT, resolved_top_k),
             )
+            fts_text = lookup_term if lookup_term is not None else normalized
             tsquery = _build_tsquery(
-                normalized, script_variants=lookup_term is not None
+                fts_text, script_variants=lookup_term is not None
             )
 
             async with self._uow_factory() as uow:
@@ -776,18 +803,121 @@ def _first_term_pos(text: str, needles: tuple[str, ...]) -> int | None:
     return min(positions) if positions else None
 
 
-def _has_entity_decl(content_fold: str, needles: tuple[str, ...]) -> bool:
-    for needle in needles:
-        if re.search(
-            rf"\bentity\s+{re.escape(needle)}\b", content_fold, re.UNICODE
-        ):
-            return True
-        folded = _fold_scripts(needle)
-        if folded != needle and re.search(
-            rf"\bentity\s+{re.escape(folded)}\b", _fold_scripts(content_fold), re.UNICODE
-        ):
-            return True
-    return False
+@dataclass(frozen=True, slots=True)
+class _StructuredEntity:
+    entity_type: str
+    canonical_name: str
+    aliases: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _StructuredMatch:
+    exact: bool
+    entity_type: str
+
+
+def _is_entity_id(value: str) -> bool:
+    return bool(_ENTITY_ID_RE.fullmatch(value.strip()))
+
+
+def _normalize_entity_label(value: str) -> str:
+    return _fold_scripts(_normalize_dashes(value).casefold()).strip()
+
+
+def _entity_label_tokens(value: str) -> tuple[str, ...]:
+    return tuple(
+        _fold_scripts(token.casefold())
+        for token in _TOKEN_RE.findall(_normalize_dashes(value))
+        if token
+    )
+
+
+def _split_aliases(raw: str) -> tuple[str, ...]:
+    parts: list[str] = []
+    for piece in raw.replace(",", ";").split(";"):
+        label = piece.strip().strip("`").strip()
+        if not label or label in {"—", "-", "–"}:
+            continue
+        parts.append(label)
+    return tuple(parts)
+
+
+def _iter_structured_entities(body: str) -> tuple[_StructuredEntity, ...]:
+    """Parse ENTITY records from chunk text. Does not read chunk.metadata."""
+    if not body.strip():
+        return ()
+    headers = list(_ENTITY_HEADER_RE.finditer(body))
+    spans: list[tuple[str, str]] = []
+    if headers:
+        for index, match in enumerate(headers):
+            end = headers[index + 1].start() if index + 1 < len(headers) else len(body)
+            spans.append((match.group(1).strip(), body[match.start() : end]))
+    else:
+        spans.append(("", body))
+
+    records: list[_StructuredEntity] = []
+    for header_name, block in spans:
+        fields: dict[str, str] = {}
+        for field in _ENTITY_FIELD_RE.finditer(block):
+            fields[field.group(1).casefold()] = field.group(2).strip().strip("`").strip()
+        canonical = fields.get("canonical_name", "")
+        aliases = _split_aliases(fields.get("aliases", ""))
+        header_is_id = bool(header_name) and _is_entity_id(header_name)
+        if not canonical and header_name and not header_is_id:
+            canonical = header_name
+        if not canonical and not aliases:
+            continue
+        records.append(
+            _StructuredEntity(
+                entity_type=fields.get("entity_type", "").strip().upper(),
+                canonical_name=canonical,
+                aliases=aliases,
+            )
+        )
+    return tuple(records)
+
+
+def _label_match_kind(
+    label: str, needles: tuple[str, ...]
+) -> str | None:
+    """Return ``exact`` (full label), ``token``, or None."""
+    if not label or not needles:
+        return None
+    normalized = _normalize_entity_label(label)
+    if any(needle == normalized for needle in needles):
+        return "exact"
+    tokens = _entity_label_tokens(label)
+    if any(needle == token for needle in needles for token in tokens):
+        return "token"
+    return None
+
+
+def _best_structured_entity_match(
+    body: str, needles: tuple[str, ...]
+) -> _StructuredMatch | None:
+    """Best name/alias match in ``body``. ENTITY IDs never match."""
+    if not needles:
+        return None
+    best: _StructuredMatch | None = None
+    best_key: tuple[int, int] = (-1, -1)
+    for record in _iter_structured_entities(body):
+        kinds: list[str] = []
+        if record.canonical_name:
+            kind = _label_match_kind(record.canonical_name, needles)
+            if kind is not None:
+                kinds.append(kind)
+        for alias in record.aliases:
+            kind = _label_match_kind(alias, needles)
+            if kind is not None:
+                kinds.append(kind)
+        if not kinds:
+            continue
+        exact = "exact" in kinds
+        key = (1 if exact else 0, _ENTITY_TYPE_RANK.get(record.entity_type, 0))
+        if key > best_key:
+            best_key = key
+            best = _StructuredMatch(exact=exact, entity_type=record.entity_type)
+    return best
 
 
 def _has_aliases_decl(content_fold: str, needles: tuple[str, ...]) -> bool:
@@ -855,7 +985,10 @@ def _score_definition_candidate(
     content_fold = content_norm.casefold()
     title_fold = _normalize_dashes(title).casefold() if title else ""
     needles = _entity_needles(term_norm)
-    if not needles or not _any_needle_in(content_fold, needles):
+    structured = _best_structured_entity_match(body, needles)
+    if not needles:
+        return 0.0, ()
+    if structured is None and not _any_needle_in(content_fold, needles):
         return 0.0, ()
 
     signals: list[str] = ["exact_match"]
@@ -863,9 +996,13 @@ def _score_definition_candidate(
     first_line = content_norm.splitlines()[0].strip() if content_norm else ""
     first_sentence = re.split(r"[\n.]", content_norm, maxsplit=1)[0].strip()
 
-    if _has_entity_decl(content_fold, needles):
-        score += 4.0
-        signals.append("entity_decl")
+    if structured is not None:
+        score += 8.0
+        signals.append("structured_entity")
+        if structured.exact:
+            signals.append("structured_exact")
+        if structured.entity_type:
+            signals.append(f"structured_type:{structured.entity_type}")
     if _has_aliases_decl(content_fold, needles):
         score += 3.0
         signals.append("aliases")
@@ -903,7 +1040,13 @@ def _score_definition_candidate(
         score += 1.0
         signals.append("title_match")
 
-    strong = {"entity_decl", "aliases", "definition_copula", "heading", "lead_heading"}
+    strong = {
+        "structured_entity",
+        "aliases",
+        "definition_copula",
+        "heading",
+        "lead_heading",
+    }
     if not strong.intersection(signals):
         return 0.0, ()
     if score < _MIN_DEFINITION_SCORE:
@@ -926,18 +1069,47 @@ def _reserved_definition_chunks(
     if term is None:
         return []
 
-    ranked: list[tuple[float, float, KnowledgeArticleChunk, str, tuple[str, ...]]] = []
+    ranked: list[
+        tuple[int, int, int, float, float, KnowledgeArticleChunk, str, tuple[str, ...]]
+    ] = []
+    needles = _entity_needles(_normalize_dashes(term.strip()))
     for chunk, score, title, _lex_rank in sorted_pool:
         if min_score is not None and score < min_score:
             continue
         def_score, signals = _score_definition_candidate(term, chunk.content, title)
         if def_score <= 0.0:
             continue
-        ranked.append((def_score, score, chunk, title, signals))
-    ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        body = _content_without_title_prefix(chunk.content, title)
+        structured = _best_structured_entity_match(body, needles)
+        ranked.append(
+            (
+                1 if structured is not None else 0,
+                1 if structured is not None and structured.exact else 0,
+                (
+                    _ENTITY_TYPE_RANK.get(structured.entity_type, 0)
+                    if structured is not None
+                    else 0
+                ),
+                def_score,
+                score,
+                chunk,
+                title,
+                signals,
+            )
+        )
+    ranked.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]), reverse=True)
 
     reserved: list[tuple[KnowledgeArticleChunk, float, str, float, tuple[str, ...]]] = []
-    for def_score, score, chunk, title, signals in ranked[:DEFINITION_RESERVED]:
+    for (
+        _has_struct,
+        _exact,
+        _type_rank,
+        def_score,
+        score,
+        chunk,
+        title,
+        signals,
+    ) in ranked[:DEFINITION_RESERVED]:
         reserved.append((chunk, score, title, def_score, signals))
     return reserved
 
