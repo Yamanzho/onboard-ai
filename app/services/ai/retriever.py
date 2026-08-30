@@ -755,6 +755,24 @@ def _has_definition_copula(content_fold: str, needles: tuple[str, ...]) -> bool:
     return False
 
 
+def _content_without_title_prefix(content: str, title: str) -> str:
+    """Return chunk body with a synthetic article-title prefix removed.
+
+    Scoring-only: stored chunk text is never modified. Matches the exact
+    ``"{title}\\n\\n"`` prefix written by chunking, or a first-line title.
+    """
+    title = title.strip()
+    if not title:
+        return content
+    prefix = f"{title}\n\n"
+    if content.startswith(prefix):
+        return content[len(prefix) :]
+    first, _, rest = content.partition("\n")
+    if first.strip() == title:
+        return rest.lstrip("\n")
+    return content
+
+
 def _score_definition_candidate(
     term: str, content: str, title: str
 ) -> tuple[float, tuple[str, ...]]:
@@ -762,10 +780,15 @@ def _score_definition_candidate(
 
     Returns ``(0.0, ())`` when the chunk is not a definition candidate.
     Operates on one already-retrieved candidate; never scans the full KB.
+
+    Definition signals (except ``title_match``) are scored on the body after
+    stripping a synthetic article-title prefix, so the prefix cannot make
+    every chunk of an article look like a definition of the title term.
     """
     if not content or not term:
         return 0.0, ()
-    content_norm = _normalize_dashes(content)
+    body = _content_without_title_prefix(content, title)
+    content_norm = _normalize_dashes(body)
     term_norm = _normalize_dashes(term.strip())
     content_fold = content_norm.casefold()
     title_fold = _normalize_dashes(title).casefold() if title else ""
@@ -802,6 +825,11 @@ def _score_definition_candidate(
             score += 3.0
             signals.append("heading")
 
+    lead_line = next((ln.strip() for ln in content_norm.splitlines() if ln.strip()), "")
+    if lead_line.startswith("#") and _any_needle_in(lead_line.casefold(), needles):
+        score += 6.0
+        signals.append("lead_heading")
+
     pos = _first_term_pos(content_fold, needles)
     if pos is not None and pos <= 80:
         score += 1.5
@@ -813,7 +841,7 @@ def _score_definition_candidate(
         score += 1.0
         signals.append("title_match")
 
-    strong = {"entity_decl", "aliases", "definition_copula", "heading"}
+    strong = {"entity_decl", "aliases", "definition_copula", "heading", "lead_heading"}
     if not strong.intersection(signals):
         return 0.0, ()
     if score < _MIN_DEFINITION_SCORE:

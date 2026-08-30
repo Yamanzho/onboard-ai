@@ -1568,3 +1568,168 @@ async def test_empty_allowed_ids_cannot_surface_definition(
     assert empty == []
     assert allowed
     assert any("ACLNAME" in row[0].content for row in allowed)
+
+
+# ===========================================================================
+# Synthetic title prefix must not pollute definition scoring
+# ===========================================================================
+
+_SAELOG_ARTICLE_TITLE = "Общая база саелог"
+_SAELOG_TITLE_PREFIX = f"{_SAELOG_ARTICLE_TITLE}\n\n"
+_SAELOG_INTRO_BODY = (
+    "# SAELOG — КАНОНИЧЕСКИЙ КОРПУС ЗНАНИЙ\n"
+    "SAELOG — компания, канонический корпус операционных знаний."
+)
+_SAELOG_REGISTRY_BODY = (
+    "сроков CRM\n"
+    "# PART 3 — ENTITY REGISTRY\n"
+    "ENTITY SAELOG\n"
+    "aliases: SAELOG; Сайлог\n"
+    "SAELOG — запись в реестре сущностей."
+)
+_SAELOG_CLAIMS_BODY = (
+    "претензионная работа: сроки ответа, эскалация, комплект документов."
+)
+
+
+def test_title_prefix_does_not_make_every_chunk_a_definition() -> None:
+    """Title prefix must not turn every article chunk into a SAELOG definition."""
+    from app.services.ai.retriever import _merge_and_score
+
+    intro = _SAELOG_TITLE_PREFIX + _SAELOG_INTRO_BODY
+    registry = _SAELOG_TITLE_PREFIX + _SAELOG_REGISTRY_BODY
+    claims = _SAELOG_TITLE_PREFIX + _SAELOG_CLAIMS_BODY
+    title = _SAELOG_ARTICLE_TITLE
+
+    for query in ("Saelog", "Саелог"):
+        score_a, signals_a = _score_definition_candidate(query, intro, title)
+        score_b, signals_b = _score_definition_candidate(query, registry, title)
+        score_c, signals_c = _score_definition_candidate(query, claims, title)
+        assert score_c == 0.0, f"{query!r}: claims chunk must not be a definition"
+        assert signals_c == ()
+        assert score_a > score_b, (
+            f"{query!r}: canonical intro must beat entity registry "
+            f"({score_a} vs {score_b})"
+        )
+        assert "lead_heading" in signals_a
+        assert "lead_heading" not in signals_b
+        assert "entity_decl" in signals_b
+
+    article_id = uuid4()
+    chunk_a = _mock_chunk(
+        article_id=article_id, chunk_index=0, content=intro
+    )
+    chunk_b = _mock_chunk(
+        article_id=article_id, chunk_index=17, content=registry
+    )
+    chunk_c = _mock_chunk(
+        article_id=article_id, chunk_index=52, content=claims
+    )
+    hits = _merge_and_score(
+        vector_rows=[
+            (chunk_b, 0.28, title),
+            (chunk_c, 0.32, title),
+            (chunk_a, 0.48, title),
+        ],
+        lexical_rows=[
+            (chunk_b, 0.40, title),
+            (chunk_a, 0.35, title),
+        ],
+        top_k=5,
+        min_score=None,
+        query="Saelog",
+    )
+    assert hits[0].chunk_id == chunk_a.id, (
+        "definition reservation must select the canonical intro, not the registry"
+    )
+
+
+def test_title_prefix_ignored_for_heading_and_term_at_start() -> None:
+    """Title prefix alone must not make a chunk a definition of Saelog."""
+    content = (
+        f"{_SAELOG_TITLE_PREFIX}"
+        "unrelated body about claims deadlines and escalation, no company identifier."
+    )
+    assert _score_definition_candidate(
+        "Saelog", content, _SAELOG_ARTICLE_TITLE
+    ) == (0.0, ())
+    assert _score_definition_candidate(
+        "Саелог", content, _SAELOG_ARTICLE_TITLE
+    ) == (0.0, ())
+
+
+def test_merge_reserves_canonical_intro_not_entity_registry() -> None:
+    """Production-like distances: definition slot is the canonical intro."""
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    intro = _mock_chunk(
+        article_id=article_id,
+        chunk_index=0,
+        content=_SAELOG_TITLE_PREFIX + _SAELOG_INTRO_BODY,
+    )
+    registry = _mock_chunk(
+        article_id=article_id,
+        chunk_index=17,
+        content=_SAELOG_TITLE_PREFIX + _SAELOG_REGISTRY_BODY,
+    )
+    process = _mock_chunk(
+        article_id=article_id,
+        chunk_index=52,
+        content=(
+            f"{_SAELOG_TITLE_PREFIX}"
+            "После создания сделки SAELOG используется при передаче логисту."
+        ),
+    )
+    debug: dict[str, object] = {}
+    hits = _merge_and_score(
+        vector_rows=[
+            (registry, 0.28, title),  # sim 0.72 — production-like mid-doc
+            (process, 0.32, title),  # sim 0.68 — production-like neighbor
+            (intro, 0.48, title),  # sim 0.52 — canonical intro, weaker vector
+        ],
+        lexical_rows=[
+            (registry, 0.41, title),
+            (process, 0.20, title),
+            (intro, 0.12, title),
+        ],
+        top_k=5,
+        min_score=None,
+        query="Saelog",
+        debug=debug,
+    )
+    assert hits, "Saelog must return hybrid hits"
+    assert hits[0].chunk_id == intro.id
+    assert hits[0].content.startswith(_SAELOG_TITLE_PREFIX), (
+        "stored chunk text must keep the synthetic title prefix"
+    )
+    assert all(h.chunk_id != registry.id or i != 0 for i, h in enumerate(hits))
+    assert debug.get("definition_candidate") is True
+    signals = str(debug.get("definition_signals") or "")
+    assert "lead_heading" in signals
+    intro_ids = [h.chunk_id for h in hits]
+    if registry.id in intro_ids:
+        assert intro_ids.index(registry.id) > 0, (
+            "entity registry must not occupy the definition slot"
+        )
+
+
+def test_title_match_on_article_title_still_allowed_when_body_defines_term() -> None:
+    content = _SAELOG_TITLE_PREFIX + _SAELOG_INTRO_BODY
+    score, signals = _score_definition_candidate(
+        "Saelog", content, _SAELOG_ARTICLE_TITLE
+    )
+    assert score > 0.0
+    assert "title_match" in signals
+    assert "lead_heading" in signals
+
+
+def test_saelgo_typo_does_not_match_saelog_needles() -> None:
+    """Typo handling is unchanged: Saelgo is not a SAELOG definition match."""
+    content = _SAELOG_TITLE_PREFIX + _SAELOG_INTRO_BODY
+    score, signals = _score_definition_candidate(
+        "Saelgo", content, _SAELOG_ARTICLE_TITLE
+    )
+    assert score == 0.0
+    assert signals == ()
