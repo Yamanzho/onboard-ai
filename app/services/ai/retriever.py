@@ -45,11 +45,17 @@ embed a script-folded identifier (same Latin↔Cyrillic token fold as FTS),
 union those vector hits with the normal query embedding by ``chunk_id``,
 and reserve the best definition-like match before the per-article cap.
 Structured ``canonical_name`` / ``aliases`` records outrank heading/copula
-matches. ENTITY identifiers are never names. Only the lookup term is
-folded — not an arbitrary natural-language sentence. Process questions
-and follow-ups skip this path. Hybrid scoring is unchanged. Definition
-lookups run FTS on the lookup term (plus script variants), not question
-words such as ``что`` / ``такое``.
+matches, including an exact normalized token inside a multi-word alias
+(``Евгений`` in ``Тей Евгений Г.``). Prefixes (``Евг``) and glued tokens
+(``Евгений123``) do not match. ENTITY identifiers are never names. Only
+the lookup term is folded — not an arbitrary natural-language sentence.
+Process questions and follow-ups skip this path. Hybrid scoring is
+unchanged. Definition lookups run FTS on the lookup term (plus script
+variants), not question words such as ``что`` / ``такое``.
+
+A lexical exact-word hit is a retrieval signal: it admits the chunk into
+the hybrid pool. It is not an answerability signal and does not inflate
+the vector score or bypass NO_ANSWER.
 """
 
 from __future__ import annotations
@@ -258,7 +264,10 @@ _ENTITY_TYPE_RANK = {
     "PRODUCT": 4,
     "SERVICE": 3,
     "DEPARTMENT": 2,
+    "COUNTERPARTY": 2,
     "DOCUMENT": 1,
+    "LOCATION": 1,
+    "ROLE": 0,
     "PERSON": 0,
 }
 # Cyrillic → Latin fold for identifier matching (visual + phonetic).
@@ -500,6 +509,9 @@ class KnowledgeRetriever:
             vector_candidates = len(vector_rows)
             lexical_candidates = len(lexical_rows)
 
+            # Union is by chunk_id inside _merge_and_score. Lexical hits
+            # only make a chunk eligible for hybrid ranking; they do not
+            # mark the query answerable.
             merge_debug: dict[str, object] = {}
             hits = _merge_and_score(
                 vector_rows=vector_rows,
@@ -775,10 +787,11 @@ def _entity_needles(term: str) -> tuple[str, ...]:
 
 
 def _term_in_text(term: str, text: str) -> bool:
-    if len(term) <= 2:
-        pattern = rf"(?<![a-zа-яё0-9]){re.escape(term)}(?![a-zа-яё0-9])"
-        return re.search(pattern, text, re.IGNORECASE | re.UNICODE) is not None
-    return term in text
+    """Exact alphanumeric-token match. Prefixes and glued suffixes do not match."""
+    if not term:
+        return False
+    pattern = rf"(?<![a-zа-яё0-9]){re.escape(term)}(?![a-zа-яё0-9])"
+    return re.search(pattern, text, re.IGNORECASE | re.UNICODE) is not None
 
 
 def _any_needle_in(text: str, needles: tuple[str, ...]) -> bool:
@@ -899,7 +912,7 @@ def _best_structured_entity_match(
     if not needles:
         return None
     best: _StructuredMatch | None = None
-    best_key: tuple[int, int] = (-1, -1)
+    best_key: tuple[int, int, int] = (-1, -1, -1)
     for record in _iter_structured_entities(body):
         kinds: list[str] = []
         if record.canonical_name:
@@ -912,8 +925,14 @@ def _best_structured_entity_match(
                 kinds.append(kind)
         if not kinds:
             continue
-        exact = "exact" in kinds
-        key = (1 if exact else 0, _ENTITY_TYPE_RANK.get(record.entity_type, 0))
+        # Token-in-alias (Евгений ⊂ Тей Евгений Г.) is an exact structured
+        # match. Full-label exact still outranks token-only via the key.
+        exact = "exact" in kinds or "token" in kinds
+        key = (
+            1 if "exact" in kinds else 0,
+            1 if exact else 0,
+            _ENTITY_TYPE_RANK.get(record.entity_type, 0),
+        )
         if key > best_key:
             best_key = key
             best = _StructuredMatch(exact=exact, entity_type=record.entity_type)
@@ -921,11 +940,14 @@ def _best_structured_entity_match(
 
 
 def _has_aliases_decl(content_fold: str, needles: tuple[str, ...]) -> bool:
+    """True when an aliases line has an exact label or token match."""
     for line in content_fold.splitlines():
         if re.search(r"aliases\s*:", line) is None:
             continue
-        if _any_needle_in(line, needles):
-            return True
+        raw = line.split(":", 1)[-1]
+        for alias in _split_aliases(raw):
+            if _label_match_kind(alias, needles) is not None:
+                return True
     return False
 
 
@@ -987,6 +1009,10 @@ def _score_definition_candidate(
     needles = _entity_needles(term_norm)
     structured = _best_structured_entity_match(body, needles)
     if not needles:
+        return 0.0, ()
+    # ENTITY IDs are never names. A header like SAELOG-PERSON-0011 must not
+    # become a definition candidate via heading/copula/list-dash noise.
+    if _is_entity_id(term_norm) and structured is None:
         return 0.0, ()
     if structured is None and not _any_needle_in(content_fold, needles):
         return 0.0, ()

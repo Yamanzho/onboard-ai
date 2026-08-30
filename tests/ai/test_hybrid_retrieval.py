@@ -2371,3 +2371,403 @@ async def test_llm_smoke_reserved_org_answers_unknown_stays_no_answer() -> None:
         user_prompt=build_user_prompt("Что такое XYZ123?", []),
     )
     assert parse_llm_text(xyz.text).no_answer is True
+
+
+# ===========================================================================
+# Lexical exact-word pool entry (retrieval signal, not answerability)
+# ===========================================================================
+
+_PROD_PERSON = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "## PERSON\n"
+    "### ENTITY SAELOG-PERSON-0011\n"
+    "- `entity_type:` PERSON\n"
+    "- `canonical_name:` Прочие поименованные лица\n"
+    "- `aliases:` Тей Евгений Г.; Темір Ельнур Н.; Гылымбек Алгыс; "
+    "Чен Тао; Джумадуллаева Н. И.; Омарова Г.; Рамиль\n"
+    "- `description:` Прочие поименованные лица в операционном контуре.\n"
+)
+
+_INCIDENTAL_EVGENY = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "В заявке на перевозку указан контакт Евгений для согласования склада."
+)
+
+
+def _person_entity_body() -> str:
+    return (
+        "### ENTITY SAELOG-PERSON-0011\n"
+        "- `entity_type:` PERSON\n"
+        "- `canonical_name:` Прочие поименованные лица\n"
+        "- `aliases:` Тей Евгений Г.; Темір Ельнур Н.; Гылымбек Алгыс; "
+        "Чен Тао; Джумадуллаева Н. И.; Омарова Г.; Рамиль\n"
+        "- `description:` Прочие поименованные лица в операционном контуре.\n"
+    )
+
+
+def test_evgeny_alias_token_is_structured_match() -> None:
+    """'Евгений' is an exact token inside alias 'Тей Евгений Г.'."""
+    body = _content_without_title_prefix(_PROD_PERSON, _SAELOG_ARTICLE_TITLE)
+    needles = _entity_needles("Евгений")
+    match = _best_structured_entity_match(body, needles)
+    assert match is not None
+    assert match.entity_type == "PERSON"
+    assert match.exact is True
+    score, signals = _score_definition_candidate(
+        "Евгений", _PROD_PERSON, _SAELOG_ARTICLE_TITLE
+    )
+    assert score > 0.0
+    assert "structured_entity" in signals
+
+
+def test_evgeny_prefix_and_glued_token_do_not_match() -> None:
+    """Prefixes and glued suffixes are not exact alias tokens."""
+    body = _content_without_title_prefix(_PROD_PERSON, _SAELOG_ARTICLE_TITLE)
+    for query in ("Евг", "Евгений123"):
+        needles = _entity_needles(query)
+        assert _best_structured_entity_match(body, needles) is None
+        score, signals = _score_definition_candidate(
+            query, _PROD_PERSON, _SAELOG_ARTICLE_TITLE
+        )
+        assert score == 0.0
+        assert signals == ()
+
+
+def test_lexical_only_person_alias_enters_pool_and_is_reserved() -> None:
+    """Vector miss + FTS hit: PERSON alias token still enters and is reserved."""
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    person = _mock_chunk(
+        article_id=article_id, chunk_index=88, content=_PROD_PERSON
+    )
+    intro = _mock_chunk(
+        article_id=article_id, chunk_index=0, content=_PROD_INTRO
+    )
+    org = _mock_chunk(
+        article_id=article_id, chunk_index=17, content=_PROD_ORG
+    )
+    debug: dict[str, object] = {}
+    hits = _merge_and_score(
+        vector_rows=[
+            (intro, 0.20, title),
+            (org, 0.22, title),
+        ],
+        lexical_rows=[(person, 0.45, title)],
+        top_k=5,
+        min_score=None,
+        query="Евгений",
+        debug=debug,
+    )
+    assert any(hit.chunk_id == person.id for hit in hits)
+    assert hits[0].chunk_id == person.id
+    assert debug.get("definition_candidate") is True
+    signals = str(debug.get("definition_signals") or "")
+    assert "structured_entity" in signals
+
+
+def test_definition_question_evgeny_enters_same_person_pool() -> None:
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    person = _mock_chunk(
+        article_id=article_id, chunk_index=88, content=_PROD_PERSON
+    )
+    org = _mock_chunk(
+        article_id=article_id, chunk_index=17, content=_PROD_ORG
+    )
+    hits = _merge_and_score(
+        vector_rows=[(org, 0.25, title)],
+        lexical_rows=[(person, 0.40, title)],
+        top_k=5,
+        min_score=None,
+        query="Что такое Евгений?",
+    )
+    assert hits[0].chunk_id == person.id
+    assert any("Тей Евгений Г." in hit.content for hit in hits)
+
+
+@pytest.mark.parametrize("query", ("Саелог", "SAELOG", "Сайлог"))
+def test_saelog_variants_still_reserve_org_chunk_17(query: str) -> None:
+    result = _merge_prod_pool(query=query)
+    assert result["hits"][0].chunk_id == result["org"].id
+    assert result["hits"][0].chunk_index == 17
+
+
+@pytest.mark.parametrize("query", ("4logist", "текущая CRM"))
+def test_crm_aliases_still_reserve_system_chunk_39(query: str) -> None:
+    result = _merge_prod_pool(query=query)
+    assert result["hits"][0].chunk_id == result["crm"].id
+    assert result["hits"][0].chunk_index == 39
+
+
+def test_cmr_does_not_match_crm() -> None:
+    result = _merge_prod_pool(query="CMR")
+    assert result["debug"].get("definition_candidate") in {None, False}
+    body = _content_without_title_prefix(_PROD_CRM, _SAELOG_ARTICLE_TITLE)
+    assert _best_structured_entity_match(body, _entity_needles("CMR")) is None
+    score, signals = _score_definition_candidate(
+        "CMR", _PROD_CRM, _SAELOG_ARTICLE_TITLE
+    )
+    assert score == 0.0
+    assert signals == ()
+
+
+def test_person_entity_id_is_never_a_canonical_name() -> None:
+    body = _content_without_title_prefix(_PROD_PERSON, _SAELOG_ARTICLE_TITLE)
+    records = _iter_structured_entities(body)
+    assert records
+    assert all(record.canonical_name != "SAELOG-PERSON-0011" for record in records)
+    assert (
+        _best_structured_entity_match(body, _entity_needles("SAELOG-PERSON-0011"))
+        is None
+    )
+    score, signals = _score_definition_candidate(
+        "SAELOG-PERSON-0011", _PROD_PERSON, _SAELOG_ARTICLE_TITLE
+    )
+    assert score == 0.0
+    assert "structured_entity" not in signals
+
+
+def test_service_mention_of_saelog_does_not_beat_organization() -> None:
+    """SERVICE 'Услуги SAELOG' must not win a SAELOG lookup over the ORGANIZATION."""
+    result = _merge_prod_pool(query="SAELOG", include_service=True)
+    assert result["hits"][0].chunk_id == result["org"].id
+    assert result["hits"][0].chunk_id != result["service"].id
+    org_body = _content_without_title_prefix(_PROD_ORG, _SAELOG_ARTICLE_TITLE)
+    svc_body = _content_without_title_prefix(_PROD_SERVICE, _SAELOG_ARTICLE_TITLE)
+    needles = _entity_needles("SAELOG")
+    org_match = _best_structured_entity_match(org_body, needles)
+    svc_match = _best_structured_entity_match(svc_body, needles)
+    assert org_match is not None and org_match.entity_type == "ORGANIZATION"
+    assert svc_match is not None and svc_match.entity_type == "SERVICE"
+
+
+def test_process_crm_question_skips_definition_lookup_term() -> None:
+    query = "Что происходит с CRM после создания сделки?"
+    assert _definition_lookup_term(query) is None
+
+
+def test_lexical_incidental_prose_is_not_reserved_over_person() -> None:
+    """Word occurrence in unrelated prose loses to a structured PERSON alias."""
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    person = _mock_chunk(
+        article_id=article_id, chunk_index=88, content=_PROD_PERSON
+    )
+    prose = _mock_chunk(
+        article_id=article_id, chunk_index=60, content=_INCIDENTAL_EVGENY
+    )
+    debug: dict[str, object] = {}
+    hits = _merge_and_score(
+        vector_rows=[(prose, 0.18, title)],
+        lexical_rows=[(prose, 0.50, title), (person, 0.30, title)],
+        top_k=5,
+        min_score=None,
+        query="Евгений",
+        debug=debug,
+    )
+    assert hits[0].chunk_id == person.id
+    score, signals = _score_definition_candidate(
+        "Евгений", _INCIDENTAL_EVGENY, title
+    )
+    assert score == 0.0
+    assert signals == ()
+    assert debug.get("definition_candidate") is True
+
+
+def test_lexical_hit_alone_is_not_an_answerability_signal() -> None:
+    """An incidental lexical hit enters the pool but is not a definition."""
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    prose = _mock_chunk(
+        article_id=article_id, chunk_index=60, content=_INCIDENTAL_EVGENY
+    )
+    debug: dict[str, object] = {}
+    hits = _merge_and_score(
+        vector_rows=[],
+        lexical_rows=[(prose, 0.80, title)],
+        top_k=5,
+        min_score=None,
+        query="Евгений",
+        debug=debug,
+    )
+    assert hits, "exact lexical match may enter the hybrid pool"
+    assert hits[0].chunk_id == prose.id
+    assert debug.get("definition_candidate") in {None, False}
+    score, signals = _score_definition_candidate(
+        "Евгений", _INCIDENTAL_EVGENY, title
+    )
+    assert score == 0.0
+    assert signals == ()
+
+
+@pytest.mark.parametrize(
+    ("entity_type", "canonical", "alias", "query"),
+    [
+        ("PERSON", "Прочие поименованные лица", "Тей Евгений Г.", "Евгений"),
+        ("ORGANIZATION", "ТОО «SAELOG»", "Сайлог", "Сайлог"),
+        ("SYSTEM", "CRM 4logist", "текущая CRM", "4logist"),
+        ("PRODUCT", "Кабинет клиента", "личный кабинет SAELOG", "кабинет"),
+        ("SERVICE", "Международная перевозка", "экспедирование SAELOG", "экспедирование"),
+        ("DEPARTMENT", "Отдел логистики", "логистика ТЛО", "ТЛО"),
+        ("ROLE", "Ведущий логист", "старший логист Иванов", "Иванов"),
+        ("COUNTERPARTY", "ТОО Поставщик", "контрагент Астана", "Астана"),
+        ("LOCATION", "Склад Алматы", "терминал Алатау", "Алатау"),
+        ("DOCUMENT", "CMR накладная", "международная CMR", "накладная"),
+    ],
+)
+def test_alias_token_match_is_generic_across_entity_types(
+    entity_type: str,
+    canonical: str,
+    alias: str,
+    query: str,
+) -> None:
+    body = (
+        f"### ENTITY GENERIC-X-0001\n"
+        f"- `entity_type:` {entity_type}\n"
+        f"- `canonical_name:` {canonical}\n"
+        f"- `aliases:` {alias}\n"
+    )
+    match = _best_structured_entity_match(body, _entity_needles(query))
+    assert match is not None, f"{entity_type} alias token {query!r} must match"
+    assert match.entity_type == entity_type
+
+
+async def test_evgeny_retrieves_structured_person_entity(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    await _publish(
+        article_service,
+        company_a,
+        title=_SAELOG_ARTICLE_TITLE,
+        body=_person_entity_body(),
+    )
+    hits = await retriever.retrieve(
+        "Евгений",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert hits, "'Евгений' must retrieve the PERSON entity via lexical pool entry"
+    assert any("Тей Евгений Г." in hit.content for hit in hits)
+    reserved = False
+    for hit in hits:
+        score, signals = _score_definition_candidate(
+            "Евгений", hit.content, hit.article_title
+        )
+        if score > 0.0 and "structured_entity" in signals:
+            reserved = True
+    assert reserved
+
+
+async def test_what_is_evgeny_retrieves_same_person_entity(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    await _publish(
+        article_service,
+        company_a,
+        title=_SAELOG_ARTICLE_TITLE,
+        body=_person_entity_body(),
+    )
+    hits = await retriever.retrieve(
+        "Что такое Евгений?",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert hits
+    assert any("Тей Евгений Г." in hit.content for hit in hits)
+
+
+async def test_lexical_person_retrieval_respects_allowed_article_ids(
+    article_service: ArticleService,
+    company_a: Company,
+) -> None:
+    article = await _publish(
+        article_service,
+        company_a,
+        title=_SAELOG_ARTICLE_TITLE,
+        body=_person_entity_body(),
+    )
+    tsquery = _build_tsquery("Евгений", script_variants=True)
+    assert tsquery is not None
+    async with _uow_factory() as uow:
+        await uow.enter_tenant(company_a.id)
+        empty = await uow.knowledge_article_chunks.search_lexical_current_published(
+            allowed_article_ids=[],
+            tsquery_text=tsquery,
+            limit=10,
+        )
+        allowed = await uow.knowledge_article_chunks.search_lexical_current_published(
+            allowed_article_ids=[article.id],
+            tsquery_text=tsquery,
+            limit=10,
+        )
+    assert empty == []
+    assert allowed
+    assert any("Тей Евгений Г." in row[0].content for row in allowed)
+
+
+async def test_empty_allowed_ids_cannot_surface_lexical_person(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    await _publish(
+        article_service,
+        company_a,
+        title=_SAELOG_ARTICLE_TITLE,
+        body=_person_entity_body(),
+    )
+    retriever._article_service.list_articles = AsyncMock(return_value=[])  # type: ignore[method-assign]
+    hits = await retriever.retrieve(
+        "Евгений",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert hits == []
+
+
+async def test_llm_smoke_lexical_person_answers_incidental_stays_no_answer() -> None:
+    """Lexical entity + grounded context answers; no entity context → NO_ANSWER."""
+    from app.services.ai.context import ContextDocument
+    from app.services.ai.llm import FakeLLMProvider, parse_llm_text
+    from app.services.ai.prompts import RAG_SYSTEM_PROMPT, build_user_prompt
+
+    person = ContextDocument(
+        source_id="S1",
+        article_id=uuid4(),
+        version_id=uuid4(),
+        title=_SAELOG_ARTICLE_TITLE,
+        chunk_index=88,
+        content=_PROD_PERSON,
+    )
+    llm = FakeLLMProvider()
+    answered = await llm.generate(
+        system_prompt=RAG_SYSTEM_PROMPT,
+        user_prompt=build_user_prompt("Евгений", [person]),
+    )
+    parsed = parse_llm_text(answered.text)
+    assert parsed.no_answer is False
+    assert "[S1]" in answered.text
+
+    empty = await llm.generate(
+        system_prompt=RAG_SYSTEM_PROMPT,
+        user_prompt=build_user_prompt("Евгений", []),
+    )
+    assert parse_llm_text(empty.text).no_answer is True
