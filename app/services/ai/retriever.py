@@ -41,9 +41,12 @@ operator (``фактор:*``) on those Cyrillic hyphen parts only, so
 without changing the database text-search configuration.
 
 Standalone entity queries and explicit definition questions additionally
-reserve the best definition-like exact match (ENTITY / aliases / copula /
-heading) before the per-article cap. Process questions and follow-ups skip
-this path. Hybrid scoring and FTS reservation are unchanged.
+embed a script-folded identifier (same Latin↔Cyrillic token fold as FTS),
+union those vector hits with the normal query embedding by ``chunk_id``,
+and reserve the best definition-like exact match (ENTITY / aliases / copula /
+heading) before the per-article cap. Only the lookup term is folded — not
+an arbitrary natural-language sentence. Process questions and follow-ups
+skip this path. Hybrid scoring and FTS reservation are unchanged.
 """
 
 from __future__ import annotations
@@ -412,35 +415,55 @@ class KnowledgeRetriever:
                     "embedding dimension mismatch: provider="
                     f"{provider.dimension}, column={KB_CHUNK_VECTOR_DIMENSION}"
                 )
-            vector = await provider.embed(embed_text)
-            if len(vector) != KB_CHUNK_VECTOR_DIMENSION:
+
+            # FTS always uses the original question, never the embedding expansion.
+            # Standalone entity / definition questions also OR a script-folded
+            # token so mixed Latin/Cyrillic identifiers can match.
+            lookup_term = _definition_lookup_term(normalized)
+            embed_texts = [embed_text]
+            # Extra vector search embeds only the folded identifier, never a
+            # transliteration of the full natural-language question.
+            folded_identifier = _folded_entity_embed_text(lookup_term)
+            if (
+                folded_identifier is not None
+                and folded_identifier.casefold() != embed_text.casefold()
+            ):
+                embed_texts.append(folded_identifier)
+            vectors = await provider.embed_batch(embed_texts)
+            if len(vectors) != len(embed_texts):
                 raise ValidationError(
-                    "embedding dimension mismatch: expected "
-                    f"{KB_CHUNK_VECTOR_DIMENSION}, got {len(vector)}"
+                    "embedding count mismatch: expected "
+                    f"{len(embed_texts)}, got {len(vectors)}"
                 )
+            for vector in vectors:
+                if len(vector) != KB_CHUNK_VECTOR_DIMENSION:
+                    raise ValidationError(
+                        "embedding dimension mismatch: expected "
+                        f"{KB_CHUNK_VECTOR_DIMENSION}, got {len(vector)}"
+                    )
 
             overfetch = min(
                 MAX_RETRIEVAL_CANDIDATES,
                 max(resolved_top_k * MAX_CHUNKS_PER_ARTICLE_RESULT, resolved_top_k),
             )
-            # FTS always uses the original question, never the embedding expansion.
-            # Standalone entity / definition questions also OR a script-folded
-            # token so mixed Latin/Cyrillic identifiers can match.
-            lookup_term = _definition_lookup_term(normalized)
             tsquery = _build_tsquery(
                 normalized, script_variants=lookup_term is not None
             )
 
             async with self._uow_factory() as uow:
                 await uow.enter_tenant(actor_company_id)
-                vector_rows = await uow.knowledge_article_chunks.search_similar_current_published(
-                    allowed_article_ids=allowed_ids,
-                    query_embedding=vector,
-                    limit=overfetch,
-                )
+                repo = uow.knowledge_article_chunks
+                vector_groups = [
+                    await repo.search_similar_current_published(
+                        allowed_article_ids=allowed_ids,
+                        query_embedding=vector,
+                        limit=overfetch,
+                    )
+                    for vector in vectors
+                ]
+                vector_rows = _union_vector_rows(vector_groups)
                 lexical_rows = []
                 if tsquery:
-                    repo = uow.knowledge_article_chunks
                     lexical_rows = await repo.search_lexical_current_published(
                         allowed_article_ids=allowed_ids,
                         tsquery_text=tsquery,
@@ -623,6 +646,45 @@ def _script_variant_token(token: str) -> str | None:
     if not _TOKEN_RE.fullmatch(alt):
         return None
     return alt
+
+
+def _folded_entity_embed_text(term: str | None) -> str | None:
+    """Other-script identifier to embed in addition to the original query.
+
+    Applies the same per-token Latin↔Cyrillic fold used by FTS. Returns
+    None when ``term`` is missing or no token has a script variant, so
+    process questions never get whole-query transliteration.
+    """
+    if not term:
+        return None
+    tokens = [token.lower() for token in _TOKEN_RE.findall(term) if len(token) > 1]
+    if not tokens:
+        return None
+    folded: list[str] = []
+    changed = False
+    for token in tokens:
+        alt = _script_variant_token(token)
+        if alt is not None:
+            folded.append(alt)
+            changed = True
+        else:
+            folded.append(token)
+    if not changed:
+        return None
+    return folded[0] if len(folded) == 1 else " ".join(folded)
+
+
+def _union_vector_rows(
+    row_lists: list[list[tuple[KnowledgeArticleChunk, float, str]]],
+) -> list[tuple[KnowledgeArticleChunk, float, str]]:
+    """Deduplicate vector hits by chunk_id, keeping the lowest cosine distance."""
+    best: dict[UUID, tuple[KnowledgeArticleChunk, float, str]] = {}
+    for rows in row_lists:
+        for chunk, distance, title in rows:
+            current = best.get(chunk.id)
+            if current is None or distance < current[1]:
+                best[chunk.id] = (chunk, distance, title)
+    return list(best.values())
 
 
 def _fold_scripts(text: str) -> str:

@@ -48,7 +48,10 @@ from app.services.ai.retriever import (
     KnowledgeRetriever,
     _build_tsquery,
     _definition_lookup_term,
+    _folded_entity_embed_text,
     _score_definition_candidate,
+    _script_variant_token,
+    _union_vector_rows,
 )
 from app.services.knowledge.article_service import ArticleService
 from tests.conftest import _create_employee, _uow_factory
@@ -1167,6 +1170,9 @@ def _entity_kb_body() -> str:
 def test_definition_lookup_term_detects_standalone_and_definition_questions() -> None:
     for query in (
         "SAELOG",
+        "Saelog",
+        "saelog",
+        "Саелог",
         "CRM",
         "KEDEN",
         "P13",
@@ -1175,7 +1181,11 @@ def test_definition_lookup_term_detects_standalone_and_definition_questions() ->
         "Стоп-фактор",
         "PROJECT-X",
         "Что такое CRM?",
+        "Что такое Saelog?",
+        "Что такое Саелог?",
         "What is PROJECT-X?",
+        "What is Saelog?",
+        "What is Саелог?",
     ):
         assert _definition_lookup_term(query), f"{query!r} must be a definition lookup"
 
@@ -1186,6 +1196,7 @@ def test_definition_lookup_term_rejects_followups_and_process_questions() -> Non
         "кто отвечает?",
         "а кто?",
         "когда отпуск?",
+        "Как оформить отпуск сотруднику?",
         "Что происходит с SAELOG при таможенном оформлении?",
         "Какие документы нужны для SAELOG?",
         "Что происходит с CRM после создания сделки?",
@@ -1369,8 +1380,14 @@ def test_definition_question_ranks_definition_first() -> None:
     ("query", "needle"),
     [
         ("SAELOG", "канонический корпус"),
+        ("Saelog", "канонический корпус"),
         ("saelog", "канонический корпус"),
         ("саелог", "канонический корпус"),
+        ("Саелог", "канонический корпус"),
+        ("Что такое Saelog?", "канонический корпус"),
+        ("Что такое Саелог?", "канонический корпус"),
+        ("What is Saelog?", "канонический корпус"),
+        ("What is Саелог?", "канонический корпус"),
         ("CRM", "4logist"),
         ("AI-ассистент", "AI-ассистент"),
         ("Стоп-фактор", "Стоп-фактор"),
@@ -1733,3 +1750,283 @@ def test_saelgo_typo_does_not_match_saelog_needles() -> None:
     )
     assert score == 0.0
     assert signals == ()
+
+
+# ===========================================================================
+# Cross-script entity vector expansion (query-side, no reindex)
+# ===========================================================================
+
+_PROCESS_LEAVE_QUERY = "Как оформить отпуск сотруднику?"
+
+
+class _RecordingEmbeddings:
+    """Record embed_batch texts while delegating to FakeEmbeddingProvider."""
+
+    def __init__(self) -> None:
+        self._inner = FakeEmbeddingProvider()
+        self.batch_calls: list[tuple[str, ...]] = []
+
+    @property
+    def dimension(self) -> int:
+        return self._inner.dimension
+
+    async def embed(self, text: str) -> list[float]:
+        return (await self.embed_batch((text,)))[0]
+
+    async def embed_batch(self, texts):
+        self.batch_calls.append(tuple(str(item) for item in texts))
+        return await self._inner.embed_batch(texts)
+
+
+def test_folded_entity_embed_text_only_transforms_lookup_term() -> None:
+    """Fold the identifier, never a whole process sentence."""
+    assert _folded_entity_embed_text("Саелог") == "saelog"
+    assert _folded_entity_embed_text("Saelog") == "саелог"
+    assert _folded_entity_embed_text("SAELOG") == "саелог"
+    assert _folded_entity_embed_text(_definition_lookup_term("Что такое Саелог?")) == (
+        "saelog"
+    )
+    assert _folded_entity_embed_text(_definition_lookup_term("What is Saelog?")) == (
+        "саелог"
+    )
+    assert _folded_entity_embed_text(_definition_lookup_term(_PROCESS_LEAVE_QUERY)) is None
+    assert _folded_entity_embed_text("Saelgo") == "саелго"
+    assert _folded_entity_embed_text("Saelgo") != "saelog"
+    assert _folded_entity_embed_text("saelog") != "saelgo"
+
+
+def test_script_fold_is_general_not_a_saelog_dictionary() -> None:
+    """Existing letter-fold tables apply to other identifiers; no entity list."""
+    assert _script_variant_token("telegram") == "телеграм"
+    assert _script_variant_token("телеграм") == "telegram"
+    assert _folded_entity_embed_text("Telegram") == "телеграм"
+    assert _folded_entity_embed_text("Телеграм") == "telegram"
+    assert _folded_entity_embed_text("1C") == "1с"
+    assert _folded_entity_embed_text("Сайлуо") == "sailuo"
+    # Phonetic spellings are not a dictionary rewrite; letter-fold only.
+    assert _folded_entity_embed_text("WhatsApp") == "вхатсапп"
+    assert _folded_entity_embed_text("Ватсап") == "vatsap"
+
+
+def test_union_vector_rows_keeps_lowest_distance_and_unique_ids() -> None:
+    article_id = uuid4()
+    shared = _mock_chunk(article_id=article_id, chunk_index=0, content="shared")
+    only_original = _mock_chunk(article_id=article_id, chunk_index=1, content="orig")
+    only_folded = _mock_chunk(article_id=article_id, chunk_index=2, content="folded")
+    unioned = _union_vector_rows(
+        [
+            [(shared, 0.40, "t"), (only_original, 0.22, "t")],
+            [(shared, 0.18, "t"), (only_folded, 0.30, "t")],
+        ]
+    )
+    by_id = {chunk.id: distance for chunk, distance, _title in unioned}
+    assert by_id[shared.id] == pytest.approx(0.18)
+    assert only_original.id in by_id
+    assert only_folded.id in by_id
+    assert len(unioned) == 3
+
+
+def test_folded_vector_hit_enters_hybrid_pool_for_cyrillic_entity() -> None:
+    """Canonical chunk outside original vector top-N still enters via fold."""
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    intro = _mock_chunk(
+        article_id=article_id,
+        chunk_index=0,
+        content=_SAELOG_TITLE_PREFIX + _SAELOG_INTRO_BODY,
+    )
+    neighbors = [
+        _mock_chunk(
+            article_id=article_id,
+            chunk_index=index + 1,
+            content=f"{_SAELOG_TITLE_PREFIX}SAELOG mention {index} in a process step.",
+        )
+        for index in range(10)
+    ]
+    original_vector = [
+        (neighbor, 0.20 + index * 0.01, title)
+        for index, neighbor in enumerate(neighbors)
+    ]
+    folded_vector = [(intro, 0.16, title), (neighbors[0], 0.28, title)]
+
+    before = _merge_and_score(
+        vector_rows=original_vector,
+        lexical_rows=[(neighbors[0], 0.50, title)],
+        top_k=5,
+        min_score=None,
+        query="Саелог",
+    )
+    assert all(hit.chunk_id != intro.id for hit in before), (
+        "without the folded vector search the canonical intro is not in the pool"
+    )
+
+    unioned = _union_vector_rows([original_vector, folded_vector])
+    assert any(chunk.id == intro.id for chunk, _distance, _title in unioned)
+
+    after = _merge_and_score(
+        vector_rows=unioned,
+        lexical_rows=[(neighbors[0], 0.50, title)],
+        top_k=5,
+        min_score=None,
+        query="Саелог",
+    )
+    assert after[0].chunk_id == intro.id
+    assert after[0].content.startswith(_SAELOG_TITLE_PREFIX)
+
+
+def test_folded_vector_hit_enters_pool_for_cyrillic_definition_question() -> None:
+    from app.services.ai.retriever import _merge_and_score
+
+    title = _SAELOG_ARTICLE_TITLE
+    article_id = uuid4()
+    intro = _mock_chunk(
+        article_id=article_id,
+        chunk_index=0,
+        content=_SAELOG_TITLE_PREFIX + _SAELOG_INTRO_BODY,
+    )
+    mention = _mock_chunk(
+        article_id=article_id,
+        chunk_index=40,
+        content=f"{_SAELOG_TITLE_PREFIX}SAELOG используется при передаче логисту.",
+    )
+    unioned = _union_vector_rows(
+        [
+            [(mention, 0.22, title)],
+            [(intro, 0.19, title)],
+        ]
+    )
+    hits = _merge_and_score(
+        vector_rows=unioned,
+        lexical_rows=[(mention, 0.40, title)],
+        top_k=5,
+        min_score=None,
+        query="Что такое Саелог?",
+    )
+    assert any(hit.chunk_id == intro.id for hit in hits)
+    assert hits[0].chunk_id == intro.id
+
+
+@pytest.mark.parametrize(
+    ("query", "original", "folded"),
+    [
+        ("SAELOG", "SAELOG", "саелог"),
+        ("Saelog", "Saelog", "саелог"),
+        ("saelog", "saelog", "саелог"),
+        ("Саелог", "Саелог", "saelog"),
+        ("Что такое Saelog?", "Что такое Saelog?", "саелог"),
+        ("Что такое Саелог?", "Что такое Саелог?", "saelog"),
+        ("What is Saelog?", "What is Saelog?", "саелог"),
+        ("What is Саелог?", "What is Саелог?", "saelog"),
+    ],
+)
+async def test_entity_queries_embed_original_and_folded_identifier(
+    article_service: ArticleService,
+    company_a: Company,
+    employee_a: Employee,
+    query: str,
+    original: str,
+    folded: str,
+) -> None:
+    recorder = _RecordingEmbeddings()
+    retriever = KnowledgeRetriever(
+        uow_factory=_uow_factory,
+        article_service=article_service,
+        embedding_provider=recorder,
+    )
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    await retriever.retrieve(
+        query,
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert recorder.batch_calls, f"{query!r} must embed at least once"
+    embedded = recorder.batch_calls[0]
+    assert embedded[0] == original
+    assert folded in embedded
+    assert len(embedded) == 2
+    assert not any(
+        item.casefold().startswith("что такое ")
+        or item.casefold().startswith("what is ")
+        for item in embedded[1:]
+    ), "must not transliterate the full definition question"
+
+
+async def test_process_question_does_not_embed_folded_identifier(
+    article_service: ArticleService,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    recorder = _RecordingEmbeddings()
+    retriever = KnowledgeRetriever(
+        uow_factory=_uow_factory,
+        article_service=article_service,
+        embedding_provider=recorder,
+    )
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    await retriever.retrieve(
+        _PROCESS_LEAVE_QUERY,
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert recorder.batch_calls == [(_PROCESS_LEAVE_QUERY,)]
+
+
+async def test_saelgo_typo_does_not_get_exact_saelog_definition(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    await _publish(
+        article_service,
+        company_a,
+        title=_SAELOG_ARTICLE_TITLE,
+        body=_SAELOG_INTRO_BODY,
+    )
+    assert _folded_entity_embed_text("Saelgo") != "saelog"
+    hits = await retriever.retrieve(
+        "Saelgo",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    for hit in hits:
+        score, _signals = _score_definition_candidate(
+            "Saelgo", hit.content, hit.article_title
+        )
+        assert score == 0.0
+    assert _folded_entity_embed_text(_definition_lookup_term("Saelgo")) == "саелго"
+
+
+async def test_folded_entity_vector_search_reuses_acl_article_ids(
+    article_service: ArticleService,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    """Both vector searches run inside the same allowed_article_ids + tenant."""
+    recorder = _RecordingEmbeddings()
+    retriever = KnowledgeRetriever(
+        uow_factory=_uow_factory,
+        article_service=article_service,
+        embedding_provider=recorder,
+    )
+    await _publish(
+        article_service, company_a, title="общее сведение", body=_entity_kb_body()
+    )
+    hits = await retriever.retrieve(
+        "Саелог",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        **_KWARGS,
+    )
+    assert recorder.batch_calls and len(recorder.batch_calls[0]) == 2
+    assert hits
+    assert any("канонический корпус" in hit.content.lower() for hit in hits)
