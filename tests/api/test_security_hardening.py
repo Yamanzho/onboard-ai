@@ -11,15 +11,15 @@ from httpx import AsyncClient
 from app.core.config import get_settings
 from app.core.security import (
     create_access_token,
+    decode_token,
     hash_password,
     verify_employee_password,
 )
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
-from app.db.uow import UnitOfWork
 from app.services.email import EmailService
 from app.services.refresh_session import SUBJECT_EMPLOYEE, RefreshSessionService
-from tests.conftest import auth_header, _uow_factory, tenant_tokens_from_response
+from tests.conftest import _uow_factory, auth_header, tenant_tokens_from_response
 
 pytestmark = pytest.mark.security
 
@@ -32,14 +32,76 @@ def bot_service_token(monkeypatch: pytest.MonkeyPatch) -> str:
     # Force settings reload with patched env
     settings = get_settings()
     monkeypatch.setattr(settings, "bot_service_token", token)
+    settings.bot_login_rate_limit = 0
     yield token
     get_settings.cache_clear()
+
+
+async def test_bot_login_rejects_missing_and_wrong_service_credentials_generically(
+    api_client: AsyncClient,
+    employee_a: Employee,
+    bot_service_token: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    supplied_id = employee_a.telegram_user_id
+    wrong_token = "wrong-bot-service-credential"
+    with caplog.at_level(logging.WARNING, logger="app.auth.bot_login"):
+        missing = await api_client.post(
+            "/api/v1/auth/bot/telegram",
+            headers={"X-Request-ID": "botauthmissing01"},
+            json={"telegram_user_id": supplied_id},
+        )
+        wrong = await api_client.post(
+            "/api/v1/auth/bot/telegram",
+            headers={
+                "X-Bot-Service-Token": wrong_token,
+                "X-Request-ID": "botauthwrong0001",
+            },
+            json={"telegram_user_id": supplied_id},
+        )
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert missing.json()["detail"] == wrong.json()["detail"]
+    assert missing.json()["detail"] == "Could not validate credentials"
+
+    joined = " ".join(record.getMessage() for record in caplog.records)
+    assert "botauthmissing01" in joined
+    assert "botauthwrong0001" in joined
+    assert bot_service_token not in joined
+    assert wrong_token not in joined
+    assert str(supplied_id) not in joined
+
+
+async def test_bot_login_issues_database_derived_employee_credentials(
+    api_client: AsyncClient,
+    company_a,
+    company_b,
+    employee_a: Employee,
+    bot_service_token: str,
+) -> None:
+    response = await api_client.post(
+        "/api/v1/auth/bot/telegram",
+        headers={"X-Bot-Service-Token": bot_service_token},
+        json={
+            "company_id": str(company_b.id),
+            "telegram_user_id": employee_a.telegram_user_id,
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    payload = decode_token(body["access_token"], expected_type="access")
+    assert payload["sub"] == str(employee_a.id)
+    assert payload["role"] == employee_a.role
+    assert payload["company_id"] == str(company_a.id)
+    assert body["employee"]["company_id"] == str(company_a.id)
 
 
 async def test_deactivated_company_blocks_login_and_api(
     api_client: AsyncClient,
     company_a,
     admin_a: Employee,
+    bot_service_token: str,
 ) -> None:
     settings = get_settings()
     password = settings.auth_password
@@ -66,6 +128,13 @@ async def test_deactivated_company_blocks_login_and_api(
     )
     assert blocked_login.status_code == 403
     assert "deactivated" in blocked_login.json()["detail"].lower()
+
+    bot_login = await api_client.post(
+        "/api/v1/auth/bot/telegram",
+        headers={"X-Bot-Service-Token": bot_service_token},
+        json={"telegram_user_id": admin_a.telegram_user_id},
+    )
+    assert bot_login.status_code == 403
 
     me = await api_client.get(
         "/api/v1/auth/me",

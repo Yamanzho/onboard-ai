@@ -17,6 +17,7 @@ from app.core.config import (
 # Deterministic unit-test values — not production credentials.
 _STRONG_SECRET = "unit-test-hmac-secret-key-32chars-min!!"
 _STRONG_SUPER_ADMIN = "unit-test-super-admin-ok"
+_STRONG_BOT_SERVICE_TOKEN = "unit-test-bot-service-token-32chars"
 _STRONG_REDIS_URL = "redis://:unit-test-redis-password@redis:6379/0"
 _STRONG_DATABASE_URL = (
     "postgresql+asyncpg://onboard_app:unit-test-postgres-password@db:5432/onboard_ai"
@@ -31,15 +32,56 @@ def _production_settings(**overrides: object) -> Settings:
         "debug": False,
         "secret_key": _STRONG_SECRET,
         "super_admin_password": _STRONG_SUPER_ADMIN,
+        "bot_service_token": _STRONG_BOT_SERVICE_TOKEN,
         "redis_url": _STRONG_REDIS_URL,
         "database_url": _STRONG_DATABASE_URL,
         "migration_database_url": "postgresql+asyncpg://onboard_owner:unit-test-postgres-password@db:5432/onboard_ai",
         "onboard_owner_password": "unit-test-postgres-password",
         "onboard_app_password": "unit-test-postgres-password",
         "invite_base_url": "https://onboardai.example.test",
+        "ai_allow_fake_embeddings_in_production": True,
+        "ai_allow_fake_llm_in_production": True,
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]
+
+
+def test_production_rejects_fake_embeddings_without_explicit_override() -> None:
+    with pytest.raises(ValidationError, match="AI_EMBEDDING_PROVIDER=fake"):
+        _production_settings(ai_allow_fake_embeddings_in_production=False)
+
+
+def test_production_allows_explicit_fake_embedding_emergency_override() -> None:
+    settings = _production_settings(ai_allow_fake_embeddings_in_production=True)
+    assert settings.ai_embedding_provider == "fake"
+
+
+def test_production_accepts_openai_embeddings_without_fake_override() -> None:
+    settings = _production_settings(
+        ai_embedding_provider="openai",
+        ai_embedding_api_key="sk-unit-test-not-a-real-key",
+        ai_allow_fake_embeddings_in_production=False,
+    )
+    assert settings.ai_embedding_provider == "openai"
+
+
+def test_production_rejects_fake_llm_without_explicit_override() -> None:
+    with pytest.raises(ValidationError, match="AI_LLM_PROVIDER=fake"):
+        _production_settings(ai_allow_fake_llm_in_production=False)
+
+
+def test_production_allows_explicit_fake_llm_emergency_override() -> None:
+    settings = _production_settings(ai_allow_fake_llm_in_production=True)
+    assert settings.ai_llm_provider == "fake"
+
+
+def test_production_accepts_openai_llm_without_fake_override() -> None:
+    settings = _production_settings(
+        ai_llm_provider="openai",
+        ai_llm_api_key="sk-unit-test-not-a-real-key",
+        ai_allow_fake_llm_in_production=False,
+    )
+    assert settings.ai_llm_provider == "openai"
 
 
 # --- SECRET_KEY ---
@@ -213,16 +255,18 @@ def test_production_rejects_short_bot_service_token() -> None:
         )
 
 
-def test_production_rejects_demo_seed_bot_company_id() -> None:
-    with pytest.raises(ValidationError, match="demo seed company id"):
+@pytest.mark.parametrize("missing", ["", "   "])
+def test_production_always_requires_bot_service_token(missing: str) -> None:
+    with pytest.raises(ValidationError, match="BOT_SERVICE_TOKEN is missing or too weak"):
         _production_settings(
-            bot_service_token="unit-test-bot-service-token-32chars",
-            bot_company_id="11111111-1111-4111-8111-111111111111",
+            bot_token="",
+            bot_service_token=missing,
+            bot_company_id="",
         )
 
 
 def test_production_requires_bot_service_token_when_bot_token_set() -> None:
-    with pytest.raises(ValidationError, match="BOT_SERVICE_TOKEN is required when BOT_TOKEN"):
+    with pytest.raises(ValidationError, match="BOT_SERVICE_TOKEN is missing or too weak"):
         _production_settings(
             bot_token="123:AA-telegram-bot-token",
             bot_service_token="",

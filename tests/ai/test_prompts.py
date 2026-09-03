@@ -75,3 +75,18 @@ def test_empty_history_still_builds_prompt() -> None:
     assert "(none)" in history
     assert "How do I get VPN?" in prompt
     assert '<source id="S1"' in prompt
+
+
+def test_entity_identity_note_is_optional_and_not_a_kb_source() -> None:
+    plain = build_user_prompt("Евгений", [_doc()])
+    assert "<entity_identity>" not in plain
+    noted = build_user_prompt(
+        "Евгений",
+        [_doc()],
+        grounded_entity_note='[S1] PERSON matched via alias token "Тей Евгений Г.".',
+    )
+    identity = noted.split("<entity_identity>", 1)[1].split("</entity_identity>", 1)[0]
+    assert "Тей Евгений Г." in identity
+    assert "not ENTITY IDs" in noted
+    assert "canonical_name" in RAG_SYSTEM_PROMPT
+    assert "only because a chunk was retrieved" in RAG_SYSTEM_PROMPT

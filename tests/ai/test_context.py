@@ -63,3 +63,10 @@ def test_builder_skips_blank_and_ignores_unknown_cite_ids() -> None:
 def test_builder_rejects_invalid_limits() -> None:
     with pytest.raises(ValidationError):
         KnowledgeContextBuilder(max_documents=0)
+
+
+def test_builder_without_query_leaves_content_unchanged() -> None:
+    hit = _hit(title="T", content="unrelated body", index=3)
+    bundle = KnowledgeContextBuilder().build([hit])
+    assert bundle.documents[0].content == "unrelated body"
+    assert bundle.grounded_entity_note == ""

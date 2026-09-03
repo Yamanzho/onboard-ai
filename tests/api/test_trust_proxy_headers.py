@@ -315,6 +315,7 @@ async def test_bot_login_rate_limit_ignores_spoofed_xff_when_trust_enabled(
     try:
         async with AsyncClient(transport=transport, base_url="http://test") as client:
             statuses: list[int] = []
+            details: list[str] = []
             for i in range(3):
                 res = await client.post(
                     "/api/v1/auth/bot/telegram",
@@ -329,6 +330,7 @@ async def test_bot_login_rate_limit_ignores_spoofed_xff_when_trust_enabled(
                     },
                 )
                 statuses.append(res.status_code)
+                details.append(res.json()["detail"])
     finally:
         reset_rate_limiter_state_for_tests()
         settings.bot_login_rate_limit = previous_limit
@@ -339,6 +341,7 @@ async def test_bot_login_rate_limit_ignores_spoofed_xff_when_trust_enabled(
     assert statuses[0] == 401
     assert statuses[1] == 401
     assert statuses[2] == 429
+    assert details[0] == details[1] == "Could not validate credentials"
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ from app.db.enums import (
     AssignmentStatus,
     EmployeeRole,
     KnowledgeArticleStatus,
+    KnowledgeIndexStatus,
     KnowledgeVisibility,
     PlatformRole,
 )
@@ -152,9 +153,7 @@ async def _poison_chunk_metadata(
 
 def test_retriever_has_no_second_acl() -> None:
     retriever_src = (ROOT / "app/services/ai/retriever.py").read_text(encoding="utf-8")
-    repo_src = (
-        ROOT / "app/repositories/knowledge_article_chunk.py"
-    ).read_text(encoding="utf-8")
+    repo_src = (ROOT / "app/repositories/knowledge_article_chunk.py").read_text(encoding="utf-8")
     assert "AIACLService" not in retriever_src
     assert "AIACL" not in retriever_src
     assert "list_articles" in retriever_src
@@ -163,9 +162,10 @@ def test_retriever_has_no_second_acl() -> None:
     assert ".extra.get" not in retriever_src
     assert "search_similar_current_published" in retriever_src
     assert "Chunk ``metadata`` is not used for authorization" in repo_src
-    assert "KnowledgeArticleChunk.extra" not in repo_src.split(
-        "async def search_similar_current_published", 1
-    )[1]
+    assert (
+        "KnowledgeArticleChunk.extra"
+        not in repo_src.split("async def search_similar_current_published", 1)[1]
+    )
 
 
 # --- Role matrix -------------------------------------------------------------
@@ -299,9 +299,7 @@ async def test_company_a_cannot_retrieve_company_b_by_uuid_or_content(
     assert article_b.current_version_id is not None
     async with UnitOfWork() as uow:
         await uow.enter_tenant(company_b.id)
-        chunks = await uow.knowledge_article_chunks.list_by_version_id(
-            article_b.current_version_id
-        )
+        chunks = await uow.knowledge_article_chunks.list_by_version_id(article_b.current_version_id)
     assert chunks
     chunk_b = chunks[0]
 
@@ -335,9 +333,7 @@ async def test_spoofed_claimed_company_id_does_not_switch_tenant(
     employee_a: Employee,
 ) -> None:
     await _publish(article_service, company_a, title="A decoy", body="A only")
-    await _publish(
-        article_service, company_b, title="B secret", body=f"B_ONLY_{uuid4().hex}"
-    )
+    await _publish(article_service, company_b, title="B secret", body=f"B_ONLY_{uuid4().hex}")
     with pytest.raises(NotFoundError):
         await retriever.retrieve(
             "B secret",
@@ -594,6 +590,41 @@ async def test_publish_archive_lifecycle_retrieval(
     assert all(h.article_id != archived.id for h in still)
 
 
+async def test_retrieval_requires_complete_indexed_current_version(
+    article_service: ArticleService,
+    retriever: KnowledgeRetriever,
+    company_a: Company,
+    employee_a: Employee,
+) -> None:
+    token = f"INDEX_STATE_{uuid4().hex}"
+    article = await _publish(article_service, company_a, title="State", body=token)
+    assert article.current_version_id is not None
+    assert await retriever.retrieve(token, **_actor(employee_a))
+
+    async with UnitOfWork() as uow:
+        await uow.enter_tenant(company_a.id)
+        version = await uow.knowledge_article_versions.get_by_id(article.current_version_id)
+        assert version is not None
+        version.index_status = KnowledgeIndexStatus.PENDING.value
+        await uow.commit()
+    assert all(
+        hit.article_id != article.id
+        for hit in await retriever.retrieve(token, **_actor(employee_a))
+    )
+
+    async with UnitOfWork() as uow:
+        await uow.enter_tenant(company_a.id)
+        version = await uow.knowledge_article_versions.get_by_id(article.current_version_id)
+        assert version is not None and version.indexed_chunk_count is not None
+        version.index_status = KnowledgeIndexStatus.INDEXED.value
+        version.indexed_chunk_count += 1
+        await uow.commit()
+    assert all(
+        hit.article_id != article.id
+        for hit in await retriever.retrieve(token, **_actor(employee_a))
+    )
+
+
 async def test_failed_index_does_not_resurrect_historical_chunks(
     company_a: Company,
     employee_a: Employee,
@@ -609,10 +640,11 @@ async def test_failed_index_does_not_resurrect_historical_chunks(
         embedding_provider=_BoomEmbeddings(),  # type: ignore[arg-type]
     )
     failing = ArticleService(uow_factory=_uow_factory, chunk_indexer=boom)
-    with pytest.raises(RuntimeError, match="embedding backend down"):
-        await failing.update_article(
-            article.id, company_id=company_a.id, title="Indexed", body=v2_token
-        )
+    failed = await failing.update_article(
+        article.id, company_id=company_a.id, title="Indexed", body=v2_token
+    )
+    assert failed.current_version is not None
+    assert failed.current_version.index_status == "failed"
     loaded = await article_service.get_article(
         article.id, company_id=company_a.id, actor_role=EmployeeRole.HR.value
     )
@@ -700,9 +732,7 @@ async def test_query_is_untrusted_data_not_instructions(
     employee_a: Employee,
 ) -> None:
     b_token = f"INJECT_B_{uuid4().hex}"
-    article_b = await _publish(
-        article_service, company_b, title="Company B handbook", body=b_token
-    )
+    article_b = await _publish(article_service, company_b, title="Company B handbook", body=b_token)
     await _publish(article_service, company_a, title="A handbook", body="A public")
     for query in _INJECTION_QUERIES:
         hits = await retriever.retrieve(query, **_actor(employee_a))

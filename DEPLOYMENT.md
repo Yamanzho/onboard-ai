@@ -37,7 +37,8 @@ What starts:
 |-----------------|------|
 | `db` | PostgreSQL 16 |
 | `redis` | Redis 7 |
-| `api` | FastAPI — waits for DB, runs `alembic upgrade head`, seeds demo tenant, serves API |
+| `migrate` | One-shot role bootstrap + `alembic upgrade head` (API does not race migrations) |
+| `api` | FastAPI — waits for migrate, seeds Super Admin, serves API |
 | `frontend` | Nginx + built React admin (proxies `/api` → `api:8000`) |
 | `bot` | Telegram bot — **polling** if `BOT_WEBHOOK_URL` empty; **idle** if `BOT_TOKEN` empty |
 
@@ -86,6 +87,9 @@ When `APP_ENV=production`, the API **fail-fast** rejects missing or obviously we
 | `MIGRATION_DATABASE_URL` / `ONBOARD_OWNER_PASSWORD` | Migrator password required; ≥ 12 chars; not a known default |
 | `INVITE_BASE_URL` | Must be `https://…` |
 | `SEED_DEMO` | Forced `false` in production Compose; entrypoint refuses `true` |
+| `AI_EMBEDDING_PROVIDER` | Production rejects `fake` unless `AI_ALLOW_FAKE_EMBEDDINGS_IN_PRODUCTION=true` |
+| `AI_LLM_PROVIDER` | Production rejects `fake` unless `AI_ALLOW_FAKE_LLM_IN_PRODUCTION=true` |
+| `AI_EMBEDDING_API_KEY` / `AI_LLM_API_KEY` | Required when the matching provider is `openai` (`OPENAI_API_KEY` is an alias) |
 
 `docker-compose.prod.yml` also refuses to interpolate if `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_OWNER_PASSWORD`, `ONBOARD_APP_PASSWORD`, `BOT_SERVICE_TOKEN`, or `INVITE_BASE_URL` is missing/empty. `BOT_COMPANY_ID` is optional (`${BOT_COMPANY_ID:-}`). If set in production, it must **not** be the demo seed UUID `11111111-1111-4111-8111-111111111111`. Identity is `telegram_user_id` → Employee → `employee.company_id`.
 
@@ -112,7 +116,7 @@ When `APP_ENV=production`, **Redis is a hard dependency** — services must not 
 | Bot FSM storage | Must initialize `RedisStorage`; failure **raises** (container exits/restarts). **No** `MemoryStorage` fallback. | Falls back to `MemoryStorage` if Redis is down (**dev-only**; not shared/durable) |
 | API login rate limits | Redis required; connect/command failure → **HTTP 503**. **No** per-process memory fallback (would break shared limits across `UVICORN_WORKERS`). | In-memory fallback if Redis is unavailable (**dev-only**; not shared across workers) |
 
-Error messages never include Redis passwords. `/health` is a **liveness** probe (`{"status":"ok"}`) without dependency checks. `/ready` is a **readiness** probe (`{"status":"ready"}`): PostgreSQL is always required; Redis is required when `APP_ENV=production`. Bodies never include connection strings or secrets. Redis outages also surface at bot startup and on rate-limited login endpoints.
+Error messages never include Redis passwords. `/health` is a **liveness** probe (`{"status":"ok"}`) without dependency checks and stays 200 while an instance is draining. `/ready` is a **readiness** probe (`{"status":"ready"}`): the process must be `ready`, PostgreSQL is always required, and Redis is required when `APP_ENV=production`. Starting or draining instances return HTTP 503. Bodies never include connection strings or secrets. Redis outages also surface at bot startup and on rate-limited login endpoints. See [docs/runbooks/safe-deployment.md](docs/runbooks/safe-deployment.md).
 
 Do **not** run production with Redis intentionally down.
 
@@ -381,19 +385,25 @@ docker compose logs -f api
 
 ### 5.2.1 Production verification sequence
 
-Walk this list on a new VPS after cloning the repo. Automated CI covers compose config, Docker image build, pytest (including security + golden-path + tenant isolation), and `/ready` behavior — not live DNS, Telegram, or backups.
+Walk this list on a new VPS after cloning the repo. Automated CI covers compose
+config, Docker image build, pytest (including security + golden-path + tenant
+isolation), `/ready`, and a scheduled/manual disposable backup-restore smoke.
+It does not contact live DNS, Telegram, production PostgreSQL, or remote backup
+storage.
 
-1. **Configure `.env`** — `cp .env.example .env`, then generate unique secrets (see §2 Production secrets). Set `INVITE_BASE_URL=https://<pilot-host>`. Do not copy placeholders. `SEED_DEMO=false`.
-2. **Validate secrets** — production Compose interpolates required variables (`:?`). `BOT_COMPANY_ID` is optional (`:-`). API Settings **fail-fast** on weak/default `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, Redis password, Postgres passwords, `BOT_SERVICE_TOKEN`. If `BOT_COMPANY_ID` is set, it must not be the demo seed UUID. `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must succeed.
-3. **Start production compose** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Confirm API/DB/Redis have **no** public host ports; frontend is `127.0.0.1:3000`.
-4. **Run migrations** — `docker/entrypoint-api.sh` runs `alembic upgrade head` on API start. Optional check: `docker compose exec api alembic current` (expect a single head).
+1. **Configure `.env`** — `cp .env.example .env`, then generate unique secrets (see §2 Production secrets). Set `INVITE_BASE_URL=https://<pilot-host>`. Do not copy placeholders. `SEED_DEMO=false`. Set `AI_EMBEDDING_PROVIDER=openai`, `AI_LLM_PROVIDER=openai`, and the hosted API key. Leave both `AI_ALLOW_FAKE_*_IN_PRODUCTION` flags false.
+2. **Validate secrets** — production Compose interpolates required variables (`:?`). `BOT_COMPANY_ID` is optional (`:-`). API Settings **fail-fast** on weak/default `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, Redis password, Postgres passwords, `BOT_SERVICE_TOKEN`, and on fake embeddings/LLM without an explicit emergency override. If `BOT_COMPANY_ID` is set, it must not be the demo seed UUID. `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must succeed.
+3. **Start production compose** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Confirm API/DB/Redis have **no** public host ports; frontend is `127.0.0.1:3000`. The `migrate` service runs once before API starts.
+4. **Run migrations exactly once** — do not let API replicas race Alembic. Official path: `docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm migrate` (also used by `scripts/deploy_production.sh`). Optional check: `docker compose exec api alembic current` (expect a single head).
 5. **Verify health (liveness)** — `curl -fsS http://127.0.0.1:3000/health` → `{"status":"ok"}`. This only means the API process is up.
 6. **Verify readiness** — `curl -fsS http://127.0.0.1:3000/ready` → `{"status":"ready"}`. HTTP 503 means PostgreSQL (always) or Redis (production) is not accepting traffic. The body must not contain URLs or passwords.
 7. **Configure nginx** — copy `deploy/nginx/onboardai.aoe.kz.conf` (HTTP / ACME bootstrap). See [deploy/nginx/README.md](deploy/nginx/README.md).
 8. **Configure HTTPS** — certbot, then replace with `deploy/nginx/onboardai.aoe.kz.https.conf` (HTTPS-only + HSTS). `curl -fsS https://<pilot-host>/ready`.
 9. **Verify application** — Super Admin login at `/platform/login`, then the pilot checklist: [production-pilot-golden-path.md](docs/runbooks/production-pilot-golden-path.md). Automated coverage: `tests/e2e/test_golden_path.py`.
 10. **Verify Telegram** — set `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, matching `BOT_SERVICE_TOKEN`. Identity is `telegram_user_id` → Employee → `employee.company_id`. `BOT_COMPANY_ID` is optional ops metadata. Confirm bot logs (polling or webhook). Live Bot API cannot be asserted in CI.
-11. **Verify backup** — follow [postgres-backup.md](docs/runbooks/postgres-backup.md) (`pg_dump`, off-box copy, encryption, restore drill). The app does not ship backup workers.
+11. **Configure automated backup** — follow [postgres-backup.md](docs/runbooks/postgres-backup.md): install the host systemd templates, private S3-compatible credentials, six-hour `pg_dump` schedule, and daily isolated restore verification. Backup jobs remain outside API/bot containers.
+12. **Start monitoring overlay** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d`. Configure the Alertmanager webhook secret file (`/etc/onboard-ai/alertmanager-webhook-url` by default). Enable the host marker exporter timer. Confirm Prometheus/Alertmanager bind to `127.0.0.1` only.
+13. **External uptime/TLS probe** — keep one operator-owned probe **outside this VPS** against `https://<pilot-host>/health`. Internal Prometheus cannot see total host loss.
 
 ```bash
 # After compose is up (frontend bound to 127.0.0.1:3000):
@@ -557,13 +567,16 @@ cd frontend && npm install && npm run dev
 - [ ] `INVITE_BASE_URL=https://<pilot-host>`
 - [ ] Understand F-03: editing `POSTGRES_PASSWORD` alone does not rotate an existing volume ([runbook](docs/runbooks/postgres-password-rotation.md))
 - [ ] `DEBUG=false`, `APP_ENV=production`, `SEED_DEMO=false` (production Compose forces these)
+- [ ] `AI_EMBEDDING_PROVIDER=openai` and `AI_LLM_PROVIDER=openai` with a hosted API key; both `AI_ALLOW_FAKE_*_IN_PRODUCTION` flags false
 - [ ] Do not publish Postgres/Redis/API ports publicly (prod: no host ports; passwords required)
 - [ ] Frontend plaintext bound to `127.0.0.1` only; TLS edge in front
 - [ ] Production uses `docker-compose.prod.yml` (immutable images; no `.:/app`; no `--reload`; secrets required; non-root API/bot)
 - [ ] TLS 1.2+ (prefer 1.3) for Admin UI and bot webhook; HTTP→HTTPS on edge; HSTS after HTTPS-only confirmed ([host nginx](deploy/nginx/README.md))
 - [ ] `TRUST_PROXY_HEADERS=true` only with trusted overwrite proxy and unpublished API
-- [ ] PostgreSQL backups: [postgres-backup.md](docs/runbooks/postgres-backup.md) (storage, encryption, retention, restore drill)
+- [ ] PostgreSQL backups: [postgres-backup.md](docs/runbooks/postgres-backup.md) (six-hour off-host dump, SSE, 30-day retention, daily isolated restore verification, RPO/RTO). Enable host timers only after private remote storage is configured.
+- [ ] Monitoring overlay (`docker-compose.monitoring.yml`), Alertmanager destination, marker exporter timer, and an **external** uptime/TLS probe outside the VPS
 - [ ] Walk the pilot flow: [production-pilot-golden-path.md](docs/runbooks/production-pilot-golden-path.md)
 - [ ] `curl` `/health` (liveness) and `/ready` (Postgres + production Redis)
+- [ ] Follow [docs/runbooks/safe-deployment.md](docs/runbooks/safe-deployment.md) for restarts (single-instance downtime is expected)
 - [ ] CI green on the commit you deploy (`.github/workflows/ci.yml`)
-- [ ] Monitor `docker compose logs` for API/bot errors
+- [ ] Monitor `docker compose logs` and Phase 8B alerts for API/bot errors

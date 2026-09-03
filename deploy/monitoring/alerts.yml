@@ -1,0 +1,290 @@
+groups:
+  - name: onboardai-critical
+    rules:
+      - alert: PublicEndpointUnavailable
+        expr: probe_success{job="public-edge",instance="https://onboardai.aoe.kz/health"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: Public OnboardAI endpoint is unavailable
+          action: Check DNS, TLS, host nginx, frontend, and API in that order.
+
+      - alert: ApiReadinessFailed
+        expr: probe_success{job="public-edge",instance="https://onboardai.aoe.kz/ready"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: API readiness has failed persistently
+          action: Inspect dependency metrics and API logs before restarting anything.
+
+      - alert: PostgresDown
+        expr: onboardai_dependency_up{dependency="postgres"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL is unavailable to the API
+          action: Check the database container, storage, and disk; do not delete the volume.
+
+      - alert: DiskSpaceCritical
+        expr: |
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} < 0.10
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Host filesystem has less than 10% free space
+          action: Identify growth safely; protect PostgreSQL and backup artifacts first.
+
+      - alert: BackupOverdue
+        expr: |
+          onboardai_backup_marker_valid == 0
+          or (time() - onboardai_backup_last_success_timestamp_seconds > 28800)
+          or onboardai_backup_remote_uploaded == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: Off-host PostgreSQL backup is missing or overdue
+          action: Inspect the backup timer and journal, then run a manual backup if safe.
+
+      - alert: RestoreVerificationOverdue
+        expr: |
+          onboardai_restore_verification_marker_valid == 0
+          or (time() - onboardai_restore_verification_last_success_timestamp_seconds > 129600)
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: PostgreSQL restore verification is missing or overdue
+          action: Inspect the verification timer and journal; preserve the source backup.
+
+      - alert: RestoreVerificationFailed
+        expr: onboardai_restore_verification_success == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Latest restore verification marker is not successful
+          action: Inspect checksum, restore, migration revision, and verification logs.
+
+      - alert: TLSCertificateExpiringCritical
+        expr: probe_ssl_earliest_cert_expiry{job="public-edge"} - time() < 604800
+        for: 30m
+        labels:
+          severity: critical
+        annotations:
+          summary: Public TLS certificate expires within seven days
+          action: Check Certbot renewal and nginx certificate deployment immediately.
+
+      - alert: MonitoringTargetDown
+        expr: up{job=~"node|monitoring|onboardai-api|containers"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: A required monitoring target is unavailable
+          action: Check the monitoring Compose services and local Docker networking.
+
+  - name: onboardai-high
+    rules:
+      - alert: TelegramBotDown
+        expr: onboardai_telegram_bot_heartbeat_up == 0
+        for: 3m
+        labels:
+          severity: high
+        annotations:
+          summary: Telegram bot heartbeat is stale
+          action: Check the bot container, Redis, Telegram connectivity, and bot logs.
+
+      - alert: TelegramOutboundBacklog
+        expr: onboardai_telegram_outbound_oldest_pending_age_seconds > 300
+        for: 10m
+        labels:
+          severity: high
+        annotations:
+          summary: Telegram outbound delivery backlog is aging
+          action: Check Telegram/network errors and the bot worker; do not rerun the LLM.
+
+      - alert: TelegramSendingLeaseStale
+        expr: onboardai_telegram_outbound_stale_sending > 0
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: Telegram outbound sending lease is stale
+          action: Inspect bot worker ownership and errors; allow normal lease recovery.
+
+      - alert: TelegramPermanentFailuresRising
+        expr: increase(onboardai_telegram_outbound_transitions_total{status="failed"}[10m]) >= 3
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: Permanent Telegram delivery failures are rising
+          action: Group bounded error categories and verify bot credentials and recipient state.
+
+      - alert: KBIndexingFailed
+        expr: onboardai_kb_current_versions{status="failed"} > 0
+        for: 15m
+        labels:
+          severity: high
+        annotations:
+          summary: Current published knowledge versions failed indexing
+          action: Inspect bounded KB/provider errors and use the existing safe reindex action.
+
+      - alert: KBIndexingStuck
+        expr: onboardai_kb_stale_indexing_leases > 0
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: Knowledge-base indexing lease is stale
+          action: Inspect the indexing request and provider; do not edit lease rows manually.
+
+      - alert: AIProviderErrorsElevated
+        expr: |
+          sum(rate(onboardai_ai_provider_requests_total{status=~"error|timeout"}[10m]))
+            / clamp_min(sum(rate(onboardai_ai_provider_requests_total[10m])), 0.001) > 0.20
+          and sum(rate(onboardai_ai_provider_requests_total[10m])) > 0.02
+        for: 10m
+        labels:
+          severity: high
+        annotations:
+          summary: Hosted AI provider error or timeout rate is elevated
+          action: Check provider status and bounded error categories; do not disable readiness.
+
+      - alert: ContainerRestartLoop
+        expr: |
+          changes(container_start_time_seconds{name=~".*onboard-ai-(api|frontend|bot|db|redis).*"}[15m]) > 2
+        for: 5m
+        labels:
+          severity: high
+        annotations:
+          summary: An OnboardAI container is restart-looping
+          action: Inspect its logs, exit reason, dependency state, and host disk.
+
+  - name: onboardai-warning
+    rules:
+      - alert: RedisUnavailable
+        expr: onboardai_dependency_up{dependency="redis"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis is unavailable
+          action: Check the Redis container, authentication, memory, and persistence.
+
+      - alert: DiskSpaceWarning
+        expr: |
+          node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs"} < 0.20
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host filesystem has less than 20% free space
+          action: Review Docker, PostgreSQL, logs, and backup artifact growth.
+
+      - alert: DiskInodesWarning
+        expr: |
+          node_filesystem_files_free{fstype!~"tmpfs|overlay|squashfs"}
+            / node_filesystem_files{fstype!~"tmpfs|overlay|squashfs"} < 0.15
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host filesystem has fewer than 15% free inodes
+          action: Find directories creating many files before services fail.
+
+      - alert: FilesystemReadOnly
+        expr: node_filesystem_readonly{fstype!~"tmpfs|overlay|squashfs"} == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: A host filesystem is read-only
+          action: Inspect kernel and storage errors; avoid write-heavy recovery attempts.
+
+      - alert: HostMemoryLow
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host available memory is below 10%
+          action: Identify container/process pressure and check for OOM events.
+
+      - alert: HostCPUHigh
+        expr: |
+          1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) > 0.90
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host CPU usage is above 90% for 15 minutes
+          action: Identify container or process pressure before latency or OOM follows.
+
+      - alert: HostLoadHigh
+        expr: |
+          node_load1
+            / count without (cpu, mode) (node_cpu_seconds_total{mode="idle"}) > 1.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: Host load1 exceeds 1.5 per CPU for 15 minutes
+          action: Check runnable processes, CPU steal, and container limits.
+
+      - alert: HTTP5xxRateHigh
+        expr: |
+          sum(rate(onboardai_http_requests_total{status_class="5xx"}[10m]))
+            / clamp_min(sum(rate(onboardai_http_requests_total[10m])), 0.001) > 0.05
+          and sum(rate(onboardai_http_requests_total[10m])) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: API HTTP 5xx ratio is elevated
+          action: Inspect normalized routes and request IDs without logging bodies.
+
+      - alert: KBReindexRequired
+        expr: onboardai_kb_reindex_required > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Current KB versions use incompatible embedding metadata
+          action: Run the documented published-corpus reindex with the active model.
+
+      - alert: IdempotencyStaleLeases
+        expr: sum(onboardai_idempotency_stale_leases) > 3
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Multiple idempotency processing leases are stale
+          action: Inspect API/bot completion failures and allow normal reclaim semantics.
+
+      - alert: BackupRetentionWarning
+        expr: onboardai_backup_retention_warning == 1
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: Latest backup reported a retention warning
+          action: Check local and remote pruning before disk or bucket growth becomes unsafe.
+
+      - alert: TLSCertificateExpiringWarning
+        expr: |
+          probe_ssl_earliest_cert_expiry{job="public-edge"} - time() < 1814400
+          and probe_ssl_earliest_cert_expiry{job="public-edge"} - time() >= 604800
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Public TLS certificate expires within 21 days
+          action: Verify Certbot timer health and perform a renewal dry run.

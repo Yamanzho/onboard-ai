@@ -31,6 +31,7 @@ from app.bot.services.ai_client import (
     ask_company_knowledge,
 )
 from app.bot.services.ai_conversation import get_telegram_conversation_store
+from app.bot.services.outbound_delivery import TelegramOutboundExecutor
 from app.core.ai_constants import MAX_CHAT_QUESTION_CHARS
 from app.core.exceptions import ServiceUnavailableError
 
@@ -144,4 +145,12 @@ async def ai_question(
         text,
         telegram_user_id=message.from_user.id,
     )
+    source_key = api.current_ai_outbound_source_key()
+    if isinstance(source_key, str):
+        executor = TelegramOutboundExecutor(message.bot, api)
+        if await executor.deliver_source(
+            source_type="ai_chat",
+            source_key=source_key,
+        ):
+            return
     await message.answer(reply)

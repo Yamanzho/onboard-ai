@@ -4,6 +4,7 @@
 .env.*.local
 .env.production
 .env.prod
+.env.bak*
 
 # Virtual environments
 .venv/

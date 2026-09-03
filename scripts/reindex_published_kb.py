@@ -38,11 +38,16 @@ async def _run(*, company_id: UUID, claimed_company_id: UUID | None) -> None:
         claimed_company_id=claimed_company_id,
     )
     logger.info(
-        "reindex_done company_id=%s article_count=%s chunk_count=%s",
+        "reindex_done company_id=%s attempted=%s succeeded=%s failed=%s chunk_count=%s complete=%s",
         company_id,
-        result.indexed_articles,
+        result.attempted_articles,
+        result.succeeded_articles,
+        result.failed_articles,
         result.indexed_chunks,
+        result.complete,
     )
+    if not result.complete:
+        raise SystemExit(1)
 
 
 def main() -> None:
@@ -61,9 +66,7 @@ def main() -> None:
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    asyncio.run(
-        _run(company_id=args.company_id, claimed_company_id=args.claimed_company_id)
-    )
+    asyncio.run(_run(company_id=args.company_id, claimed_company_id=args.claimed_company_id))
 
 
 if __name__ == "__main__":

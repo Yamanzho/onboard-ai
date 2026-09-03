@@ -17,6 +17,7 @@ from app.bot.keyboards.menu import (
     MENU_PROFILE,
 )
 from app.bot.keyboards.onboarding import complete_step_keyboard, parse_complete_callback
+from app.bot.services.outbound_delivery import TelegramOutboundExecutor
 from app.bot.states.onboarding import OnboardingStates
 from app.services.step_content import parse_questions
 
@@ -323,6 +324,7 @@ async def quiz_answers(
     except OnboardApiError as exc:
         if exc.status_code == 409:
             await message.answer("Шаг уже выполнен.")
+            return
         else:
             await message.answer("Не удалось сохранить ответы. Попробуйте ещё раз.")
             return
@@ -332,7 +334,18 @@ async def quiz_answers(
         correct = quiz_score.get("correct_count")
         total = quiz_score.get("total")
         if correct is not None and total is not None:
-            await message.answer(f"Результат теста: {correct} из {total}.")
+            handled = False
+            update_id = api.current_telegram_update_id()
+            if isinstance(update_id, int) and not isinstance(update_id, bool):
+                handled = await TelegramOutboundExecutor(
+                    message.bot,
+                    api,
+                ).deliver_source(
+                    source_type="quiz_result",
+                    source_key=str(item.id),
+                )
+            if not handled:
+                await message.answer(f"Результат теста: {correct} из {total}.")
 
     try:
         await _show_current_step(

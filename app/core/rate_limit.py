@@ -30,11 +30,24 @@ _PROD_REDIS_UNAVAILABLE = "Rate limiting temporarily unavailable"
 
 def reset_rate_limiter_state_for_tests() -> None:
     """Clear cached Redis client / failure flags (unit tests only)."""
-    global _redis_client, _redis_failed
-    _redis_client = None
+    close_rate_limiter()
+    global _redis_failed
     _redis_failed = False
     with _memory_lock:
         _memory_hits.clear()
+
+
+def close_rate_limiter() -> None:
+    """Close the cached Redis client. Must not raise to the caller."""
+    global _redis_client
+    client = _redis_client
+    _redis_client = None
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        logger.warning("event=shutdown component=rate_limiter result=close_error")
 
 
 def _get_redis():

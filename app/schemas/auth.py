@@ -136,6 +136,103 @@ class BotTelegramLoginResponse(TokenResponse):
     employee: CurrentUserResponse
 
 
+class BotUpdateClaimRequest(BaseModel):
+    """Internal bot request to claim one Telegram delivery."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    update_id: int = Field(ge=0)
+    update_type: str = Field(min_length=1, max_length=32, pattern=r"^[a-z_]+$")
+
+
+class BotUpdateClaimResponse(BaseModel):
+    """Claim decision; ownership data is returned only to the bot service."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal["acquired", "completed", "processing"]
+    receipt_id: UUID
+    owner_token: UUID | None = None
+
+
+class BotUpdateFinishRequest(BaseModel):
+    """Internal ownership proof for completing or failing a claim."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: UUID
+    owner_token: UUID
+
+
+class BotUpdateFinishResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    updated: bool
+
+
+class BotOutboundClaimRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: Literal["ai_chat", "quiz_result"]
+    source_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9:_-]+$")
+
+
+class BotOutboundBatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int = Field(default=20, ge=1, le=20)
+
+
+class BotOutboundDeliveryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state: Literal[
+        "acquired",
+        "pending",
+        "sending",
+        "sent",
+        "failed",
+        "not_found",
+    ]
+    message_id: UUID | None = None
+    owner_token: UUID | None = None
+    chat_id: int | None = None
+    source_type: Literal["ai_chat", "quiz_result"] | None = None
+    source_key: str | None = None
+    body: str | None = None
+    parse_mode: Literal["HTML"] | None = None
+    attempt_count: int = 0
+    telegram_message_id: int | None = None
+
+
+class BotOutboundBatchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    deliveries: list[BotOutboundDeliveryResponse]
+
+
+class BotOutboundSentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: UUID
+    owner_token: UUID
+    telegram_message_id: int = Field(gt=0)
+
+
+class BotOutboundFailedRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: UUID
+    owner_token: UUID
+    retryable: bool
+    error_category: str = Field(
+        min_length=1,
+        max_length=32,
+        pattern=r"^[a-z0-9_]+$",
+    )
+    retry_after_seconds: int | None = Field(default=None, ge=0, le=3600)
+
+
 class PasswordChangeRequest(BaseModel):
     """Authenticated employee password change."""
 

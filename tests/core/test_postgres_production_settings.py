@@ -34,12 +34,15 @@ def _production_settings(**overrides: object) -> Settings:
         "debug": False,
         "secret_key": _STRONG_SECRET,
         "super_admin_password": _STRONG_SUPER_ADMIN,
+        "bot_service_token": "unit-test-bot-service-token-32chars",
         "redis_url": _STRONG_REDIS_URL,
         "database_url": _STRONG_DATABASE_URL,
         "migration_database_url": _STRONG_MIGRATION_URL,
         "onboard_owner_password": _STRONG_DB_PASSWORD,
         "onboard_app_password": _STRONG_DB_PASSWORD,
         "invite_base_url": "https://onboardai.example.test",
+        "ai_allow_fake_embeddings_in_production": True,
+        "ai_allow_fake_llm_in_production": True,
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

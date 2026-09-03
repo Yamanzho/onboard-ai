@@ -211,6 +211,8 @@ class Settings(BaseSettings):
     # Production hosted default is OpenAI text-embedding-3-small (1536).
     # API keys belong in env only — never in the repository or in logs.
     ai_embedding_provider: str = "fake"
+    # Emergency/dev-only production override. Keep false in real deployments.
+    ai_allow_fake_embeddings_in_production: bool = False
     ai_embedding_dimension: int = 1536
     ai_embedding_model: str = "text-embedding-3-small"
     ai_embedding_api_key: SecretStr = Field(
@@ -221,6 +223,8 @@ class Settings(BaseSettings):
     # AI-9A LLM. Dev/CI default is FakeLLMProvider (no network).
     # Keys belong in env only — never in the repository or in logs.
     ai_llm_provider: str = "fake"
+    # Emergency/dev-only production override. Keep false in real deployments.
+    ai_allow_fake_llm_in_production: bool = False
     ai_llm_model: str = "gpt-4o-mini"
     ai_llm_api_key: SecretStr = Field(
         default=SecretStr(""),
@@ -240,6 +244,9 @@ class Settings(BaseSettings):
     # AI-11C: Redis TTL for the Telegram → conversation_id pointer.
     # Not conversation history; Postgres remains the source of truth.
     ai_telegram_conversation_ttl_seconds: int = DEFAULT_TELEGRAM_CONVERSATION_TTL_SECONDS
+    # Phase 8C: bounded graceful shutdown for in-flight HTTP / bot work.
+    # Chosen above the 25s AI chat budget and below the 60s nginx proxy timeout.
+    shutdown_grace_seconds: float = 45.0
 
     @field_validator("ai_embedding_provider")
     @classmethod
@@ -357,6 +364,15 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("shutdown_grace_seconds")
+    @classmethod
+    def _validate_shutdown_grace(cls, value: float) -> float:
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            raise ValueError("SHUTDOWN_GRACE_SECONDS must be a number")
+        if value < 5 or value > 120:
+            raise ValueError("SHUTDOWN_GRACE_SECONDS must be between 5 and 120")
+        return float(value)
+
     @model_validator(mode="after")
     def _harden_runtime(self) -> "Settings":
         from app.core.ai_constants import (
@@ -426,7 +442,7 @@ class Settings(BaseSettings):
                 f"(use a unique strong password, >= {_MIN_SUPER_ADMIN_PASSWORD_LEN} chars)"
             )
 
-        if self.bot_service_token and _is_missing_or_weak_secret(
+        if _is_missing_or_weak_secret(
             self.bot_service_token,
             weak_values=_WEAK_BOT_SERVICE_TOKENS,
             min_length=_MIN_BOT_SERVICE_TOKEN_LEN,
@@ -434,11 +450,6 @@ class Settings(BaseSettings):
             raise ValueError(
                 "BOT_SERVICE_TOKEN is missing or too weak for APP_ENV=production "
                 f"(use a unique random value, >= {_MIN_BOT_SERVICE_TOKEN_LEN} chars)"
-            )
-        if self.bot_token.strip() and not self.bot_service_token.strip():
-            raise ValueError(
-                "BOT_SERVICE_TOKEN is required when BOT_TOKEN is set and "
-                "APP_ENV=production"
             )
         if (
             self.bot_company_id.strip()
@@ -521,6 +532,22 @@ class Settings(BaseSettings):
             raise ValueError(
                 "MIGRATION_DATABASE_URL must use the onboard_owner role when "
                 "APP_ENV=production"
+            )
+        if (
+            self.ai_embedding_provider == "fake"
+            and not self.ai_allow_fake_embeddings_in_production
+        ):
+            raise ValueError(
+                "AI_EMBEDDING_PROVIDER=fake is not allowed when APP_ENV=production "
+                "unless AI_ALLOW_FAKE_EMBEDDINGS_IN_PRODUCTION=true is explicitly set"
+            )
+        if (
+            self.ai_llm_provider == "fake"
+            and not self.ai_allow_fake_llm_in_production
+        ):
+            raise ValueError(
+                "AI_LLM_PROVIDER=fake is not allowed when APP_ENV=production "
+                "unless AI_ALLOW_FAKE_LLM_IN_PRODUCTION=true is explicitly set"
             )
         return self
 

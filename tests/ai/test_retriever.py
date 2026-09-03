@@ -28,6 +28,8 @@ from tests.conftest import _uow_factory
 
 class _BoomEmbeddings:
     dimension = KB_CHUNK_VECTOR_DIMENSION
+    model = "fake"
+    provider_name = "fake"
 
     async def embed(self, text: str) -> list[float]:
         raise RuntimeError("embedding backend down")
@@ -347,7 +349,7 @@ async def test_no_default_production_relevance_threshold() -> None:
     assert default is None
 
 
-async def test_dimension_mismatch_and_provider_failure(
+async def test_configured_dimension_mismatch_uses_lexical_and_provider_failure_surfaces(
     article_service: ArticleService,
     company_a: Company,
     employee_a: Employee,
@@ -358,13 +360,14 @@ async def test_dimension_mismatch_and_provider_failure(
         article_service=article_service,
         embedding_provider=FakeEmbeddingProvider(dimension=4),
     )
-    with pytest.raises(ValidationError, match="embedding dimension mismatch"):
-        await bad_dim.retrieve(
-            "check",
-            actor_company_id=company_a.id,
-            actor_employee_id=employee_a.id,
-            actor_role=EmployeeRole.EMPLOYEE.value,
-        )
+    hits = await bad_dim.retrieve(
+        "check",
+        actor_company_id=company_a.id,
+        actor_employee_id=employee_a.id,
+        actor_role=EmployeeRole.EMPLOYEE.value,
+    )
+    assert hits
+    assert all(hit.score <= 0.25 for hit in hits)
 
     boom = KnowledgeRetriever(
         uow_factory=_uow_factory,

@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 import logging
-from html import escape
 from typing import Any
 from uuid import UUID
 
 import httpx
 
 from app.bot.api.client import OnboardApiClient, OnboardApiError
-from app.bot.handlers.step_content import truncate_telegram_html
 from app.bot.services.ai_conversation import (
     TelegramConversationStore,
     get_telegram_conversation_store,
 )
 from app.core.exceptions import ServiceUnavailableError
+from app.services.telegram_format import format_ai_reply
 
 logger = logging.getLogger(__name__)
 
@@ -30,31 +29,6 @@ MSG_TIMEOUT = "Не удалось получить ответ. Попробуй
 MSG_INTERNAL = "Произошла внутренняя ошибка. Попробуйте позже."
 MSG_VALIDATION = "Не удалось обработать вопрос. Сократите текст и попробуйте снова."
 MSG_NEW_CHAT = "Начинаем новый диалог."
-
-
-def format_ai_reply(payload: dict[str, Any]) -> str:
-    """Render the HTTP chat payload for Telegram. Titles only; no internals."""
-    answer = str(payload.get("answer") or "")
-    no_answer = bool(payload.get("no_answer"))
-    text = escape(answer)
-    if no_answer:
-        return truncate_telegram_html(text)
-
-    titles: list[str] = []
-    raw_citations = payload.get("citations") or []
-    if isinstance(raw_citations, list):
-        for item in raw_citations:
-            title = ""
-            if isinstance(item, dict):
-                title = str(item.get("title") or "").strip()
-            if title:
-                titles.append(escape(title))
-    if titles:
-        bullets = "\n".join(f"• {title}" for title in titles)
-        text = f"{text}\n\nИсточники:\n{bullets}"
-    return truncate_telegram_html(text)
-
-
 def user_error_message(exc: BaseException) -> str:
     """Map upstream failures to a short user-facing line. Never echo bodies."""
     if isinstance(exc, ServiceUnavailableError):
@@ -85,17 +59,6 @@ def user_error_message(exc: BaseException) -> str:
     return MSG_INTERNAL
 
 
-def is_stale_conversation_error(exc: OnboardApiError) -> bool:
-    """True when the pointer is unknown (404) or the thread is archived (400)."""
-    if exc.status_code == 404:
-        return True
-    if exc.status_code != 400:
-        return False
-    blob = exc.detail if exc.detail is not None else exc
-    text = blob if isinstance(blob, str) else str(blob)
-    return "archived conversation" in text.lower()
-
-
 async def ask_company_knowledge(
     api: OnboardApiClient,
     message: str,
@@ -120,38 +83,19 @@ async def ask_company_knowledge(
 
     try:
         payload = await _post_ai_chat(api, message, conversation_id)
-    except (OnboardApiError, httpx.TimeoutException, httpx.HTTPError, ServiceUnavailableError) as exc:
-        if (
-            isinstance(exc, OnboardApiError)
-            and conversation_id is not None
-            and telegram_user_id is not None
-            and store is not None
-            and is_stale_conversation_error(exc)
-        ):
-            logger.warning(
-                "telegram_ai_chat_stale_conversation status_code=%s request_id=%s",
-                exc.status_code,
-                exc.request_id or "-",
-            )
-            try:
-                await store.clear_current_conversation(telegram_user_id)
-                payload = await _post_ai_chat(api, message, None)
-            except (OnboardApiError, httpx.TimeoutException, httpx.HTTPError, ServiceUnavailableError) as retry_exc:
-                logger.warning(
-                    "telegram_ai_chat_failed error_type=%s status_code=%s request_id=%s",
-                    type(retry_exc).__name__,
-                    getattr(retry_exc, "status_code", None),
-                    getattr(retry_exc, "request_id", None) or "-",
-                )
-                return user_error_message(retry_exc)
-        else:
-            logger.warning(
-                "telegram_ai_chat_failed error_type=%s status_code=%s request_id=%s",
-                type(exc).__name__,
-                getattr(exc, "status_code", None),
-                getattr(exc, "request_id", None) or "-",
-            )
-            return user_error_message(exc)
+    except (
+        OnboardApiError,
+        httpx.TimeoutException,
+        httpx.HTTPError,
+        ServiceUnavailableError,
+    ) as exc:
+        logger.warning(
+            "telegram_ai_chat_failed error_type=%s status_code=%s request_id=%s",
+            type(exc).__name__,
+            getattr(exc, "status_code", None),
+            getattr(exc, "request_id", None) or "-",
+        )
+        return user_error_message(exc)
     except Exception:
         logger.warning("telegram_ai_chat_failed error_type=Exception")
         return MSG_INTERNAL

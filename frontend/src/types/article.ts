@@ -3,6 +3,13 @@ import type { Tag } from './tag'
 export type KnowledgeStatus = 'draft' | 'published' | 'archived'
 export type KnowledgeVisibility = 'company' | 'program'
 export type KnowledgeBodyFormat = 'markdown' | 'html' | 'plain'
+export type KnowledgeIndexStatus = 'pending' | 'indexing' | 'indexed' | 'failed'
+export type EmbeddingIncompatibilityReason =
+  | 'provider_changed'
+  | 'model_changed'
+  | 'dimension_changed'
+  | 'metadata_missing'
+  | 'not_indexed'
 
 export interface ArticleVersion {
   id: string
@@ -14,6 +21,20 @@ export interface ArticleVersion {
   change_summary: string | null
   created_by_id: string | null
   published_at: string | null
+  index_status: KnowledgeIndexStatus
+  embedding_provider: string | null
+  embedding_model: string | null
+  embedding_dimension: number | null
+  indexed_chunk_count: number | null
+  indexing_started_at: string | null
+  indexed_at: string | null
+  indexing_failed_at: string | null
+  failure_category: string | null
+  indexing_in_progress: boolean
+  index_stale: boolean
+  embedding_compatible: boolean
+  reindex_required: boolean
+  embedding_incompatibility_reason: EmbeddingIncompatibilityReason | null
   created_at: string
   updated_at: string
 }
@@ -41,6 +62,20 @@ export interface ArticleVersionSummary {
   change_summary: string | null
   created_by_id: string | null
   published_at: string | null
+  index_status: KnowledgeIndexStatus
+  embedding_provider: string | null
+  embedding_model: string | null
+  embedding_dimension: number | null
+  indexed_chunk_count: number | null
+  indexing_started_at: string | null
+  indexed_at: string | null
+  indexing_failed_at: string | null
+  failure_category: string | null
+  indexing_in_progress: boolean
+  index_stale: boolean
+  embedding_compatible: boolean
+  reindex_required: boolean
+  embedding_incompatibility_reason: EmbeddingIncompatibilityReason | null
   created_at: string
 }
 

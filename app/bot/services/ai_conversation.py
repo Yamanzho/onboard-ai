@@ -29,6 +29,8 @@ class AsyncRedisClient(Protocol):
 
     async def delete(self, key: str) -> Any: ...
 
+    async def aclose(self) -> None: ...
+
 
 class MemoryRedisClient:
     """In-process Redis stand-in for tests. Never used as a production fallback."""
@@ -45,6 +47,9 @@ class MemoryRedisClient:
 
     async def delete(self, key: str) -> int:
         return 1 if self.values.pop(key, None) is not None else 0
+
+    async def aclose(self) -> None:
+        self.values.clear()
 
 
 class TelegramConversationStore:
@@ -94,6 +99,20 @@ class TelegramConversationStore:
 
     async def clear_current_conversation(self, telegram_user_id: int) -> None:
         await self._delete(self.conversation_key(telegram_user_id))
+
+    async def aclose(self) -> None:
+        """Close the owned Redis client. Injected test clients are left intact."""
+        client = self._client
+        self._client = None
+        if client is None or self._injected is not None:
+            return
+        close = getattr(client, "aclose", None)
+        if close is None:
+            return
+        try:
+            await close()
+        except Exception:
+            logger.warning("event=shutdown component=conversation_store result=close_error")
 
     async def _get(self, key: str) -> str | None:
         client = await self._client_or_none()

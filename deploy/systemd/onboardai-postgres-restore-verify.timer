@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily isolated restore verification for OnboardAI PostgreSQL
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=15m
+Unit=onboardai-postgres-restore-verify.service
+
+[Install]
+WantedBy=timers.target

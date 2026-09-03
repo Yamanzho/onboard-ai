@@ -130,6 +130,32 @@ def test_ready_ai_config_does_not_call_openai(monkeypatch: pytest.MonkeyPatch) -
     client_cls.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_ready_503_while_draining_health_stays_ok(api_client) -> None:
+    from app.core.lifecycle import begin_drain, mark_ready
+
+    mark_ready()
+    begin_drain()
+    response = await api_client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "draining"
+    _assert_no_connection_leak(response.text)
+    health = await api_client.get("/health")
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+
+
+@pytest.mark.asyncio
+async def test_ready_503_while_starting(api_client) -> None:
+    from app.core.lifecycle import reset_lifecycle_for_tests
+
+    reset_lifecycle_for_tests()
+    response = await api_client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "not ready"
+    _assert_no_connection_leak(response.text)
+
+
 def test_ready_ai_config_fails_closed_without_openai_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

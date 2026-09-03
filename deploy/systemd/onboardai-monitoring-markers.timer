@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh OnboardAI backup monitoring metrics
+
+[Timer]
+OnBootSec=2m
+OnUnitActiveSec=5m
+AccuracySec=30s
+Persistent=true
+Unit=onboardai-monitoring-markers.service
+
+[Install]
+WantedBy=timers.target

@@ -1,7 +1,9 @@
 # Production pilot golden path
 
-End-to-end checklist for the first production tenant. One bot process = one
-company (`BOT_COMPANY_ID`). Do not enable `SEED_DEMO`.
+End-to-end checklist for the first production tenant. Production uses a
+**shared Telegram bot**: identity is `telegram_user_id` → Employee →
+`employee.company_id`. `BOT_COMPANY_ID` is optional ops metadata, not tenant
+authority. Do not enable `SEED_DEMO`.
 
 Public topology: `Internet → HTTPS nginx → frontend → /api → FastAPI → PostgreSQL / Redis`.
 
@@ -21,16 +23,16 @@ Telegram Bot API): `tests/e2e/test_golden_path.py`. Cross-tenant isolation:
 | Compose | `docker compose -f docker-compose.yml -f docker-compose.prod.yml` |
 | Env | `APP_ENV=production`, `DEBUG=false`, `SEED_DEMO=false` |
 | Secrets | Unique `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_OWNER_PASSWORD`, `ONBOARD_APP_PASSWORD`, `REDIS_PASSWORD`, `BOT_SERVICE_TOKEN` |
+| AI | `AI_EMBEDDING_PROVIDER=openai`, `AI_LLM_PROVIDER=openai`, hosted API key; both `AI_ALLOW_FAKE_*_IN_PRODUCTION` flags false |
 | URLs | `INVITE_BASE_URL=https://<pilot-host>` |
 | TLS | Host nginx HTTPS site (`deploy/nginx/onboardai.aoe.kz.https.conf`) |
 | SMTP | `SMTP_*` set **or** operator ready to copy `invite_url` manually |
-| Bot | After company create: `BOT_COMPANY_ID=<company uuid>`, `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME` |
+| Bot | `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, matching `BOT_SERVICE_TOKEN`. Leave `BOT_COMPANY_ID` empty |
 
-First boot chicken-and-egg: company UUID is assigned by the database. Set
-`BOT_COMPANY_ID` to a temporary UUID (not the demo seed id
-`11111111-1111-4111-8111-111111111111`) so the API can start, create the
-company, then replace `BOT_COMPANY_ID` with the real id and recreate `api` +
-`bot`.
+The API can start without `BOT_COMPANY_ID`. Create the company after Super
+Admin login. Never set `BOT_COMPANY_ID` to the demo seed UUID
+`11111111-1111-4111-8111-111111111111`. Tenant membership always comes from
+the bound employee row, not this variable.
 
 ---
 
@@ -56,7 +58,8 @@ company, then replace `BOT_COMPANY_ID` with the real id and recreate `api` +
 | **DB** | `companies` row `is_active=true`; `employees` admin `status=invited`; `company_subscriptions` `status=trial` `is_current=true`; `employee_invites` hashed token; `platform_audit_logs` `company_created` |
 | **Security** | Super Admin only. Tenant Admin cannot create companies. Cross-tenant ids are not accepted here |
 
-Copy `id` from the response — this is `BOT_COMPANY_ID`.
+Copy `id` from the response for later tenant operations. It is **not**
+required as `BOT_COMPANY_ID`.
 
 ---
 
@@ -149,7 +152,7 @@ Delivery:
 | **API** | Bot → `POST /api/v1/auth/bot/invite/accept` with `X-Bot-Service-Token` |
 | **UI** | Telegram deep link |
 | **DB** | `telegram_user_id` / username / chat_id set; `status=active`; invite consumed |
-| **Security** | Service token compared with `secrets.compare_digest`. `company_id` must equal `BOT_COMPANY_ID`. Duplicate Telegram account rejected. Rebinding another Telegram to an already-linked profile rejected. HR/Admin invite tokens rejected on this endpoint. Archived employees rejected |
+| **Security** | Service token compared with `secrets.compare_digest`. Tenant comes from the invite's employee row (`telegram_user_id` → Employee → `company_id`), not `BOT_COMPANY_ID`. Duplicate Telegram account rejected. Rebinding another Telegram to an already-linked profile rejected. HR/Admin invite tokens rejected on this endpoint. Archived employees rejected |
 
 ---
 
@@ -161,7 +164,7 @@ Delivery:
 | **API** | Bot → `POST /api/v1/auth/bot/telegram` then tenant APIs with Bearer JWT |
 | **UI** | Telegram bot |
 | **DB** | `refresh_sessions` for the employee; no invite changes |
-| **Security** | Invited (not yet accepted) → 403. Archived → 403. Wrong `BOT_COMPANY_ID` → 403. Missing/wrong service token → 401. Empty service token fail-closed |
+| **Security** | Invited (not yet accepted) → 403. Archived → 403. Unknown Telegram identity → 404/403. Missing/wrong service token → 401. Empty service token fail-closed. `BOT_COMPANY_ID` is not an identity scope |
 
 ---
 
@@ -251,6 +254,6 @@ limits → 400. Super Admin platform APIs are not blocked by tenant entitlement.
 - API published on `:8000` while `TRUST_PROXY_HEADERS=true`
 - Frontend bound to `0.0.0.0` (use `docker-compose.prod.yml` only)
 - `SEED_DEMO=true`
-- `BOT_COMPANY_ID` still the demo seed UUID
+- `BOT_COMPANY_ID` set to the demo seed UUID (leave it empty in production)
 - Invite emails claiming `email_sent` when SMTP failed
 - Raw invite tokens in `docker compose logs`

@@ -49,13 +49,16 @@ async def wait() -> None:
 asyncio.run(wait())
 PY
 
-echo "[api] bootstrapping SEC-R3 database roles…"
-python -m scripts.bootstrap_rls_roles
-
-echo "[api] running migrations…"
-# Alembic uses MIGRATION_DATABASE_URL (onboard_owner) via alembic/env.py.
-export MIGRATION_DATABASE_URL="${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}"
-alembic upgrade head
+if [ "${ONBOARDAI_RUN_STARTUP_MIGRATIONS:-1}" = "1" ]; then
+  echo "[api] bootstrapping SEC-R3 database roles…"
+  python -m scripts.bootstrap_rls_roles
+  echo "[api] running migrations…"
+  # Alembic uses MIGRATION_DATABASE_URL (onboard_owner) via alembic/env.py.
+  export MIGRATION_DATABASE_URL="${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL is required}"
+  alembic upgrade head
+else
+  echo "[api] skipping startup migrations (ONBOARDAI_RUN_STARTUP_MIGRATIONS=0)"
+fi
 
 # Demo seed is opt-in (never default-on for production-like deploys).
 if [ "${SEED_DEMO:-false}" = "true" ]; then
@@ -68,10 +71,19 @@ python -m scripts.seed_super_admin
 
 echo "[api] starting uvicorn (APP_ENV=${APP_ENV_VALUE})…"
 if [ "${APP_ENV_VALUE}" = "production" ]; then
+  # prometheus_client multiprocess files must be shared by all Uvicorn workers
+  # and cleared once, before workers fork. Never clear this directory per worker.
+  export PROMETHEUS_MULTIPROC_DIR="${PROMETHEUS_MULTIPROC_DIR:-/tmp/prometheus_multiproc}"
+  rm -rf "${PROMETHEUS_MULTIPROC_DIR}"
+  mkdir -p "${PROMETHEUS_MULTIPROC_DIR}"
   # --forwarded-allow-ips='*' is safe only because docker-compose.prod.yml
   # publishes no API host port. Do not combine with a public :8000 bind.
   exec uvicorn app.main:app --host 0.0.0.0 --port 8000 \
     --workers "${UVICORN_WORKERS:-2}" \
-    --proxy-headers --forwarded-allow-ips='*'
+    --timeout-graceful-shutdown "${SHUTDOWN_GRACE_SECONDS:-45}" \
+    --proxy-headers --forwarded-allow-ips='*' --no-access-log \
+    --log-config /app/docker/logging.json
 fi
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --no-access-log \
+  --timeout-graceful-shutdown "${SHUTDOWN_GRACE_SECONDS:-45}" \
+  --log-config /app/docker/logging.json

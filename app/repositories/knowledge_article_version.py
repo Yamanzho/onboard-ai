@@ -1,10 +1,12 @@
+from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.enums import KnowledgeIndexStatus
 from app.db.models.knowledge_article_version import KnowledgeArticleVersion
-from app.repositories.base import BaseRepository, _MAX_LIST_LIMIT
+from app.repositories.base import _MAX_LIST_LIMIT, BaseRepository
 
 
 class KnowledgeArticleVersionRepository(BaseRepository[KnowledgeArticleVersion]):
@@ -54,3 +56,81 @@ class KnowledgeArticleVersionRepository(BaseRepository[KnowledgeArticleVersion])
         )
         current = await self._session.scalar(stmt)
         return int(current or 0) + 1
+
+    async def claim_indexing(
+        self,
+        version_id: UUID,
+        *,
+        owner_token: UUID,
+        lease_seconds: int,
+    ) -> KnowledgeArticleVersion | None:
+        """Atomically claim a version unless another live DB lease owns it."""
+        self._ensure_rls_context()
+        stmt = (
+            update(KnowledgeArticleVersion)
+            .where(KnowledgeArticleVersion.id == version_id)
+            .where(
+                (KnowledgeArticleVersion.indexing_owner_token.is_(None))
+                | (KnowledgeArticleVersion.indexing_lease_expires_at <= func.now())
+            )
+            .values(
+                index_status=case(
+                    (
+                        KnowledgeArticleVersion.index_status == KnowledgeIndexStatus.INDEXED.value,
+                        KnowledgeIndexStatus.INDEXED.value,
+                    ),
+                    else_=KnowledgeIndexStatus.INDEXING.value,
+                ),
+                indexing_started_at=func.now(),
+                indexing_owner_token=owner_token,
+                indexing_lease_expires_at=func.now() + timedelta(seconds=lease_seconds),
+            )
+            .returning(KnowledgeArticleVersion)
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def renew_indexing_lease(
+        self,
+        version_id: UUID,
+        *,
+        owner_token: UUID,
+        lease_seconds: int,
+    ) -> bool:
+        self._ensure_rls_context()
+        result = await self._session.execute(
+            update(KnowledgeArticleVersion)
+            .where(KnowledgeArticleVersion.id == version_id)
+            .where(KnowledgeArticleVersion.indexing_owner_token == owner_token)
+            .where(KnowledgeArticleVersion.indexing_lease_expires_at > func.now())
+            .values(indexing_lease_expires_at=func.now() + timedelta(seconds=lease_seconds))
+        )
+        return bool(result.rowcount)
+
+    async def get_claim_for_update(
+        self,
+        version_id: UUID,
+        *,
+        owner_token: UUID,
+    ) -> KnowledgeArticleVersion | None:
+        self._ensure_rls_context()
+        result = await self._session.scalars(
+            select(KnowledgeArticleVersion)
+            .where(KnowledgeArticleVersion.id == version_id)
+            .where(KnowledgeArticleVersion.indexing_owner_token == owner_token)
+            .where(KnowledgeArticleVersion.indexing_lease_expires_at > func.now())
+            .with_for_update()
+        )
+        return result.first()
+
+    async def get_by_id_for_update(
+        self,
+        version_id: UUID,
+    ) -> KnowledgeArticleVersion | None:
+        self._ensure_rls_context()
+        result = await self._session.scalars(
+            select(KnowledgeArticleVersion)
+            .where(KnowledgeArticleVersion.id == version_id)
+            .with_for_update()
+        )
+        return result.first()

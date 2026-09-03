@@ -448,6 +448,7 @@ class ArticleService:
                 loaded,
                 actor_company_id=company_id,
             )
+            return await self._reload_article(article_id, company_id=company_id)
         return loaded
 
     async def publish_article(
@@ -507,7 +508,7 @@ class ArticleService:
             loaded,
             actor_company_id=company_id,
         )
-        return loaded
+        return await self._reload_article(article_id, company_id=company_id)
 
     async def archive_article(
         self,
@@ -646,12 +647,31 @@ class ArticleService:
         version_id = article.current_version_id
         if version_id is None:
             return
-        await self._indexer.index_published_version(
-            actor_company_id=actor_company_id,
-            article_id=article.id,
-            version_id=version_id,
-            company_id=article.company_id,
-        )
+        try:
+            await self._indexer.index_published_version(
+                actor_company_id=actor_company_id,
+                article_id=article.id,
+                version_id=version_id,
+                company_id=article.company_id,
+            )
+        except Exception:
+            # The business publication already committed. The indexer persists
+            # a sanitized failed/stale state; callers receive that durable
+            # health state instead of an ambiguous post-commit error.
+            return
+
+    async def _reload_article(
+        self,
+        article_id: UUID,
+        *,
+        company_id: UUID,
+    ) -> KnowledgeArticle:
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(company_id)
+            article = await uow.knowledge_articles.get_by_id_with_relations(article_id)
+            if article is None:
+                raise NotFoundError(f"Knowledge article {article_id} not found")
+            return article
 
     async def _require_management_article(
         self,

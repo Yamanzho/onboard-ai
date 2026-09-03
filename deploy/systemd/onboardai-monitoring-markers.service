@@ -1,0 +1,15 @@
+[Unit]
+Description=Export OnboardAI backup markers for node_exporter
+After=local-fs.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/onboard-ai/backup.env
+ExecStart=/usr/bin/python3 /opt/onboard-ai/scripts/export_monitoring_markers.py
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/var/lib/onboard-ai-backup
+ReadWritePaths=/var/lib/node_exporter/textfile_collector
+UMask=0022

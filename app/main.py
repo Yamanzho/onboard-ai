@@ -1,10 +1,29 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from fastapi.responses import Response
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.middleware import RequestIdMiddleware
 from app.api.v1.router import router as api_v1_router
 from app.core.config import Settings, get_settings
+from app.core.lifecycle import begin_drain, mark_ready, mark_stopped
+from app.core.metrics import prometheus_payload
 from app.core.readiness import assert_ready
+from app.core.shutdown import shutdown_runtime_resources
+
+
+@asynccontextmanager
+async def app_lifespan(_application: FastAPI) -> AsyncIterator[None]:
+    """Mark the process ready after startup, then drain and close on shutdown."""
+    mark_ready()
+    try:
+        yield
+    finally:
+        begin_drain()
+        await shutdown_runtime_resources()
+        mark_stopped()
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -17,6 +36,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     docs_enabled = not settings.is_production
 
     application = FastAPI(
+        lifespan=app_lifespan,
         title=settings.app_name,
         description=(
             "OnboardAI — Telegram-first SaaS for AI-powered employee onboarding.\n\n"
@@ -109,11 +129,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Return whether the app can accept traffic.
 
         Always checks PostgreSQL. Checks Redis when ``APP_ENV=production``
-        (Redis is a required runtime dependency). Response bodies never
-        include connection strings or secrets.
+        (Redis is a required runtime dependency). Starting, draining, and
+        stopped processes return non-200. Response bodies never include
+        connection strings or secrets.
         """
         await assert_ready()
         return {"status": "ready"}
+
+    @application.get(
+        "/metrics",
+        include_in_schema=False,
+        summary="Internal Prometheus metrics",
+    )
+    async def metrics() -> Response:
+        """Return internal operational metrics; production nginx blocks this path."""
+        payload, content_type = await prometheus_payload()
+        return Response(content=payload, media_type=content_type)
 
     return application
 

@@ -84,8 +84,15 @@ from app.core.ai_constants import (
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.request_id import request_id_log_value
 from app.db.enums import KnowledgeArticleStatus, PlatformRole
+from app.db.models.knowledge_article import KnowledgeArticle
 from app.db.models.knowledge_article_chunk import KnowledgeArticleChunk
 from app.db.uow import UnitOfWork
+from app.services.ai.embedding_identity import (
+    EmbeddingDimensionMismatchError,
+    EmbeddingIdentity,
+    embedding_identity_from_provider,
+    version_embedding_compatibility,
+)
 from app.services.ai.embeddings import EmbeddingProvider, get_embedding_provider
 from app.services.tenancy import ensure_same_company
 
@@ -405,6 +412,7 @@ class KnowledgeRetriever:
         result_status = "error"
         hit_count = 0
         allowed_count = 0
+        vector_excluded_versions = 0
         vector_candidates = 0
         lexical_candidates = 0
         definition_candidate = False
@@ -434,21 +442,40 @@ class KnowledgeRetriever:
                     not_found_message=f"Company {claimed_company_id} not found",
                 )
 
-            allowed_ids = await self._allowed_published_article_ids(
+            allowed_articles = await self._allowed_published_articles(
                 actor_company_id=actor_company_id,
                 actor_employee_id=actor_employee_id,
                 actor_role=actor_role,
             )
+            allowed_ids = [article.id for article in allowed_articles]
             allowed_count = len(allowed_ids)
             if not allowed_ids:
                 result_status = "empty_acl"
                 return []
 
             provider = self._provider()
-            if provider.dimension != KB_CHUNK_VECTOR_DIMENSION:
-                raise ValidationError(
-                    "embedding dimension mismatch: provider="
-                    f"{provider.dimension}, column={KB_CHUNK_VECTOR_DIMENSION}"
+            active_identity = embedding_identity_from_provider(provider)
+            vector_article_ids: list[UUID] = []
+            for article in allowed_articles:
+                version = article.current_version
+                if version is None:
+                    continue
+                compatibility = version_embedding_compatibility(
+                    version,
+                    active=active_identity,
+                )
+                if compatibility.compatible:
+                    vector_article_ids.append(article.id)
+                    continue
+                vector_excluded_versions += 1
+                _log_embedding_incompatibility(
+                    company_id=actor_company_id,
+                    version_id=version.id,
+                    active=active_identity,
+                    indexed_provider=version.embedding_provider,
+                    indexed_model=version.embedding_model,
+                    indexed_dimension=version.embedding_dimension,
+                    result=compatibility.state.value,
                 )
 
             # FTS never uses embedding_query. Process/follow-up queries tokenise
@@ -464,18 +491,33 @@ class KnowledgeRetriever:
                 and folded_identifier.casefold() != embed_text.casefold()
             ):
                 embed_texts.append(folded_identifier)
-            vectors = await provider.embed_batch(embed_texts)
-            if len(vectors) != len(embed_texts):
-                raise ValidationError(
-                    "embedding count mismatch: expected "
-                    f"{len(embed_texts)}, got {len(vectors)}"
-                )
-            for vector in vectors:
-                if len(vector) != KB_CHUNK_VECTOR_DIMENSION:
-                    raise ValidationError(
-                        "embedding dimension mismatch: expected "
-                        f"{KB_CHUNK_VECTOR_DIMENSION}, got {len(vector)}"
+            vectors: list[list[float]] = []
+            if vector_article_ids and active_identity.dimension == KB_CHUNK_VECTOR_DIMENSION:
+                try:
+                    vectors = await provider.embed_batch(embed_texts)
+                    if len(vectors) != len(embed_texts):
+                        raise ValidationError(
+                            "embedding count mismatch: expected "
+                            f"{len(embed_texts)}, got {len(vectors)}"
+                        )
+                    for vector in vectors:
+                        if len(vector) != active_identity.dimension:
+                            raise EmbeddingDimensionMismatchError(
+                                "embedding dimension mismatch: expected "
+                                f"{active_identity.dimension}, got {len(vector)}"
+                            )
+                except EmbeddingDimensionMismatchError:
+                    logger.warning(
+                        "kb_query_embedding_dimension_mismatch request_id=%s "
+                        "company_id=%s provider=%s model=%s expected_dimension=%s "
+                        "result=vector_skipped",
+                        request_id_log_value(),
+                        actor_company_id,
+                        active_identity.provider,
+                        active_identity.model,
+                        active_identity.dimension,
                     )
+                    vectors = []
 
             overfetch = min(
                 MAX_RETRIEVAL_CANDIDATES,
@@ -491,8 +533,11 @@ class KnowledgeRetriever:
                 repo = uow.knowledge_article_chunks
                 vector_groups = [
                     await repo.search_similar_current_published(
-                        allowed_article_ids=allowed_ids,
+                        allowed_article_ids=vector_article_ids,
                         query_embedding=vector,
+                        embedding_provider=active_identity.provider,
+                        embedding_model=active_identity.model,
+                        embedding_dimension=active_identity.dimension,
                         limit=overfetch,
                     )
                     for vector in vectors
@@ -550,6 +595,7 @@ class KnowledgeRetriever:
                 actor_employee_id=actor_employee_id,
                 actor_role=actor_role,
                 allowed_articles=allowed_count,
+                vector_excluded_versions=vector_excluded_versions,
                 vector_candidates=vector_candidates,
                 lexical_candidates=lexical_candidates,
                 hit_count=hit_count,
@@ -561,15 +607,15 @@ class KnowledgeRetriever:
                 definition_signals=definition_signals,
             )
 
-    async def _allowed_published_article_ids(
+    async def _allowed_published_articles(
         self,
         *,
         actor_company_id: UUID,
         actor_employee_id: UUID,
         actor_role: str,
-    ) -> list[UUID]:
-        """Visible published article ids from ArticleService — not chunk metadata."""
-        collected: list[UUID] = []
+    ) -> list[KnowledgeArticle]:
+        """Visible published articles from ArticleService — not chunk metadata."""
+        collected: list[KnowledgeArticle] = []
         offset = 0
         while True:
             page = await self._article_service.list_articles(
@@ -586,7 +632,7 @@ class KnowledgeRetriever:
                     continue
                 if article.current_version_id is None:
                     continue
-                collected.append(article.id)
+                collected.append(article)
             if len(page) < _ARTICLE_LIST_PAGE:
                 break
             offset += _ARTICLE_LIST_PAGE
@@ -821,12 +867,19 @@ class _StructuredEntity:
     entity_type: str
     canonical_name: str
     aliases: tuple[str, ...]
+    description: str = ""
+    block: str = ""
 
 
 @dataclass(frozen=True, slots=True)
 class _StructuredMatch:
     exact: bool
     entity_type: str
+    matched_label: str = ""
+    match_kind: str = ""
+    description: str = ""
+    block: str = ""
+    name_labels: tuple[str, ...] = ()
 
 
 def _is_entity_id(value: str) -> bool:
@@ -885,6 +938,8 @@ def _iter_structured_entities(body: str) -> tuple[_StructuredEntity, ...]:
                 entity_type=fields.get("entity_type", "").strip().upper(),
                 canonical_name=canonical,
                 aliases=aliases,
+                description=fields.get("description", "").strip(),
+                block=block,
             )
         )
     return tuple(records)
@@ -915,14 +970,22 @@ def _best_structured_entity_match(
     best_key: tuple[int, int, int] = (-1, -1, -1)
     for record in _iter_structured_entities(body):
         kinds: list[str] = []
+        matched_label = ""
+        match_kind = ""
         if record.canonical_name:
             kind = _label_match_kind(record.canonical_name, needles)
             if kind is not None:
                 kinds.append(kind)
+                matched_label = record.canonical_name
+                match_kind = kind
         for alias in record.aliases:
             kind = _label_match_kind(alias, needles)
-            if kind is not None:
-                kinds.append(kind)
+            if kind is None:
+                continue
+            kinds.append(kind)
+            if kind == "exact" or match_kind != "exact":
+                matched_label = alias
+                match_kind = kind
         if not kinds:
             continue
         # Token-in-alias (Евгений ⊂ Тей Евгений Г.) is an exact structured
@@ -935,8 +998,74 @@ def _best_structured_entity_match(
         )
         if key > best_key:
             best_key = key
-            best = _StructuredMatch(exact=exact, entity_type=record.entity_type)
+            best = _StructuredMatch(
+                exact=exact,
+                entity_type=record.entity_type,
+                matched_label=matched_label,
+                match_kind=match_kind,
+                description=record.description,
+                block=record.block,
+                name_labels=tuple(
+                    label
+                    for label in (record.canonical_name, *record.aliases)
+                    if label
+                ),
+            )
     return best
+
+
+_EMPTY_ENTITY_DESC = frozenset({"", "—", "-", "–", "null", "none", "n/a"})
+
+
+def _entity_has_grounded_facts(description: str, labels: tuple[str, ...]) -> bool:
+    """True when description adds facts beyond the name/alias tokens."""
+    desc = description.strip().strip("`").strip()
+    if not desc or desc.casefold() in _EMPTY_ENTITY_DESC:
+        return False
+    name_tokens: set[str] = set()
+    for label in labels:
+        name_tokens.update(
+            token for token in _entity_label_tokens(label) if len(token) > 1
+        )
+    extra = {
+        token
+        for token in _entity_label_tokens(desc)
+        if len(token) > 1 and token not in name_tokens
+    }
+    return bool(extra)
+
+
+def _grounded_entity_excerpt(
+    query: str, content: str, title: str
+) -> tuple[str, str] | None:
+    """Matching ENTITY block with facts, plus a short identity note.
+
+    Retrieval eligibility is unchanged. A name/alias match without a
+    factual description returns None so the LLM is not pushed to answer.
+    ENTITY IDs and article titles never establish identity. Process
+    questions (no lookup term) skip this path.
+    """
+    term = _definition_lookup_term(query)
+    if not term or _is_entity_id(term):
+        return None
+    body = _content_without_title_prefix(content, title)
+    needles = _entity_needles(_normalize_dashes(term.strip()))
+    match = _best_structured_entity_match(body, needles)
+    if match is None or not match.block.strip():
+        return None
+    labels = match.name_labels or tuple(
+        label for label in (match.matched_label,) if label
+    )
+    if not _entity_has_grounded_facts(match.description, labels):
+        return None
+    kind = match.match_kind or "name"
+    note = (
+        f"The asked term matches a structured {match.entity_type or 'ENTITY'} "
+        f"record via {kind} name/alias {match.matched_label!r}. "
+        "Answer from that record's description. "
+        "ENTITY IDs and article titles are not names."
+    )
+    return match.block.strip(), note
 
 
 def _has_aliases_decl(content_fold: str, needles: tuple[str, ...]) -> bool:
@@ -1203,6 +1332,7 @@ def _log_retrieve(
     actor_employee_id: UUID,
     actor_role: str,
     allowed_articles: int,
+    vector_excluded_versions: int,
     vector_candidates: int,
     lexical_candidates: int,
     hit_count: int,
@@ -1216,7 +1346,8 @@ def _log_retrieve(
     """Operational retrieve log. Never include query, body, embeddings, or secrets."""
     logger.info(
         "kb_retrieve request_id=%s company_id=%s employee_id=%s actor_role=%s "
-        "allowed_articles=%s vector_candidates=%s lexical_candidates=%s "
+        "allowed_articles=%s vector_excluded_versions=%s "
+        "vector_candidates=%s lexical_candidates=%s "
         "hit_count=%s top_k=%s result=%s duration_ms=%.1f "
         "definition_candidate=%s definition_score=%s definition_signals=%s",
         request_id_log_value(),
@@ -1224,6 +1355,7 @@ def _log_retrieve(
         actor_employee_id,
         actor_role,
         allowed_articles,
+        vector_excluded_versions,
         vector_candidates,
         lexical_candidates,
         hit_count,
@@ -1233,6 +1365,34 @@ def _log_retrieve(
         str(definition_candidate).lower(),
         f"{definition_score:.2f}" if definition_score is not None else "",
         definition_signals,
+    )
+
+
+def _log_embedding_incompatibility(
+    *,
+    company_id: UUID,
+    version_id: UUID,
+    active: EmbeddingIdentity,
+    indexed_provider: str | None,
+    indexed_model: str | None,
+    indexed_dimension: int | None,
+    result: str,
+) -> None:
+    """Log non-secret embedding metadata; never vectors, text, or credentials."""
+    logger.info(
+        "kb_embedding_compatibility request_id=%s company_id=%s version_id=%s "
+        "active_provider=%s active_model=%s active_dimension=%s "
+        "indexed_provider=%s indexed_model=%s indexed_dimension=%s result=%s",
+        request_id_log_value(),
+        company_id,
+        version_id,
+        active.provider,
+        active.model,
+        active.dimension,
+        indexed_provider or "",
+        indexed_model or "",
+        indexed_dimension if indexed_dimension is not None else "",
+        result,
     )
 
 

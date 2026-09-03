@@ -24,15 +24,30 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
-from uuid import UUID
+from datetime import UTC, datetime
+from typing import Any, Literal
+from uuid import UUID, uuid4
 
 from app.core.ai_constants import KB_CHUNK_VECTOR_DIMENSION, MAX_CHUNK_CHARS_SAFE
-from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
-from app.db.enums import EmployeeRole, KnowledgeArticleStatus, KnowledgeLinkTargetType, PlatformRole
+from app.core.exceptions import (
+    ConflictError,
+    ForbiddenError,
+    NotFoundError,
+    ServiceUnavailableError,
+    ValidationError,
+)
+from app.core.metrics import KB_INDEX_RUNS
+from app.db.enums import (
+    EmployeeRole,
+    KnowledgeArticleStatus,
+    KnowledgeIndexStatus,
+    KnowledgeLinkTargetType,
+    PlatformRole,
+)
 from app.db.models.knowledge_article_chunk import KnowledgeArticleChunk
 from app.db.uow import UnitOfWork
 from app.services.ai.chunking import chunk_article
+from app.services.ai.embedding_identity import embedding_identity_from_provider
 from app.services.ai.embeddings import EmbeddingProvider, get_embedding_provider
 from app.services.tenancy import ensure_same_company
 
@@ -47,6 +62,7 @@ _ARTICLE_LIST_PAGE = 1000
 # (~100-160 chunks for 140k-200k char articles) to keep individual API calls
 # fast and avoid timeout risk.
 _EMBED_BATCH_SIZE = 100
+_INDEX_LEASE_SECONDS = 300
 _KB_MANAGEMENT_ROLES = frozenset(
     {
         EmployeeRole.ADMIN.value,
@@ -56,11 +72,32 @@ _KB_MANAGEMENT_ROLES = frozenset(
 
 
 @dataclass(frozen=True, slots=True)
-class CorpusReindexResult:
-    """Counts for a tenant published-corpus rebuild. Not an ACL grant."""
+class CorpusReindexItemResult:
+    article_id: UUID
+    version_id: UUID
+    status: Literal["indexed", "failed"]
+    indexed_chunks: int = 0
+    failure_category: str | None = None
 
-    indexed_articles: int
+
+@dataclass(frozen=True, slots=True)
+class CorpusReindexResult:
+    """Structured per-version corpus result. Not an ACL grant."""
+
+    attempted_articles: int
+    succeeded_articles: int
+    failed_articles: int
     indexed_chunks: int
+    items: tuple[CorpusReindexItemResult, ...]
+
+    @property
+    def indexed_articles(self) -> int:
+        """Compatibility alias for callers that used the old success count."""
+        return self.succeeded_articles
+
+    @property
+    def complete(self) -> bool:
+        return self.failed_articles == 0
 
 
 class KnowledgeChunkIndexer:
@@ -101,6 +138,7 @@ class KnowledgeChunkIndexer:
                 company_id=company_id,
             )
         except (NotFoundError, ValidationError):
+            KB_INDEX_RUNS.labels(result="rejected", error_category="validation").inc()
             logger.info(
                 "kb_index_rejected company_id=%s article_id=%s version_id=%s "
                 "result=rejected duration_ms=%.1f",
@@ -110,7 +148,11 @@ class KnowledgeChunkIndexer:
                 (time.perf_counter() - started) * 1000,
             )
             raise
-        except Exception:
+        except Exception as exc:
+            KB_INDEX_RUNS.labels(
+                result="error",
+                error_category=_failure_category(exc),
+            ).inc()
             logger.exception(
                 "kb_index_failed company_id=%s article_id=%s version_id=%s "
                 "result=error duration_ms=%.1f",
@@ -121,6 +163,7 @@ class KnowledgeChunkIndexer:
             )
             raise
 
+        KB_INDEX_RUNS.labels(result="success", error_category="none").inc()
         logger.info(
             "kb_index_ok company_id=%s article_id=%s version_id=%s "
             "chunk_count=%s result=success duration_ms=%.1f",
@@ -140,6 +183,83 @@ class KnowledgeChunkIndexer:
         version_id: UUID,
         company_id: UUID | None,
     ) -> list[KnowledgeArticleChunk]:
+        owner_token = uuid4()
+        had_active_index = False
+        claimed = False
+        try:
+            had_active_index = await self._claim_indexing(
+                actor_company_id=actor_company_id,
+                article_id=article_id,
+                version_id=version_id,
+                company_id=company_id,
+                owner_token=owner_token,
+            )
+            claimed = True
+            texts, metadata = await self._prepare_chunks(
+                actor_company_id=actor_company_id,
+                article_id=article_id,
+                version_id=version_id,
+            )
+            provider = self._provider()
+            if provider.dimension != KB_CHUNK_VECTOR_DIMENSION:
+                raise ValidationError(
+                    "embedding dimension mismatch: provider="
+                    f"{provider.dimension}, column={KB_CHUNK_VECTOR_DIMENSION}"
+                )
+            embeddings = await self._embed_all(
+                provider=provider,
+                texts=texts,
+                actor_company_id=actor_company_id,
+                article_id=article_id,
+                version_id=version_id,
+                owner_token=owner_token,
+            )
+            identity = embedding_identity_from_provider(provider)
+            return await self._finalize_index(
+                actor_company_id=actor_company_id,
+                article_id=article_id,
+                version_id=version_id,
+                owner_token=owner_token,
+                texts=texts,
+                embeddings=embeddings,
+                metadata={
+                    **metadata,
+                    "embedding_provider": identity.provider,
+                    "embedding_model": identity.model,
+                },
+                embedding_provider=identity.provider,
+                embedding_model=identity.model,
+                embedding_dimension=identity.dimension,
+            )
+        except Exception as exc:
+            if claimed:
+                try:
+                    await self._record_failure(
+                        actor_company_id=actor_company_id,
+                        version_id=version_id,
+                        owner_token=owner_token,
+                        had_active_index=had_active_index,
+                        failure_category=_failure_category(exc),
+                    )
+                except Exception:
+                    logger.exception(
+                        "kb_index_failure_state_write_failed company_id=%s "
+                        "article_id=%s version_id=%s",
+                        actor_company_id,
+                        article_id,
+                        version_id,
+                    )
+            raise
+
+    async def _claim_indexing(
+        self,
+        *,
+        actor_company_id: UUID,
+        article_id: UUID,
+        version_id: UUID,
+        company_id: UUID | None,
+        owner_token: UUID,
+    ) -> bool:
         not_found = f"Knowledge article {article_id} not found"
         if company_id is not None:
             ensure_same_company(
@@ -147,16 +267,7 @@ class KnowledgeChunkIndexer:
                 actor_company_id=actor_company_id,
                 not_found_message=not_found,
             )
-
-        provider = self._provider()
-        if provider.dimension != KB_CHUNK_VECTOR_DIMENSION:
-            raise ValidationError(
-                "embedding dimension mismatch: provider="
-                f"{provider.dimension}, column={KB_CHUNK_VECTOR_DIMENSION}"
-            )
-
         async with self._uow_factory() as uow:
-            # Authenticated tenant only — never a caller-supplied company_id.
             await uow.enter_tenant(actor_company_id)
             article = await uow.knowledge_articles.get_by_id_with_relations(article_id)
             if article is None:
@@ -169,8 +280,7 @@ class KnowledgeChunkIndexer:
 
             if article.status != KnowledgeArticleStatus.PUBLISHED.value:
                 raise ValidationError(
-                    "Only a published article can be indexed "
-                    f"(status={article.status!r})"
+                    f"Only a published article can be indexed (status={article.status!r})"
                 )
             if article.current_version_id is None:
                 raise ValidationError(
@@ -192,6 +302,36 @@ class KnowledgeChunkIndexer:
             if version.article_id != article_id:
                 raise NotFoundError(f"Knowledge article version {version_id} not found")
 
+            claimed = await uow.knowledge_article_versions.claim_indexing(
+                version_id,
+                owner_token=owner_token,
+                lease_seconds=_INDEX_LEASE_SECONDS,
+            )
+            if claimed is None:
+                raise ConflictError(f"Knowledge article version {version_id} is already indexing")
+            had_active_index = claimed.index_status == KnowledgeIndexStatus.INDEXED.value
+            await uow.commit()
+            return had_active_index
+
+    async def _prepare_chunks(
+        self,
+        *,
+        actor_company_id: UUID,
+        article_id: UUID,
+        version_id: UUID,
+    ) -> tuple[list[str], dict[str, Any]]:
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(actor_company_id)
+            article = await uow.knowledge_articles.get_by_id_with_relations(article_id)
+            if (
+                article is None
+                or article.status != KnowledgeArticleStatus.PUBLISHED.value
+                or article.current_version_id != version_id
+            ):
+                raise ValidationError("Article is no longer published at this version")
+            version = await uow.knowledge_article_versions.get_by_id(version_id)
+            if version is None or version.article_id != article_id:
+                raise NotFoundError(f"Knowledge article version {version_id} not found")
             body_char_count = len(version.body or "")
             texts = chunk_article(
                 title=version.title,
@@ -220,43 +360,97 @@ class KnowledgeChunkIndexer:
                         f"{len(chunk_text)} chars (max {MAX_CHUNK_CHARS_SAFE}). "
                         f"article_id={article_id} version_id={version_id}"
                     )
+            return texts, _chunk_metadata(article)
 
-            # Embed before mutating rows so a provider failure cannot leave
-            # a deleted-but-unreplaced chunk set (this UoW would roll back
-            # anyway; ordering keeps the failure window obvious).
-            # Use sub-batches so very large articles (100+ chunks) do not
-            # exceed practical per-request API limits.
-            embeddings: list[list[float]] = []
-            batch_count = 0
-            for batch_start in range(0, len(texts), _EMBED_BATCH_SIZE):
-                batch = texts[batch_start : batch_start + _EMBED_BATCH_SIZE]
-                batch_vectors = await provider.embed_batch(batch)
-                embeddings.extend(batch_vectors)
-                batch_count += 1
-            logger.info(
-                "kb_index_embedded company_id=%s article_id=%s version_id=%s "
-                "chunk_count=%d embed_batches=%d",
-                actor_company_id,
-                article_id,
+    async def _embed_all(
+        self,
+        *,
+        provider: EmbeddingProvider,
+        texts: list[str],
+        actor_company_id: UUID,
+        article_id: UUID,
+        version_id: UUID,
+        owner_token: UUID,
+    ) -> list[list[float]]:
+        embeddings: list[list[float]] = []
+        batch_count = 0
+        for batch_start in range(0, len(texts), _EMBED_BATCH_SIZE):
+            batch = texts[batch_start : batch_start + _EMBED_BATCH_SIZE]
+            embeddings.extend(await provider.embed_batch(batch))
+            await self._renew_lease(
+                actor_company_id=actor_company_id,
+                version_id=version_id,
+                owner_token=owner_token,
+            )
+            batch_count += 1
+        logger.info(
+            "kb_index_embedded company_id=%s article_id=%s version_id=%s "
+            "chunk_count=%d embed_batches=%d",
+            actor_company_id,
+            article_id,
+            version_id,
+            len(texts),
+            batch_count,
+        )
+        if len(embeddings) != len(texts):
+            raise ValidationError("embedding batch size does not match chunks")
+        for vector in embeddings:
+            if len(vector) != KB_CHUNK_VECTOR_DIMENSION:
+                raise ValidationError(
+                    "embedding dimension mismatch: expected "
+                    f"{KB_CHUNK_VECTOR_DIMENSION}, got {len(vector)}"
+                )
+        return embeddings
+
+    async def _renew_lease(
+        self,
+        *,
+        actor_company_id: UUID,
+        version_id: UUID,
+        owner_token: UUID,
+    ) -> None:
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(actor_company_id)
+            renewed = await uow.knowledge_article_versions.renew_indexing_lease(
                 version_id,
-                len(texts),
-                batch_count,
+                owner_token=owner_token,
+                lease_seconds=_INDEX_LEASE_SECONDS,
             )
-            if len(embeddings) != len(texts):
-                raise ValidationError("embedding batch size does not match chunks")
-            for vector in embeddings:
-                if len(vector) != KB_CHUNK_VECTOR_DIMENSION:
-                    raise ValidationError(
-                        "embedding dimension mismatch: expected "
-                        f"{KB_CHUNK_VECTOR_DIMENSION}, got {len(vector)}"
-                    )
+            if not renewed:
+                raise ConflictError("Indexing lease expired or changed owner")
+            await uow.commit()
 
-            metadata = _chunk_metadata(
-                article,
-                embedding_model=getattr(provider, "model", "unknown"),
+    async def _finalize_index(
+        self,
+        *,
+        actor_company_id: UUID,
+        article_id: UUID,
+        version_id: UUID,
+        owner_token: UUID,
+        texts: list[str],
+        embeddings: list[list[float]],
+        metadata: dict[str, Any],
+        embedding_provider: str,
+        embedding_model: str,
+        embedding_dimension: int,
+    ) -> list[KnowledgeArticleChunk]:
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(actor_company_id)
+            article = await uow.knowledge_articles.get_by_id(article_id)
+            if (
+                article is None
+                or article.status != KnowledgeArticleStatus.PUBLISHED.value
+                or article.current_version_id != version_id
+            ):
+                raise ValidationError("Article is no longer published at this version")
+            version = await uow.knowledge_article_versions.get_claim_for_update(
+                version_id,
+                owner_token=owner_token,
             )
+            if version is None:
+                raise ConflictError("Indexing lease expired or changed owner")
+
             await uow.knowledge_article_chunks.delete_by_version_id(version_id)
-
             stored: list[KnowledgeArticleChunk] = []
             for index, (content, embedding) in enumerate(zip(texts, embeddings, strict=True)):
                 row = KnowledgeArticleChunk(
@@ -270,8 +464,50 @@ class KnowledgeChunkIndexer:
                 )
                 stored.append(await uow.knowledge_article_chunks.create(row))
 
+            await uow.session.flush()
+            persisted = await uow.knowledge_article_chunks.list_by_version_id(version_id)
+            if len(persisted) != len(texts) or [row.chunk_index for row in persisted] != list(
+                range(len(texts))
+            ):
+                raise ValidationError("persisted chunk set is incomplete")
+            now = datetime.now(UTC)
+            version.index_status = KnowledgeIndexStatus.INDEXED.value
+            version.embedding_provider = embedding_provider
+            version.embedding_model = embedding_model
+            version.embedding_dimension = embedding_dimension
+            version.indexed_chunk_count = len(stored)
+            version.indexed_at = now
+            version.indexing_failed_at = None
+            version.failure_category = None
+            version.indexing_owner_token = None
+            version.indexing_lease_expires_at = None
             await uow.commit()
             return stored
+
+    async def _record_failure(
+        self,
+        *,
+        actor_company_id: UUID,
+        version_id: UUID,
+        owner_token: UUID,
+        had_active_index: bool,
+        failure_category: str,
+    ) -> None:
+        async with self._uow_factory() as uow:
+            await uow.enter_tenant(actor_company_id)
+            version = await uow.knowledge_article_versions.get_by_id_for_update(version_id)
+            if version is None or version.indexing_owner_token != owner_token:
+                return
+            version.index_status = (
+                KnowledgeIndexStatus.INDEXED.value
+                if had_active_index
+                else KnowledgeIndexStatus.FAILED.value
+            )
+            version.indexing_failed_at = datetime.now(UTC)
+            version.failure_category = failure_category
+            version.indexing_owner_token = None
+            version.indexing_lease_expires_at = None
+            await uow.commit()
 
     async def reindex_published_corpus(
         self,
@@ -289,15 +525,12 @@ class KnowledgeChunkIndexer:
         started = time.perf_counter()
         article_ids: list[tuple[UUID, UUID]] = []
         chunk_count = 0
+        items: list[CorpusReindexItemResult] = []
         try:
             if actor_role == PlatformRole.SUPER_ADMIN.value:
-                raise ForbiddenError(
-                    "Super Admin has no AI access without tenant impersonation"
-                )
+                raise ForbiddenError("Super Admin has no AI access without tenant impersonation")
             if actor_role not in _KB_MANAGEMENT_ROLES:
-                raise ForbiddenError(
-                    "HR or Admin role required to reindex the knowledge corpus"
-                )
+                raise ForbiddenError("HR or Admin role required to reindex the knowledge corpus")
             if claimed_company_id is not None:
                 ensure_same_company(
                     resource_company_id=claimed_company_id,
@@ -330,17 +563,35 @@ class KnowledgeChunkIndexer:
                 offset += _ARTICLE_LIST_PAGE
 
             for article_id, version_id in article_ids:
-                stored = await self.index_published_version(
-                    actor_company_id=actor_company_id,
-                    article_id=article_id,
-                    version_id=version_id,
-                    company_id=actor_company_id,
-                )
+                try:
+                    stored = await self.index_published_version(
+                        actor_company_id=actor_company_id,
+                        article_id=article_id,
+                        version_id=version_id,
+                        company_id=actor_company_id,
+                    )
+                except Exception as exc:
+                    items.append(
+                        CorpusReindexItemResult(
+                            article_id=article_id,
+                            version_id=version_id,
+                            status="failed",
+                            failure_category=_failure_category(exc),
+                        )
+                    )
+                    continue
                 chunk_count += len(stored)
+                items.append(
+                    CorpusReindexItemResult(
+                        article_id=article_id,
+                        version_id=version_id,
+                        status="indexed",
+                        indexed_chunks=len(stored),
+                    )
+                )
         except (ForbiddenError, NotFoundError, ValidationError):
             logger.info(
-                "kb_index_corpus company_id=%s actor_role=%s "
-                "result=rejected duration_ms=%.1f",
+                "kb_index_corpus company_id=%s actor_role=%s result=rejected duration_ms=%.1f",
                 actor_company_id,
                 actor_role,
                 (time.perf_counter() - started) * 1000,
@@ -348,8 +599,7 @@ class KnowledgeChunkIndexer:
             raise
         except Exception:
             logger.exception(
-                "kb_index_corpus company_id=%s actor_role=%s "
-                "result=error duration_ms=%.1f",
+                "kb_index_corpus company_id=%s actor_role=%s result=error duration_ms=%.1f",
                 actor_company_id,
                 actor_role,
                 (time.perf_counter() - started) * 1000,
@@ -357,22 +607,28 @@ class KnowledgeChunkIndexer:
             raise
 
         result = CorpusReindexResult(
-            indexed_articles=len(article_ids),
+            attempted_articles=len(article_ids),
+            succeeded_articles=sum(item.status == "indexed" for item in items),
+            failed_articles=sum(item.status == "failed" for item in items),
             indexed_chunks=chunk_count,
+            items=tuple(items),
         )
         logger.info(
-            "kb_index_corpus company_id=%s actor_role=%s article_count=%s "
-            "chunk_count=%s result=success duration_ms=%.1f",
+            "kb_index_corpus company_id=%s actor_role=%s attempted=%s succeeded=%s "
+            "failed=%s chunk_count=%s result=%s duration_ms=%.1f",
             actor_company_id,
             actor_role,
-            result.indexed_articles,
+            result.attempted_articles,
+            result.succeeded_articles,
+            result.failed_articles,
             result.indexed_chunks,
+            "success" if result.complete else "partial",
             (time.perf_counter() - started) * 1000,
         )
         return result
 
 
-def _chunk_metadata(article: Any, *, embedding_model: str) -> dict[str, Any]:
+def _chunk_metadata(article: Any) -> dict[str, Any]:
     """Denormalized retrieval hints. Not an ACL source of truth."""
     program_ids = sorted(
         {
@@ -387,5 +643,19 @@ def _chunk_metadata(article: Any, *, embedding_model: str) -> dict[str, Any]:
         "program_ids": program_ids,
         "title": article.current_version.title if article.current_version else None,
         "is_current": True,
-        "embedding_model": embedding_model,
     }
+
+
+def _failure_category(exc: Exception) -> str:
+    """Return a bounded, non-sensitive operational category."""
+    if isinstance(exc, ServiceUnavailableError):
+        return "provider_unavailable"
+    if isinstance(exc, ConflictError):
+        return "concurrent_attempt"
+    if isinstance(exc, NotFoundError):
+        return "not_found"
+    if isinstance(exc, ValidationError):
+        return "validation"
+    if "database" in type(exc).__module__.lower() or "sqlalchemy" in type(exc).__module__.lower():
+        return "database"
+    return "internal"

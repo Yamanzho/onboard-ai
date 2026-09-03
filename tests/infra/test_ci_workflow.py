@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+BACKUP_WORKFLOW = ROOT / ".github" / "workflows" / "backup-restore-smoke.yml"
 
 
 def test_github_actions_ci_workflow_exists() -> None:
@@ -27,6 +28,7 @@ def test_github_actions_ci_workflow_exists() -> None:
         "SECRET_KEY",
         "bootstrap_rls_roles",
         "pgvector/pgvector",
+        "deploy_production.sh",
     ):
         assert needle in text, f"CI workflow missing {needle!r}"
     # Dummy CI secrets only — never require live production credentials.
@@ -47,3 +49,18 @@ def test_github_actions_ci_workflow_exists() -> None:
     assert "onboard_app:onboard@" not in text
     assert "onboard:onboard@" not in text
     assert "POSTGRES_PASSWORD: onboard" not in text
+
+
+def test_backup_restore_smoke_is_scheduled_manual_and_disposable() -> None:
+    assert BACKUP_WORKFLOW.is_file()
+    text = BACKUP_WORKFLOW.read_text(encoding="utf-8")
+    for needle in (
+        "workflow_dispatch",
+        "schedule",
+        "ONBOARDAI_BACKUP_RESTORE_SMOKE",
+        "test_postgres_backup_restore_integration.py",
+    ):
+        assert needle in text
+    assert "BACKUP_S3_SECRET_ACCESS_KEY" not in text
+    assert "secrets." not in text
+    assert "production" not in text.lower()

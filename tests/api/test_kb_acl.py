@@ -23,7 +23,7 @@ from app.db.models.knowledge_article_link import KnowledgeArticleLink
 from app.db.models.onboarding_program import OnboardingProgram
 from app.db.uow import UnitOfWork
 from app.services.knowledge.article_service import ArticleService
-from tests.conftest import auth_header, _uow_factory
+from tests.conftest import _uow_factory, auth_header
 
 
 async def _create_program(company_id) -> OnboardingProgram:
@@ -109,6 +109,13 @@ async def test_employee_can_read_published_company_visibility_article(
     body = response.json()
     assert body["status"] == KnowledgeArticleStatus.PUBLISHED.value
     assert body["current_version"]["body"] == "Welcome published body"
+    assert body["current_version"]["index_status"] == "indexed"
+    assert body["current_version"]["indexed_at"] is not None
+    assert body["current_version"]["failure_category"] is None
+    assert body["current_version"]["index_stale"] is False
+    assert body["current_version"]["embedding_compatible"] is True
+    assert body["current_version"]["reindex_required"] is False
+    assert body["current_version"]["embedding_incompatibility_reason"] is None
     assert "Welcome published body" in response.text
 
 

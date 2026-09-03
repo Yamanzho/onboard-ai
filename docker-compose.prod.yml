@@ -48,6 +48,22 @@
 # Do not set AUTH_COOKIE_SECURE=false — production cookies must be Secure under HTTPS.
 
 services:
+  migrate:
+    environment:
+      APP_ENV: development
+      DEBUG: "false"
+      ONBOARD_OWNER_PASSWORD: ${ONBOARD_OWNER_PASSWORD:?ONBOARD_OWNER_PASSWORD is required for docker-compose.prod.yml}
+      ONBOARD_APP_PASSWORD: ${ONBOARD_APP_PASSWORD:?ONBOARD_APP_PASSWORD is required for docker-compose.prod.yml}
+      DATABASE_URL: postgresql+asyncpg://onboard_app:${ONBOARD_APP_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+      MIGRATION_DATABASE_URL: postgresql+asyncpg://onboard_owner:${ONBOARD_OWNER_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+      BOOTSTRAP_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-onboard}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-onboard_ai}
+      POSTGRES_USER: ${POSTGRES_USER:-onboard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required for docker-compose.prod.yml}
+      POSTGRES_DB: ${POSTGRES_DB:-onboard_ai}
+      POSTGRES_HOST: db
+    volumes: !reset []
+    restart: "no"
+
   frontend:
     build:
       context: ./frontend
@@ -94,6 +110,8 @@ services:
       # Compose network host; password from REDIS_PASSWORD (required below).
       REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
       UVICORN_WORKERS: ${UVICORN_WORKERS:-2}
+      ONBOARDAI_RUN_STARTUP_MIGRATIONS: "0"
+      SHUTDOWN_GRACE_SECONDS: ${SHUTDOWN_GRACE_SECONDS:-45}
     ports: !reset []
     # Immutable image: application code is COPY'd in Dockerfile (not host .:/app).
     volumes: !reset []

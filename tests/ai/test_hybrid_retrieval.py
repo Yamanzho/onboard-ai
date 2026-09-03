@@ -40,7 +40,6 @@ from app.core.ai_constants import (
 from app.db.enums import EmployeeRole
 from app.db.models.company import Company
 from app.db.models.employee import Employee
-from app.db.uow import UnitOfWork
 from app.services.ai.chat import NO_ANSWER_MESSAGE, _expand_query_with_history
 from app.services.ai.embeddings import FakeEmbeddingProvider
 from app.services.ai.history import HistoryTurn
@@ -50,8 +49,10 @@ from app.services.ai.retriever import (
     _build_tsquery,
     _content_without_title_prefix,
     _definition_lookup_term,
+    _entity_has_grounded_facts,
     _entity_needles,
     _folded_entity_embed_text,
+    _grounded_entity_excerpt,
     _iter_structured_entities,
     _score_definition_candidate,
     _script_variant_token,
@@ -1775,6 +1776,14 @@ class _RecordingEmbeddings:
     def dimension(self) -> int:
         return self._inner.dimension
 
+    @property
+    def model(self) -> str:
+        return self._inner.model
+
+    @property
+    def provider_name(self) -> str:
+        return self._inner.provider_name
+
     async def embed(self, text: str) -> list[float]:
         return (await self.embed_batch((text,)))[0]
 
@@ -2771,3 +2780,199 @@ async def test_llm_smoke_lexical_person_answers_incidental_stays_no_answer() -> 
         user_prompt=build_user_prompt("Евгений", []),
     )
     assert parse_llm_text(empty.text).no_answer is True
+
+
+# ===========================================================================
+# Entity-aware grounding (identity ≠ retrieval eligibility)
+# ===========================================================================
+
+_PROD_PERSON_ROLES = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "Анара А.\n"
+    "- `aliases:` —\n"
+    "- `description:` Руководитель команды аккаунтов «Белые».\n"
+    "\n"
+    "### ENTITY SAELOG-PERSON-0011\n"
+    "- `entity_type:` PERSON\n"
+    "- `canonical_name:` Прочие поименованные лица\n"
+    "- `aliases:` Тей Евгений Г.; Темір Ельнур Н.; Гылымбек Алгыс; "
+    "Чен Тао; Джумадуллаева Н. И.; Омарова Г. М.; Рамиль\n"
+    "- `description:` Тей Евгений Г. — руководитель направления / Sailuo "
+    "Khorgos; Темір Ельнур Н. — офис КПП Нур-Жолы; Гылымбек Алгыс — склад "
+    "Хоргос; Чен Тао — Haishen; Джумадуллаева Н. И. — главный бухгалтер; "
+    "Омарова Г. М. — специалист по сертификации; Рамиль — IT.\n"
+)
+
+_NAME_ONLY_PERSON = (
+    f"{_SAELOG_TITLE_PREFIX}"
+    "### ENTITY SAELOG-PERSON-0099\n"
+    "- `entity_type:` PERSON\n"
+    "- `canonical_name:` Список имён\n"
+    "- `aliases:` Тей Евгений Г.\n"
+    "- `description:` —\n"
+)
+
+
+def test_who_is_evgeny_is_a_definition_lookup() -> None:
+    for query in ("Евгений", "Что такое Евгений?", "Кто такой Евгений?"):
+        assert _definition_lookup_term(query) == "Евгений"
+
+
+def test_person_role_description_is_grounded_and_excerpted() -> None:
+    excerpt = _grounded_entity_excerpt(
+        "Евгений", _PROD_PERSON_ROLES, _SAELOG_ARTICLE_TITLE
+    )
+    assert excerpt is not None
+    block, note = excerpt
+    assert "Тей Евгений Г." in block
+    assert "руководитель направления" in block
+    assert "Анара А." not in block
+    assert "SAELOG-PERSON-0011" in block
+    assert "PERSON" in note
+    assert "Тей Евгений Г." in note
+    for query in ("Что такое Евгений?", "Кто такой Евгений?"):
+        again = _grounded_entity_excerpt(query, _PROD_PERSON_ROLES, _SAELOG_ARTICLE_TITLE)
+        assert again is not None
+        assert "руководитель направления" in again[0]
+
+
+def test_name_only_alias_is_not_grounded_identity() -> None:
+    body = _content_without_title_prefix(_NAME_ONLY_PERSON, _SAELOG_ARTICLE_TITLE)
+    match = _best_structured_entity_match(body, _entity_needles("Евгений"))
+    assert match is not None
+    assert _entity_has_grounded_facts(match.description, match.name_labels) is False
+    assert (
+        _grounded_entity_excerpt("Евгений", _NAME_ONLY_PERSON, _SAELOG_ARTICLE_TITLE)
+        is None
+    )
+
+
+def test_entity_id_and_heading_are_not_grounded_identity() -> None:
+    assert (
+        _grounded_entity_excerpt(
+            "SAELOG-PERSON-0011", _PROD_PERSON_ROLES, _SAELOG_ARTICLE_TITLE
+        )
+        is None
+    )
+    heading_only = f"{_SAELOG_TITLE_PREFIX}# SAELOG — КАНОНИЧЕСКИЙ КОРПУС\n"
+    assert _grounded_entity_excerpt("Саелог", heading_only, _SAELOG_ARTICLE_TITLE) is None
+    assert _grounded_entity_excerpt("SAELOG", _PROD_CRM, _SAELOG_ARTICLE_TITLE) is None
+
+
+def test_org_and_crm_excerpts_keep_structured_identity() -> None:
+    org = _grounded_entity_excerpt("Саелог", _PROD_ORG, _SAELOG_ARTICLE_TITLE)
+    assert org is not None
+    assert "ТОО" in org[0] and "SAELOG" in org[0]
+    assert "ORGANIZATION" in org[1]
+    crm = _grounded_entity_excerpt("4logist", _PROD_CRM, _SAELOG_ARTICLE_TITLE)
+    assert crm is not None
+    assert "4logist" in crm[0]
+    current = _grounded_entity_excerpt("текущая CRM", _PROD_CRM, _SAELOG_ARTICLE_TITLE)
+    assert current is not None
+
+
+@pytest.mark.parametrize("query", ("Kaspi", "XYZ123", "Saelgo", "CMR", "Евг", "Евгений123"))
+def test_unknown_or_fuzzy_terms_have_no_grounded_excerpt(query: str) -> None:
+    for content in (_PROD_PERSON_ROLES, _PROD_ORG, _PROD_CRM):
+        assert _grounded_entity_excerpt(query, content, _SAELOG_ARTICLE_TITLE) is None
+
+
+def test_process_questions_have_no_entity_excerpt() -> None:
+    for query in (
+        "Что происходит с CRM после создания сделки?",
+        "Как оформить отпуск сотруднику?",
+        "Как создать сделку?",
+        "Какая CRM используется?",
+    ):
+        assert _definition_lookup_term(query) is None
+        assert _grounded_entity_excerpt(query, _PROD_CRM, _SAELOG_ARTICLE_TITLE) is None
+
+
+def test_context_builder_uses_entity_excerpt_not_leftover_neighbor() -> None:
+    from app.services.ai.context import KnowledgeContextBuilder
+    from app.services.ai.retriever import RetrievalHit
+
+    hit = RetrievalHit(
+        chunk_id=uuid4(),
+        article_id=uuid4(),
+        version_id=uuid4(),
+        chunk_index=36,
+        article_title=_SAELOG_ARTICLE_TITLE,
+        content=_PROD_PERSON_ROLES,
+        score=0.4,
+    )
+    with_query = KnowledgeContextBuilder().build([hit], query="Евгений")
+    assert with_query.grounded_entity_note
+    assert "Тей Евгений Г." in with_query.grounded_entity_note
+    assert "руководитель направления" in with_query.documents[0].content
+    assert "Анара А." not in with_query.documents[0].content
+    without = KnowledgeContextBuilder().build([hit])
+    assert without.grounded_entity_note == ""
+    assert "Анара А." in without.documents[0].content
+
+
+def test_context_builder_does_not_ground_name_only_or_process() -> None:
+    from app.services.ai.context import KnowledgeContextBuilder
+    from app.services.ai.retriever import RetrievalHit
+
+    hit = RetrievalHit(
+        chunk_id=uuid4(),
+        article_id=uuid4(),
+        version_id=uuid4(),
+        chunk_index=1,
+        article_title=_SAELOG_ARTICLE_TITLE,
+        content=_NAME_ONLY_PERSON,
+        score=0.4,
+    )
+    name_only = KnowledgeContextBuilder().build([hit], query="Евгений")
+    assert name_only.grounded_entity_note == ""
+    process = KnowledgeContextBuilder().build(
+        [hit], query="Что происходит с CRM после создания сделки?"
+    )
+    assert process.grounded_entity_note == ""
+
+
+async def test_llm_smoke_grounded_person_roles_and_name_only_no_identity() -> None:
+    from app.services.ai.context import KnowledgeContextBuilder
+    from app.services.ai.llm import FakeLLMProvider, parse_llm_text
+    from app.services.ai.prompts import RAG_SYSTEM_PROMPT, build_user_prompt
+    from app.services.ai.retriever import RetrievalHit
+
+    roles = RetrievalHit(
+        chunk_id=uuid4(),
+        article_id=uuid4(),
+        version_id=uuid4(),
+        chunk_index=36,
+        article_title=_SAELOG_ARTICLE_TITLE,
+        content=_PROD_PERSON_ROLES,
+        score=0.4,
+    )
+    bundle = KnowledgeContextBuilder().build([roles], query="Кто такой Евгений?")
+    assert bundle.grounded_entity_note
+    llm = FakeLLMProvider()
+    answered = await llm.generate(
+        system_prompt=RAG_SYSTEM_PROMPT,
+        user_prompt=build_user_prompt(
+            "Кто такой Евгений?",
+            bundle.documents,
+            grounded_entity_note=bundle.grounded_entity_note,
+        ),
+    )
+    assert parse_llm_text(answered.text).no_answer is False
+
+    name_only = RetrievalHit(
+        chunk_id=uuid4(),
+        article_id=uuid4(),
+        version_id=uuid4(),
+        chunk_index=1,
+        article_title=_SAELOG_ARTICLE_TITLE,
+        content=_NAME_ONLY_PERSON,
+        score=0.4,
+    )
+    empty_id = KnowledgeContextBuilder().build([name_only], query="Евгений")
+    assert empty_id.grounded_entity_note == ""
+    missing = await llm.generate(
+        system_prompt=RAG_SYSTEM_PROMPT,
+        user_prompt=build_user_prompt("Евгений", []),
+    )
+    assert parse_llm_text(missing.text).no_answer is True

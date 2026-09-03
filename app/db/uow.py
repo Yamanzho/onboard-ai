@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.db.models.employee import Employee
 from app.db.rls_guard import SESSION_RLS_MODE_KEY, install_rls_orm_guard
 from app.db.session import async_session_factory
 from app.repositories.ai_conversation import AIConversationRepository
@@ -18,6 +19,7 @@ from app.repositories.company_audit_log import CompanyAuditLogRepository
 from app.repositories.company_subscription import CompanySubscriptionRepository
 from app.repositories.employee import EmployeeRepository
 from app.repositories.employee_invite import EmployeeInviteRepository
+from app.repositories.idempotency_receipt import IdempotencyReceiptRepository
 from app.repositories.knowledge_article import KnowledgeArticleRepository
 from app.repositories.knowledge_article_chunk import KnowledgeArticleChunkRepository
 from app.repositories.knowledge_article_link import KnowledgeArticleLinkRepository
@@ -31,6 +33,7 @@ from app.repositories.refresh_session import RefreshSessionRepository
 from app.repositories.step import StepRepository
 from app.repositories.subscription_history import SubscriptionHistoryRepository
 from app.repositories.super_admin import SuperAdminRepository
+from app.repositories.telegram_outbound import TelegramOutboundRepository
 
 
 class RlsMode(str, Enum):
@@ -49,9 +52,10 @@ class UnitOfWork:
     Owns transaction boundaries (``commit`` / ``rollback``) and exposes one
     repository instance per aggregate root, all sharing the same session.
 
-    SEC-R3: every UoW must call ``enter_tenant`` / ``enter_platform`` /
-    ``enter_auth_bootstrap`` / ``enter_session_bootstrap`` before repository
-    queries. Context uses transaction-local ``set_config(..., true)`` only.
+    SEC-R3: every UoW must call ``enter_tenant`` / ``enter_employee`` /
+    ``enter_platform`` / ``enter_auth_bootstrap`` / ``enter_session_bootstrap``
+    before repository queries. Context uses transaction-local
+    ``set_config(..., true)`` only.
     """
 
     session: AsyncSession
@@ -74,6 +78,8 @@ class UnitOfWork:
     company_subscriptions: CompanySubscriptionRepository
     subscription_history: SubscriptionHistoryRepository
     employee_invites: EmployeeInviteRepository
+    idempotency_receipts: IdempotencyReceiptRepository
+    telegram_outbound: TelegramOutboundRepository
     platform_audit_logs: PlatformAuditLogRepository
     refresh_sessions: RefreshSessionRepository
 
@@ -85,6 +91,7 @@ class UnitOfWork:
         self._session: AsyncSession | None = None
         self._rls_mode: RlsMode = RlsMode.NONE
         self._tenant_company_id: UUID | None = None
+        self._tenant_employee_id: UUID | None = None
         self._auth_employee_id: UUID | None = None
         self._auth_telegram_user_id: int | None = None
         self._auth_invite_token_hash: str | None = None
@@ -114,10 +121,13 @@ class UnitOfWork:
         self.company_subscriptions = CompanySubscriptionRepository(self._session)
         self.subscription_history = SubscriptionHistoryRepository(self._session)
         self.employee_invites = EmployeeInviteRepository(self._session)
+        self.idempotency_receipts = IdempotencyReceiptRepository(self._session)
+        self.telegram_outbound = TelegramOutboundRepository(self._session)
         self.platform_audit_logs = PlatformAuditLogRepository(self._session)
         self.refresh_sessions = RefreshSessionRepository(self._session)
         self._rls_mode = RlsMode.NONE
         self._tenant_company_id = None
+        self._tenant_employee_id = None
         self._clear_auth_pins()
         self._session.info[SESSION_RLS_MODE_KEY] = RlsMode.NONE
         return self
@@ -140,6 +150,7 @@ class UnitOfWork:
             self._session = None
             self._rls_mode = RlsMode.NONE
             self._tenant_company_id = None
+            self._tenant_employee_id = None
             self._clear_auth_pins()
 
     @property
@@ -150,8 +161,9 @@ class UnitOfWork:
         """Fail closed in application code when the UoW mode is wrong/missing."""
         if self._rls_mode is RlsMode.NONE:
             raise RuntimeError(
-                "RLS context not established; call enter_tenant/enter_platform/"
-                "enter_auth_bootstrap/enter_session_bootstrap before DB access"
+                "RLS context not established; call enter_tenant/enter_employee/"
+                "enter_platform/enter_auth_bootstrap/enter_session_bootstrap "
+                "before DB access"
             )
         if allowed and self._rls_mode not in allowed:
             raise RuntimeError(
@@ -164,14 +176,38 @@ class UnitOfWork:
         if not isinstance(company_id, UUID):
             raise TypeError("company_id must be a UUID")
         self._tenant_company_id = company_id
+        self._tenant_employee_id = None
         self._clear_auth_pins()
         self._rls_mode = RlsMode.TENANT
         self._sync_session_rls_mode()
         await self._apply_rls_gucs()
 
+    async def enter_employee(self, employee_id: UUID) -> Employee:
+        """Resolve and bind one authenticated employee from PostgreSQL.
+
+        The caller supplies only the token subject. Auth-bootstrap RLS pins that
+        lookup to one employee row; the tenant company is then derived from the
+        row rather than from JWT claims or request data.
+        """
+        if not isinstance(employee_id, UUID):
+            raise TypeError("employee_id must be a UUID")
+        await self.enter_auth_bootstrap(employee_id=employee_id)
+        employee = await self.employees.get_by_id(employee_id)
+        if employee is None:
+            raise LookupError("Employee not found")
+
+        self._tenant_company_id = employee.company_id
+        self._tenant_employee_id = employee.id
+        self._clear_auth_pins()
+        self._rls_mode = RlsMode.TENANT
+        self._sync_session_rls_mode()
+        await self._apply_rls_gucs()
+        return employee
+
     async def enter_platform(self) -> None:
         """Enable Super Admin / platform cross-tenant access for this transaction."""
         self._tenant_company_id = None
+        self._tenant_employee_id = None
         self._clear_auth_pins()
         self._rls_mode = RlsMode.PLATFORM
         self._sync_session_rls_mode()
@@ -218,6 +254,7 @@ class UnitOfWork:
             super_admin_email = super_admin_email.strip().lower()
 
         self._tenant_company_id = None
+        self._tenant_employee_id = None
         self._auth_employee_id = employee_id
         self._auth_telegram_user_id = telegram_user_id
         self._auth_invite_token_hash = invite_token_hash
@@ -230,6 +267,7 @@ class UnitOfWork:
     async def enter_session_bootstrap(self) -> None:
         """Refresh-session issue/rotate/revoke only."""
         self._tenant_company_id = None
+        self._tenant_employee_id = None
         self._clear_auth_pins()
         self._rls_mode = RlsMode.SESSION_BOOTSTRAP
         self._sync_session_rls_mode()
@@ -275,6 +313,11 @@ class UnitOfWork:
             await session.begin()
 
         company = str(self._tenant_company_id) if self._tenant_company_id else ""
+        employee = (
+            str(self._tenant_employee_id)
+            if self._tenant_employee_id is not None
+            else ""
+        )
         platform = "on" if self._rls_mode is RlsMode.PLATFORM else ""
         auth = "bootstrap" if self._rls_mode is RlsMode.AUTH_BOOTSTRAP else ""
         session_mode = "bootstrap" if self._rls_mode is RlsMode.SESSION_BOOTSTRAP else ""
@@ -299,6 +342,10 @@ class UnitOfWork:
         await session.execute(
             text("SELECT set_config('app.current_company_id', :v, true)"),
             {"v": company},
+        )
+        await session.execute(
+            text("SELECT set_config('app.current_employee_id', :v, true)"),
+            {"v": employee},
         )
         await session.execute(
             text("SELECT set_config('app.platform_admin', :v, true)"),

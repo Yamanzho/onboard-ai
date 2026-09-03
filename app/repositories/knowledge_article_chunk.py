@@ -3,8 +3,9 @@ from uuid import UUID
 
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from app.db.enums import KnowledgeArticleStatus
+from app.db.enums import KnowledgeArticleStatus, KnowledgeIndexStatus
 from app.db.models.knowledge_article import KnowledgeArticle
 from app.db.models.knowledge_article_chunk import KnowledgeArticleChunk
 from app.db.models.knowledge_article_version import KnowledgeArticleVersion
@@ -42,9 +43,7 @@ class KnowledgeArticleChunkRepository(BaseRepository[KnowledgeArticleChunk]):
         """Replace-index helper. Does not touch chunks of other versions."""
         self._ensure_rls_context()
         result = await self._session.execute(
-            delete(KnowledgeArticleChunk).where(
-                KnowledgeArticleChunk.version_id == version_id
-            )
+            delete(KnowledgeArticleChunk).where(KnowledgeArticleChunk.version_id == version_id)
         )
         return int(result.rowcount or 0)
 
@@ -53,6 +52,9 @@ class KnowledgeArticleChunkRepository(BaseRepository[KnowledgeArticleChunk]):
         *,
         allowed_article_ids: Sequence[UUID],
         query_embedding: Sequence[float],
+        embedding_provider: str,
+        embedding_model: str,
+        embedding_dimension: int,
         limit: int,
     ) -> list[tuple[KnowledgeArticleChunk, float, str]]:
         """Exact cosine search inside an already-authorized article id set.
@@ -65,6 +67,13 @@ class KnowledgeArticleChunkRepository(BaseRepository[KnowledgeArticleChunk]):
         if not allowed_article_ids or limit < 1:
             return []
 
+        counted_chunk = aliased(KnowledgeArticleChunk)
+        complete_chunk_count = (
+            select(func.count(counted_chunk.id))
+            .where(counted_chunk.version_id == KnowledgeArticleVersion.id)
+            .correlate(KnowledgeArticleVersion)
+            .scalar_subquery()
+        )
         distance = KnowledgeArticleChunk.embedding.cosine_distance(list(query_embedding))
         stmt = (
             select(KnowledgeArticleChunk, distance, KnowledgeArticleVersion.title)
@@ -79,6 +88,11 @@ class KnowledgeArticleChunkRepository(BaseRepository[KnowledgeArticleChunk]):
             .where(KnowledgeArticleChunk.article_id.in_(tuple(allowed_article_ids)))
             .where(KnowledgeArticleChunk.version_id == KnowledgeArticle.current_version_id)
             .where(KnowledgeArticle.status == KnowledgeArticleStatus.PUBLISHED.value)
+            .where(KnowledgeArticleVersion.index_status == KnowledgeIndexStatus.INDEXED.value)
+            .where(KnowledgeArticleVersion.embedding_provider == embedding_provider)
+            .where(KnowledgeArticleVersion.embedding_model == embedding_model)
+            .where(KnowledgeArticleVersion.embedding_dimension == embedding_dimension)
+            .where(complete_chunk_count == KnowledgeArticleVersion.indexed_chunk_count)
             .order_by(
                 distance.asc(),
                 KnowledgeArticleChunk.article_id.asc(),
@@ -119,6 +133,13 @@ class KnowledgeArticleChunkRepository(BaseRepository[KnowledgeArticleChunk]):
         if not allowed_article_ids or limit < 1 or not tsquery_text:
             return []
 
+        counted_chunk = aliased(KnowledgeArticleChunk)
+        complete_chunk_count = (
+            select(func.count(counted_chunk.id))
+            .where(counted_chunk.version_id == KnowledgeArticleVersion.id)
+            .correlate(KnowledgeArticleVersion)
+            .scalar_subquery()
+        )
         tsv = func.to_tsvector(text("'simple'"), KnowledgeArticleChunk.content)
         tsq = func.to_tsquery(text("'simple'"), tsquery_text)
         # ts_rank_cd normalisation flag 32 → rank / (rank + 1), bounded 0..1.
@@ -137,6 +158,8 @@ class KnowledgeArticleChunkRepository(BaseRepository[KnowledgeArticleChunk]):
             .where(KnowledgeArticleChunk.article_id.in_(tuple(allowed_article_ids)))
             .where(KnowledgeArticleChunk.version_id == KnowledgeArticle.current_version_id)
             .where(KnowledgeArticle.status == KnowledgeArticleStatus.PUBLISHED.value)
+            .where(KnowledgeArticleVersion.index_status == KnowledgeIndexStatus.INDEXED.value)
+            .where(complete_chunk_count == KnowledgeArticleVersion.indexed_chunk_count)
             .where(tsv.op("@@")(tsq))
             .order_by(
                 rank.desc(),

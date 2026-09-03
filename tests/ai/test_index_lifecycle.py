@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
-from uuid import UUID
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.ai_constants import KB_CHUNK_VECTOR_DIMENSION
-from app.core.exceptions import ValidationError
-from app.db.enums import KnowledgeArticleStatus
+from app.core.exceptions import ConflictError, ValidationError
+from app.db.enums import KnowledgeArticleStatus, KnowledgeIndexStatus
 from app.db.models.company import Company
 from app.db.uow import UnitOfWork
+from app.repositories.knowledge_article_chunk import KnowledgeArticleChunkRepository
+from app.services.ai.embeddings import FakeEmbeddingProvider
 from app.services.ai.indexer import INDEXING_RUNS_AFTER_KB_COMMIT, KnowledgeChunkIndexer
 from app.services.knowledge.article_service import ArticleService
 from tests.conftest import _uow_factory
@@ -46,6 +51,25 @@ class _PartialBatchEmbeddings:
         return []
 
 
+class _BlockingEmbeddings:
+    dimension = KB_CHUNK_VECTOR_DIMENSION
+    model = "fake"
+    provider_name = "fake"
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self._delegate = FakeEmbeddingProvider()
+
+    async def embed(self, text: str) -> list[float]:
+        return (await self.embed_batch((text,)))[0]
+
+    async def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
+        self.entered.set()
+        await self.release.wait()
+        return await self._delegate.embed_batch(texts)
+
+
 async def _list_chunks(
     company_id: UUID,
     *,
@@ -75,6 +99,8 @@ async def test_publish_creates_chunks_for_published_version(
         body="Use the company client.",
     )
     assert draft.current_version_id is not None
+    assert draft.current_version is not None
+    assert draft.current_version.index_status == KnowledgeIndexStatus.PENDING.value
     assert await _list_chunks(company_a.id, article_id=draft.id) == []
 
     published = await article_service.publish_article(draft.id, company_id=company_a.id)
@@ -85,6 +111,12 @@ async def test_publish_creates_chunks_for_published_version(
     assert all(row.company_id == company_a.id for row in chunks)
     assert {row.chunk_index for row in chunks} == set(range(len(chunks)))
     assert "VPN" in chunks[0].content
+    assert published.current_version is not None
+    assert published.current_version.index_status == KnowledgeIndexStatus.INDEXED.value
+    assert published.current_version.indexed_chunk_count == len(chunks)
+    assert published.current_version.embedding_provider == "fake"
+    assert published.current_version.embedding_model == "fake"
+    assert published.current_version.embedding_dimension == KB_CHUNK_VECTOR_DIMENSION
 
 
 async def test_draft_create_and_edit_do_not_create_chunks(
@@ -295,8 +327,7 @@ async def test_embedding_failure_on_publish_is_visible_and_leaves_article_publis
         title="Will publish",
         body="KB stays readable if index fails",
     )
-    with pytest.raises(RuntimeError, match="embedding backend down"):
-        await service.publish_article(draft.id, company_id=company_a.id)
+    published = await service.publish_article(draft.id, company_id=company_a.id)
 
     loaded = await service.get_article(
         draft.id,
@@ -304,6 +335,9 @@ async def test_embedding_failure_on_publish_is_visible_and_leaves_article_publis
         actor_role="hr",
     )
     assert loaded.status == KnowledgeArticleStatus.PUBLISHED.value
+    assert published.current_version is not None
+    assert published.current_version.index_status == KnowledgeIndexStatus.FAILED.value
+    assert published.current_version.failure_category == "internal"
     assert await _list_chunks(company_a.id, article_id=loaded.id) == []
 
 
@@ -335,6 +369,14 @@ async def test_embedding_failure_on_reindex_does_not_corrupt_existing_chunks(
     after = await _list_chunks(company_a.id, version_id=article.current_version_id)
     assert {row.id for row in after} == {row.id for row in before}
     assert after[0].content == before[0].content
+    loaded = await article_service.get_article(
+        article.id,
+        company_id=company_a.id,
+        actor_role="hr",
+    )
+    assert loaded.current_version is not None
+    assert loaded.current_version.index_status == KnowledgeIndexStatus.INDEXED.value
+    assert loaded.current_version.index_stale is True
 
 
 async def test_partial_embedding_batch_does_not_commit_chunks(
@@ -351,12 +393,200 @@ async def test_partial_embedding_batch_does_not_commit_chunks(
         title="Partial",
         body="must not leave a half-written index",
     )
-    with pytest.raises(ValidationError, match="embedding batch size"):
-        await service.publish_article(draft.id, company_id=company_a.id)
+    published = await service.publish_article(draft.id, company_id=company_a.id)
     loaded = await service.get_article(
         draft.id,
         company_id=company_a.id,
         actor_role="hr",
     )
     assert loaded.status == KnowledgeArticleStatus.PUBLISHED.value
+    assert published.current_version is not None
+    assert published.current_version.index_status == KnowledgeIndexStatus.FAILED.value
+    assert published.current_version.failure_category == "validation"
     assert await _list_chunks(company_a.id, article_id=loaded.id) == []
+
+
+async def test_database_insert_failure_leaves_no_partial_active_chunks(
+    company_a: Company,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_create = KnowledgeArticleChunkRepository.create
+    calls = 0
+
+    async def fail_second_create(self, obj):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise SQLAlchemyError("simulated insert failure")
+        return await original_create(self, obj)
+
+    monkeypatch.setattr(KnowledgeArticleChunkRepository, "create", fail_second_create)
+    service = ArticleService(uow_factory=_uow_factory)
+    draft = await service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="DB rollback",
+        body="large body " * 500,
+    )
+    published = await service.publish_article(draft.id, company_id=company_a.id)
+    assert calls >= 2
+    assert published.current_version is not None
+    assert published.current_version.index_status == KnowledgeIndexStatus.FAILED.value
+    assert published.current_version.failure_category == "database"
+    assert await _list_chunks(
+        company_a.id,
+        version_id=published.current_version_id,
+    ) == []
+
+
+async def test_failed_initial_index_is_retryable(
+    company_a: Company,
+) -> None:
+    failing = ArticleService(
+        uow_factory=_uow_factory,
+        chunk_indexer=KnowledgeChunkIndexer(
+            uow_factory=_uow_factory,
+            embedding_provider=_BoomEmbeddings(),  # type: ignore[arg-type]
+        ),
+    )
+    article = await failing.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Retry",
+        body="provider returns later",
+    )
+    article = await failing.publish_article(article.id, company_id=company_a.id)
+    assert article.current_version is not None
+    assert article.current_version.index_status == KnowledgeIndexStatus.FAILED.value
+
+    stored = await KnowledgeChunkIndexer(
+        uow_factory=_uow_factory,
+        embedding_provider=FakeEmbeddingProvider(),
+    ).index_published_version(
+        actor_company_id=company_a.id,
+        article_id=article.id,
+        version_id=article.current_version_id,  # type: ignore[arg-type]
+    )
+    assert stored
+    loaded = await failing.get_article(article.id, company_id=company_a.id, actor_role="hr")
+    assert loaded.current_version is not None
+    assert loaded.current_version.index_status == KnowledgeIndexStatus.INDEXED.value
+    assert loaded.current_version.failure_category is None
+
+
+async def test_expired_indexing_lease_is_recoverable(
+    article_service: ArticleService,
+    company_a: Company,
+) -> None:
+    article = await article_service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Recover",
+        body="stale process",
+    )
+    article = await article_service.publish_article(article.id, company_id=company_a.id)
+    async with UnitOfWork() as uow:
+        await uow.enter_tenant(company_a.id)
+        version = await uow.knowledge_article_versions.get_by_id(article.current_version_id)
+        assert version is not None
+        version.index_status = KnowledgeIndexStatus.INDEXING.value
+        version.indexing_owner_token = uuid4()
+        version.indexing_lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await uow.commit()
+
+    stored = await KnowledgeChunkIndexer(
+        uow_factory=_uow_factory,
+        embedding_provider=FakeEmbeddingProvider(),
+    ).index_published_version(
+        actor_company_id=company_a.id,
+        article_id=article.id,
+        version_id=article.current_version_id,  # type: ignore[arg-type]
+    )
+    assert stored
+
+
+async def test_concurrent_same_version_indexing_has_one_database_owner(
+    article_service: ArticleService,
+    company_a: Company,
+) -> None:
+    article = await article_service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Concurrent",
+        body="one complete index",
+    )
+    article = await article_service.publish_article(article.id, company_id=company_a.id)
+    assert article.current_version_id is not None
+    provider = _BlockingEmbeddings()
+    indexer = KnowledgeChunkIndexer(
+        uow_factory=_uow_factory,
+        embedding_provider=provider,  # type: ignore[arg-type]
+    )
+    first = asyncio.create_task(
+        indexer.index_published_version(
+            actor_company_id=company_a.id,
+            article_id=article.id,
+            version_id=article.current_version_id,
+        )
+    )
+    await provider.entered.wait()
+    with pytest.raises(ConflictError, match="already indexing"):
+        await indexer.index_published_version(
+            actor_company_id=company_a.id,
+            article_id=article.id,
+            version_id=article.current_version_id,
+        )
+    provider.release.set()
+    stored = await first
+    rows = await _list_chunks(company_a.id, version_id=article.current_version_id)
+    assert len(rows) == len(stored)
+    assert [row.chunk_index for row in rows] == list(range(len(rows)))
+
+
+async def test_cancelled_indexing_leaves_recoverable_lease_without_partial_chunks(
+    company_a: Company,
+) -> None:
+    provider = _BlockingEmbeddings()
+    service = ArticleService(
+        uow_factory=_uow_factory,
+        chunk_indexer=KnowledgeChunkIndexer(
+            uow_factory=_uow_factory,
+            embedding_provider=provider,
+        ),
+    )
+    article = await service.create_article(
+        company_id=company_a.id,
+        actor_company_id=company_a.id,
+        title="Interrupted",
+        body="shutdown mid embed",
+    )
+    publish = asyncio.create_task(
+        service.publish_article(article.id, company_id=company_a.id)
+    )
+    await provider.entered.wait()
+    publish.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await publish
+
+    async with UnitOfWork() as uow:
+        await uow.enter_tenant(company_a.id)
+        loaded = await uow.knowledge_articles.get_by_id(article.id)
+        assert loaded is not None
+        version = await uow.knowledge_article_versions.get_by_id(loaded.current_version_id)
+        assert version is not None
+        assert version.index_status == KnowledgeIndexStatus.INDEXING.value
+        version.indexing_lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await uow.commit()
+        version_id = version.id
+
+    assert await _list_chunks(company_a.id, version_id=version_id) == []
+    stored = await KnowledgeChunkIndexer(
+        uow_factory=_uow_factory,
+        embedding_provider=FakeEmbeddingProvider(),
+    ).index_published_version(
+        actor_company_id=company_a.id,
+        article_id=article.id,
+        version_id=version_id,
+    )
+    assert stored
+    assert await _list_chunks(company_a.id, version_id=version_id)

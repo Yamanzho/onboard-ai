@@ -22,6 +22,7 @@ COPY docker ./docker
 RUN pip install --upgrade pip \
     && pip install . \
     && chmod +x /app/docker/entrypoint-api.sh /app/docker/entrypoint-bot.sh \
+      /app/docker/entrypoint-migrate.sh \
     && groupadd --system --gid 10001 onboard \
     && useradd --system --uid 10001 --gid onboard --home-dir /app --shell /usr/sbin/nologin onboard \
     && chown -R onboard:onboard /app

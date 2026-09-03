@@ -16,7 +16,7 @@ from app.core.ai_constants import (
     MAX_CONTEXT_TOTAL_CHARS,
 )
 from app.core.exceptions import ValidationError
-from app.services.ai.retriever import RetrievalHit
+from app.services.ai.retriever import RetrievalHit, _grounded_entity_excerpt
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +52,7 @@ class ContextDocument:
 @dataclass(frozen=True, slots=True)
 class ContextBundle:
     documents: tuple[ContextDocument, ...]
+    grounded_entity_note: str = ""
 
     @property
     def citations(self) -> tuple[Citation, ...]:
@@ -90,13 +91,23 @@ class KnowledgeContextBuilder:
         self._max_chars_per_doc = max_chars_per_doc
         self._max_total_chars = max_total_chars
 
-    def build(self, hits: Sequence[RetrievalHit]) -> ContextBundle:
+    def build(
+        self, hits: Sequence[RetrievalHit], *, query: str | None = None
+    ) -> ContextBundle:
         documents: list[ContextDocument] = []
         total = 0
+        grounded_note = ""
         for index, hit in enumerate(hits):
             if len(documents) >= self._max_documents:
                 break
             content = hit.content.strip()
+            identity = (
+                _grounded_entity_excerpt(query, hit.content, hit.article_title)
+                if query
+                else None
+            )
+            if identity is not None:
+                content = identity[0]
             if not content:
                 continue
             if len(content) > self._max_chars_per_doc:
@@ -109,6 +120,8 @@ class KnowledgeContextBuilder:
             if not content:
                 break
             source_id = f"S{index + 1}"
+            if identity is not None and not grounded_note:
+                grounded_note = f"[{source_id}] {identity[1]}"
             documents.append(
                 ContextDocument(
                     source_id=source_id,
@@ -120,4 +133,7 @@ class KnowledgeContextBuilder:
                 )
             )
             total += len(content)
-        return ContextBundle(documents=tuple(documents))
+        return ContextBundle(
+            documents=tuple(documents),
+            grounded_entity_note=grounded_note,
+        )

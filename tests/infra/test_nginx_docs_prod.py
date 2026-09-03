@@ -14,6 +14,9 @@ from tests.infra.compose_prod_env import COMPOSE_PROD_SECRETS
 
 ROOT = Path(__file__).resolve().parents[2]
 FRONTEND = ROOT / "frontend"
+HOST_HTTP = ROOT / "deploy" / "nginx" / "onboardai.aoe.kz.conf"
+HOST_HTTPS = ROOT / "deploy" / "nginx" / "onboardai.aoe.kz.https.conf"
+BOT_AUTH_LOCATION = "location ^~ /api/v1/auth/bot/"
 
 
 def _compose_available() -> bool:
@@ -94,6 +97,33 @@ def test_prod_nginx_blocks_openapi_docs() -> None:
     assert "map $http_x_forwarded_proto $forwarded_proto" in conf
 
 
+def test_prod_edges_block_public_bot_auth_but_keep_normal_api_proxy() -> None:
+    frontend = (FRONTEND / "nginx.prod.conf").read_text(encoding="utf-8")
+    host_http = HOST_HTTP.read_text(encoding="utf-8")
+    host_https = HOST_HTTPS.read_text(encoding="utf-8")
+
+    assert BOT_AUTH_LOCATION in frontend
+    assert BOT_AUTH_LOCATION in host_http
+    # Both the HTTP redirect listener and HTTPS listener deny bot auth.
+    assert host_https.count(BOT_AUTH_LOCATION) == 2
+    for conf in (frontend, host_http, host_https):
+        block = conf.split(BOT_AUTH_LOCATION, 1)[1].split("}", 1)[0]
+        assert "return 404;" in block
+
+    # Normal browser auth remains on the existing generic API proxy.
+    assert "location /api/" in frontend
+    assert "proxy_pass http://api:8000/api/" in frontend
+    assert "location / {" in host_http
+    assert "proxy_pass http://127.0.0.1:3000;" in host_http
+
+
+def test_development_nginx_keeps_bot_auth_available_for_local_use() -> None:
+    conf = (FRONTEND / "nginx.conf").read_text(encoding="utf-8")
+    assert BOT_AUTH_LOCATION not in conf
+    assert "location /api/" in conf
+    assert "proxy_pass http://api:8000/api/" in conf
+
+
 def test_prod_nginx_has_restrictive_content_security_policy() -> None:
     """F-06: CSP present, not wildcard, scripts not unsafe-inline."""
     conf = (FRONTEND / "nginx.prod.conf").read_text(encoding="utf-8")
@@ -145,3 +175,12 @@ def test_dev_compose_does_not_force_nginx_prod_conf() -> None:
     build = frontend.get("build") or {}
     args = build.get("args") or {}
     assert args.get("NGINX_CONF") in (None, "nginx.conf")
+
+
+@pytest.mark.skipif(not _compose_available(), reason="docker not available")
+def test_prod_bot_uses_internal_api_while_api_has_no_host_port() -> None:
+    cfg = _compose_config(prod=True, env=COMPOSE_PROD_SECRETS)
+    api = cfg["services"]["api"]
+    bot = cfg["services"]["bot"]
+    assert not api.get("ports")
+    assert (bot.get("environment") or {}).get("API_BASE_URL") == "http://api:8000"

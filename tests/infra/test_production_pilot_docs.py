@@ -19,7 +19,11 @@ def test_postgres_backup_runbook_covers_pilot_ops() -> None:
     assert "retention" in text.lower()
     assert "pg_restore" in text
     assert "verification" in text.lower() or "drill" in text.lower()
-    assert "Do not add backup workers" in text or "does not ship backup" in text.lower()
+    assert "run on the host, not in the API or bot" in text
+    assert "more than 8 hours" in text
+    assert "more than 36 hours" in text
+    assert "7 hours" not in text
+    assert "26 hours" not in text
 
 
 def test_golden_path_runbook_covers_pilot_flow() -> None:
@@ -50,3 +54,4 @@ def test_deployment_links_backup_and_golden_path() -> None:
     assert "SEED_DEMO=false" in text
     assert "/ready" in text
     assert "/health" in text
+    assert "safe-deployment.md" in text

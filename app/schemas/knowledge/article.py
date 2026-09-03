@@ -6,8 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.db.enums import KnowledgeLinkTargetType
 from app.schemas.knowledge.tag import TagResponse
-from app.schemas.knowledge.version import ArticleVersionResponse
+from app.schemas.knowledge.version import ArticleVersionResponse, article_version_response
 from app.schemas.limits import MAX_ARTICLE_BODY_LENGTH
+from app.services.ai.embedding_identity import EmbeddingIdentity
 
 KnowledgeStatusLiteral = Literal["draft", "published", "archived"]
 KnowledgeVisibilityLiteral = Literal["company", "program"]
@@ -134,14 +135,31 @@ class ArticleListResponse(BaseModel):
     items: list[ArticleResponse]
 
 
+class CorpusReindexItemResponse(BaseModel):
+    article_id: UUID
+    version_id: UUID
+    status: Literal["indexed", "failed"]
+    indexed_chunks: int
+    failure_category: str | None = None
+
+
 class CorpusReindexResponse(BaseModel):
     """HR/Admin rebuild of the tenant's current published vector index."""
 
+    attempted_articles: int
+    succeeded_articles: int
+    failed_articles: int
     indexed_articles: int
     indexed_chunks: int
+    complete: bool
+    items: list[CorpusReindexItemResponse]
 
 
-def article_response(article: object) -> ArticleResponse:
+def article_response(
+    article: object,
+    *,
+    active_embedding: EmbeddingIdentity | None = None,
+) -> ArticleResponse:
     """Serialize an article including program_ids derived from links."""
     response = ArticleResponse.model_validate(article)
     links = getattr(article, "links", None) or []
@@ -150,4 +168,14 @@ def article_response(article: object) -> ArticleResponse:
         for link in links
         if getattr(link, "target_type", None) == KnowledgeLinkTargetType.PROGRAM.value
     ]
-    return response.model_copy(update={"program_ids": program_ids})
+    current_version = getattr(article, "current_version", None)
+    return response.model_copy(
+        update={
+            "program_ids": program_ids,
+            "current_version": (
+                article_version_response(current_version, active=active_embedding)
+                if current_version is not None
+                else None
+            ),
+        }
+    )

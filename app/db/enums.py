@@ -84,6 +84,13 @@ class KnowledgeBodyFormat(StrEnum):
     PLAIN = "plain"
 
 
+class KnowledgeIndexStatus(StrEnum):
+    PENDING = "pending"
+    INDEXING = "indexing"
+    INDEXED = "indexed"
+    FAILED = "failed"
+
+
 class KnowledgeLinkTargetType(StrEnum):
     PROGRAM = "program"
     STEP = "step"

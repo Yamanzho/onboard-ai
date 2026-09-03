@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from uuid import uuid4
 
 import pytest
@@ -15,6 +16,23 @@ from app.services.ai.embeddings import FakeEmbeddingProvider
 from app.services.ai.indexer import KnowledgeChunkIndexer
 from app.services.knowledge.article_service import ArticleService
 from tests.conftest import _uow_factory, auth_header
+
+
+class _SelectiveFailureEmbeddings:
+    dimension = 1536
+    model = "fake"
+    provider_name = "fake"
+
+    def __init__(self) -> None:
+        self._delegate = FakeEmbeddingProvider()
+
+    async def embed(self, text: str) -> list[float]:
+        return (await self.embed_batch((text,)))[0]
+
+    async def embed_batch(self, texts: Sequence[str]) -> list[list[float]]:
+        if any("FAIL_CORPUS" in text for text in texts):
+            raise RuntimeError("provider unavailable")
+        return await self._delegate.embed_batch(texts)
 
 
 @pytest.fixture
@@ -100,9 +118,7 @@ async def test_company_a_cannot_corpus_reindex_company_b(
     assert article_b.current_version_id is not None
     async with UnitOfWork() as uow:
         await uow.enter_tenant(company_b.id)
-        before = await uow.knowledge_article_chunks.list_by_version_id(
-            article_b.current_version_id
-        )
+        before = await uow.knowledge_article_chunks.list_by_version_id(article_b.current_version_id)
     assert before
 
     with pytest.raises(NotFoundError):
@@ -121,10 +137,48 @@ async def test_company_a_cannot_corpus_reindex_company_b(
     assert result.indexed_articles == 0
     async with UnitOfWork() as uow:
         await uow.enter_tenant(company_b.id)
-        after = await uow.knowledge_article_chunks.list_by_version_id(
-            article_b.current_version_id
-        )
+        after = await uow.knowledge_article_chunks.list_by_version_id(article_b.current_version_id)
     assert {row.id for row in after} == {row.id for row in before}
+
+
+async def test_corpus_reindex_reports_partial_failure_and_continues(
+    article_service: ArticleService,
+    company_a: Company,
+    hr_a: Employee,
+) -> None:
+    good = await _publish(article_service, company_a, title="Good", body="GOOD_CORPUS")
+    failed = await _publish(
+        article_service,
+        company_a,
+        title="Bad",
+        body="FAIL_CORPUS",
+    )
+    indexer = KnowledgeChunkIndexer(
+        uow_factory=_uow_factory,
+        embedding_provider=_SelectiveFailureEmbeddings(),  # type: ignore[arg-type]
+    )
+    result = await indexer.reindex_published_corpus(
+        actor_company_id=company_a.id,
+        actor_employee_id=hr_a.id,
+        actor_role=EmployeeRole.HR.value,
+    )
+    assert result.attempted_articles == 2
+    assert result.succeeded_articles == 1
+    assert result.failed_articles == 1
+    assert result.complete is False
+    assert {item.article_id for item in result.items} == {good.id, failed.id}
+    failed_item = next(item for item in result.items if item.article_id == failed.id)
+    assert failed_item.status == "failed"
+    assert failed_item.failure_category == "internal"
+
+    loaded = await article_service.get_article(
+        failed.id,
+        company_id=company_a.id,
+        actor_role=EmployeeRole.HR.value,
+    )
+    assert loaded.current_version is not None
+    assert loaded.current_version.index_status == "indexed"
+    assert loaded.current_version.index_stale is True
 
 
 async def test_http_corpus_reindex_hr_admin_employee(
@@ -151,6 +205,10 @@ async def test_http_corpus_reindex_hr_admin_employee(
     body = hr.json()
     assert body["indexed_articles"] >= 1
     assert body["indexed_chunks"] >= 1
+    assert body["attempted_articles"] == body["succeeded_articles"]
+    assert body["failed_articles"] == 0
+    assert body["complete"] is True
+    assert all(item["status"] == "indexed" for item in body["items"])
 
     admin = await api_client.post(
         "/api/v1/knowledge/articles/reindex-published",

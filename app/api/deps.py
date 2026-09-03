@@ -8,6 +8,7 @@ from app.services.assignment import AssignmentService
 from app.services.company import CompanyService
 from app.services.company_audit import CompanyAuditService
 from app.services.employee import EmployeeService
+from app.services.idempotency import IdempotencyService
 from app.services.knowledge.article_service import ArticleService
 from app.services.knowledge.category_service import CategoryService
 from app.services.knowledge.tag_service import TagService
@@ -15,6 +16,7 @@ from app.services.onboarding_program import OnboardingProgramService
 from app.services.platform import PlatformService, SuperAdminAuthService
 from app.services.progress import ProgressService
 from app.services.step import StepService
+from app.services.telegram_outbound import TelegramOutboundService
 
 
 @lru_cache
@@ -66,6 +68,16 @@ def get_chunk_indexer() -> KnowledgeChunkIndexer:
 @lru_cache
 def get_ai_chat_service() -> AIChatService:
     return AIChatService()
+
+
+@lru_cache
+def get_idempotency_service() -> IdempotencyService:
+    return IdempotencyService()
+
+
+@lru_cache
+def get_telegram_outbound_service() -> TelegramOutboundService:
+    return TelegramOutboundService()
 
 
 @lru_cache

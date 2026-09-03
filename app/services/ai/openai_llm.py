@@ -106,6 +106,7 @@ class OpenAILLMProvider:
                 payload,
                 timeout=self._timeout,
                 kind="llm",
+                model=self._model,
             )
         except ProviderFailure as exc:
             exc.reraise_app()

@@ -7,6 +7,7 @@ from uuid import uuid4
 import pytest
 from httpx import AsyncClient
 
+from app.core.config import get_settings
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.company import Company
 from app.db.models.employee import Employee
@@ -68,6 +69,7 @@ async def test_ack_and_quiz_completion_rules(
     api_client: AsyncClient,
     company_a: Company,
     hr_a: Employee,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     headers = auth_header(hr_a)
     emp_headers, employee_id = await _employee_headers(
@@ -107,7 +109,13 @@ async def test_ack_and_quiz_completion_rules(
             "step_type": "quiz",
             "content": {
                 "body": "Answer",
-                "questions": [{"id": "q1", "text": "What is 2+2?"}],
+                "questions": [
+                    {
+                        "id": "q1",
+                        "text": "What is 2+2?",
+                        "correct": "4",
+                    }
+                ],
             },
         },
     )
@@ -153,12 +161,34 @@ async def test_ack_and_quiz_completion_rules(
     )
     assert denied_quiz.status_code == 400, denied_quiz.text
 
+    service_token = "phase-7d-unit-test-bot-service-token"
+    monkeypatch.setattr(get_settings(), "bot_service_token", service_token)
+    async with UnitOfWork() as uow:
+        await uow.enter_platform()
+        await uow.employees.update(
+            employee_id,
+            telegram_chat_id=8_800_001,
+        )
+        await uow.commit()
     ok_quiz = await api_client.post(
         f"/api/v1/progress/{by_title['Quiz']['id']}/complete",
-        headers=emp_headers,
+        headers={
+            **emp_headers,
+            "X-Telegram-Delivery": "durable",
+            "X-Bot-Service-Token": service_token,
+        },
         json={"payload": {"answers": {"q1": "4"}}},
     )
     assert ok_quiz.status_code == 200, ok_quiz.text
+    async with UnitOfWork() as uow:
+        await uow.enter_tenant(company_a.id)
+        outbound = await uow.telegram_outbound.get_by_source(
+            source_type="quiz_result",
+            source_key=by_title["Quiz"]["id"],
+        )
+        assert outbound is not None
+        assert outbound.chat_id == 8_800_001
+        assert outbound.body == "Результат теста: 1 из 1."
 
     done = await api_client.get(
         f"/api/v1/assignments/{assignment_id}/progress",

@@ -1,0 +1,31 @@
+name: PostgreSQL backup restore smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * 0"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backup-restore-smoke
+  cancel-in-progress: false
+
+jobs:
+  backup-restore-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ONBOARDAI_BACKUP_RESTORE_SMOKE: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: pip install -e ".[dev]"
+      - name: Run disposable pgvector dump and restore
+        run: >
+          pytest -q --tb=short
+          tests/infra/test_postgres_backup_restore_integration.py

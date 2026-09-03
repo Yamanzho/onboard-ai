@@ -25,6 +25,20 @@ env:
   INVITE_BASE_URL: https://onboardai.example.test
 
 jobs:
+  secret-scan:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Scan Git history for secrets
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   backend:
     name: Backend (pytest + security + ruff)
     runs-on: ubuntu-latest
@@ -62,11 +76,25 @@ jobs:
         run: >
           ruff check
           app/core/readiness.py
+          app/core/lifecycle.py
+          app/core/shutdown.py
           app/main.py
+          app/bot/__main__.py
+          app/bot/lifecycle.py
           tests/api/test_readiness.py
+          tests/core/test_lifecycle.py
+          tests/bot/test_graceful_shutdown.py
+          tests/infra/test_lifecycle_compose.py
+          tests/infra/test_deploy_script.py
           tests/e2e
           tests/infra/test_alembic_heads.py
           tests/infra/test_ci_workflow.py
+          scripts/postgres_backup.py
+          scripts/postgres_restore_verify.py
+          tests/infra/test_postgres_backup.py
+          tests/infra/test_postgres_backup_ops.py
+          tests/infra/test_postgres_restore_verify.py
+          tests/infra/test_postgres_backup_restore_integration.py
           tests/conftest.py
       - name: Migration graph (single Alembic head)
         run: python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; heads = ScriptDirectory.from_config(Config('alembic.ini')).get_heads(); assert len(heads) == 1, heads"
@@ -121,6 +149,8 @@ jobs:
         env:
           COMPOSE_PROD: "1"
         run: docker compose -f docker-compose.yml -f docker-compose.prod.yml config --quiet
+      - name: Deploy script syntax
+        run: sh -n scripts/deploy_production.sh
       - name: API image build (no production secrets)
         run: docker build -t onboard-ai-api:ci .
       - name: Frontend image build (no production secrets)

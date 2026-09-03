@@ -8,6 +8,7 @@ from app.db.enums import AssignmentStatus, ProgressStatus, StepType
 from app.db.models.progress import Progress
 from app.db.uow import UnitOfWork
 from app.services.step_content import score_quiz, validate_completion_payload
+from app.services.telegram_outbound import TelegramOutboundService
 from app.services.tenancy import ensure_same_company
 
 _DONE_STATUSES = {
@@ -19,8 +20,13 @@ _DONE_STATUSES = {
 class ProgressService:
     """Application service for assignment step progress."""
 
-    def __init__(self, uow_factory: Callable[[], UnitOfWork] | None = None) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork] | None = None,
+        outbound_service: TelegramOutboundService | None = None,
+    ) -> None:
         self._uow_factory = uow_factory or UnitOfWork
+        self._outbound = outbound_service or TelegramOutboundService()
 
     async def complete_step(
         self,
@@ -29,6 +35,7 @@ class ProgressService:
         step_id: UUID,
         company_id: UUID,
         payload: dict[str, Any] | None = None,
+        telegram_outbound_employee_id: UUID | None = None,
     ) -> Progress:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -80,6 +87,33 @@ class ProgressService:
 
             updated = await uow.progress.update(progress.id, **values)
             assert updated is not None
+            if (
+                telegram_outbound_employee_id is not None
+                and step.step_type == StepType.QUIZ.value
+                and isinstance(stored_payload, dict)
+                and isinstance(stored_payload.get("quiz_score"), dict)
+            ):
+                employee = await uow.employees.get_by_id(
+                    telegram_outbound_employee_id
+                )
+                if (
+                    employee is None
+                    or employee.company_id != company_id
+                    or employee.telegram_chat_id is None
+                ):
+                    raise ValidationError("Employee has no linked Telegram chat")
+                score = stored_payload["quiz_score"]
+                correct = int(score.get("correct_count", 0))
+                total = int(score.get("total", 0))
+                await self._outbound.enqueue_in_uow(
+                    uow,
+                    company_id=company_id,
+                    employee_id=employee.id,
+                    chat_id=employee.telegram_chat_id,
+                    source_type="quiz_result",
+                    source_key=str(progress.id),
+                    body=f"Результат теста: {correct} из {total}.",
+                )
 
             if assignment.status == AssignmentStatus.PENDING.value:
                 await uow.assignments.update(
@@ -108,6 +142,7 @@ class ProgressService:
         *,
         company_id: UUID,
         payload: dict[str, Any] | None = None,
+        telegram_outbound_employee_id: UUID | None = None,
     ) -> Progress:
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -130,6 +165,7 @@ class ProgressService:
             step_id=step_id,
             company_id=company_id,
             payload=payload,
+            telegram_outbound_employee_id=telegram_outbound_employee_id,
         )
 
     async def get_progress_by_id(

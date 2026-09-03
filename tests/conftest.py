@@ -32,6 +32,17 @@ from app.services.knowledge.tag_service import TagService
 
 
 @pytest.fixture(autouse=True)
+def _lifecycle_ready_for_tests() -> None:
+    """HTTP tests assume a ready process; drain tests reset this explicitly."""
+    from app.core.lifecycle import mark_ready, reset_lifecycle_for_tests
+
+    reset_lifecycle_for_tests()
+    mark_ready()
+    yield
+    reset_lifecycle_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def telegram_conversation_store():
     """Keep Telegram conversation pointers off live Redis during tests."""
     import app.bot.services.ai_conversation as store_mod

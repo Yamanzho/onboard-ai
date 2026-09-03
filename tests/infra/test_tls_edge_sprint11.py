@@ -62,6 +62,9 @@ def test_nginx_https_edge_has_tls_hsts_and_overwrites_xff() -> None:
     assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" not in text
     assert "127.0.0.1:3000" in text
     assert "127.0.0.1:8081" in text
+    assert "proxy_connect_timeout 5s;" in text
+    assert "proxy_send_timeout 60s;" in text
+    assert "proxy_read_timeout 60s;" in text
 
 
 def test_nginx_edge_config_exists_and_overwrites_xff() -> None:
@@ -95,10 +98,12 @@ def test_production_https_sets_secure_cookie(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setenv("ONBOARD_APP_PASSWORD", "compose-test-app-password-ok")
     monkeypatch.setenv("POSTGRES_PASSWORD", "compose-test-postgres-password-ok")
     monkeypatch.setenv("INVITE_BASE_URL", "https://onboardai.example.test")
-    # Override .env so production validators do not see demo/placeholder bot values.
-    monkeypatch.setenv("BOT_SERVICE_TOKEN", "")
+    # Production always requires a strong bot service credential.
+    monkeypatch.setenv("BOT_SERVICE_TOKEN", "unit-test-bot-service-token-32chars")
     monkeypatch.setenv("BOT_COMPANY_ID", "")
     monkeypatch.setenv("BOT_TOKEN", "")
+    monkeypatch.setenv("AI_ALLOW_FAKE_EMBEDDINGS_IN_PRODUCTION", "true")
+    monkeypatch.setenv("AI_ALLOW_FAKE_LLM_IN_PRODUCTION", "true")
 
     settings = Settings(_env_file=None)
     assert settings.is_production is True

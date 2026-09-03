@@ -44,6 +44,7 @@ def test_production_does_not_fall_back_to_memory_when_redis_unavailable() -> Non
         debug=False,
         secret_key="a" * 32 + "-unit-test-secret-key",
         super_admin_password="unit-test-super-admin-ok",
+        bot_service_token="unit-test-bot-service-token-32chars",
         redis_url="redis://:unit-test-redis-password@redis:6379/0",
         database_url=(
             "postgresql+asyncpg://onboard_app:unit-test-postgres-password@db:5432/onboard_ai"
@@ -54,6 +55,8 @@ def test_production_does_not_fall_back_to_memory_when_redis_unavailable() -> Non
         onboard_owner_password="unit-test-postgres-password",
         onboard_app_password="unit-test-postgres-password",
         invite_base_url="https://onboardai.example.test",
+        ai_allow_fake_embeddings_in_production=True,
+        ai_allow_fake_llm_in_production=True,
     )
     with patch("aiogram.fsm.storage.redis.RedisStorage") as storage_cls:
         storage_cls.from_url.side_effect = ConnectionError("redis down")
@@ -68,6 +71,7 @@ def test_production_redis_auth_failure_fails_startup_storage() -> None:
         debug=False,
         secret_key="a" * 32 + "-unit-test-secret-key",
         super_admin_password="unit-test-super-admin-ok",
+        bot_service_token="unit-test-bot-service-token-32chars",
         redis_url="redis://:unit-test-redis-password@redis:6379/0",
         database_url=(
             "postgresql+asyncpg://onboard_app:unit-test-postgres-password@db:5432/onboard_ai"
@@ -78,6 +82,8 @@ def test_production_redis_auth_failure_fails_startup_storage() -> None:
         onboard_owner_password="unit-test-postgres-password",
         onboard_app_password="unit-test-postgres-password",
         invite_base_url="https://onboardai.example.test",
+        ai_allow_fake_embeddings_in_production=True,
+        ai_allow_fake_llm_in_production=True,
     )
     with patch("aiogram.fsm.storage.redis.RedisStorage") as storage_cls:
         storage_cls.from_url.side_effect = Exception("NOAUTH Authentication required")
@@ -96,6 +102,7 @@ def test_production_storage_error_message_does_not_leak_password() -> None:
         debug=False,
         secret_key="a" * 32 + "-unit-test-secret-key",
         super_admin_password="unit-test-super-admin-ok",
+        bot_service_token="unit-test-bot-service-token-32chars",
         redis_url=f"redis://:{secret}@redis:6379/0",
         database_url=(
             "postgresql+asyncpg://onboard_app:unit-test-postgres-password@db:5432/onboard_ai"
@@ -106,6 +113,8 @@ def test_production_storage_error_message_does_not_leak_password() -> None:
         onboard_owner_password="unit-test-postgres-password",
         onboard_app_password="unit-test-postgres-password",
         invite_base_url="https://onboardai.example.test",
+        ai_allow_fake_embeddings_in_production=True,
+        ai_allow_fake_llm_in_production=True,
     )
     with patch("aiogram.fsm.storage.redis.RedisStorage") as storage_cls:
         storage_cls.from_url.side_effect = Exception(f"Error connecting to redis://:{secret}@redis")

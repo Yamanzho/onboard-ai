@@ -6,10 +6,10 @@ from html import escape
 from typing import Any
 
 from app.services.step_content import parse_questions
-
-# Telegram Bot API hard limit for message text.
-_TELEGRAM_MAX_MESSAGE_LENGTH = 4096
-_SAFE_MESSAGE_LENGTH = 3900
+from app.services.telegram_format import (
+    TELEGRAM_MAX_MESSAGE_LENGTH as TELEGRAM_MAX_MESSAGE_LENGTH,
+)
+from app.services.telegram_format import truncate_telegram_html
 
 
 def render_step_content_body(content: dict[str, Any] | None) -> str:
@@ -91,19 +91,3 @@ def format_step_message(
     lines.extend(["", "Когда выполните шаг — нажмите кнопку ниже."])
     text = "\n".join(lines)
     return truncate_telegram_html(text)
-
-
-def truncate_telegram_html(text: str, *, max_length: int = _SAFE_MESSAGE_LENGTH) -> str:
-    """Truncate oversized messages without leaving a dangling open tag."""
-    if len(text) <= max_length:
-        return text
-    # Prefer cutting on a newline boundary when possible.
-    cut = text[: max_length - 1]
-    nl = cut.rfind("\n")
-    if nl > max_length // 2:
-        cut = cut[:nl]
-    return f"{cut}…"
-
-
-# Keep constant export for tests.
-TELEGRAM_MAX_MESSAGE_LENGTH = _TELEGRAM_MAX_MESSAGE_LENGTH

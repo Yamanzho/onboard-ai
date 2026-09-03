@@ -84,16 +84,38 @@ def test_fastapi_has_no_wildcard_cors_middleware() -> None:
     assert '["*"]' not in text
 
 
+def _uvicorn_invocations(script: str) -> list[str]:
+    """Join continued ``exec uvicorn`` commands into single logical lines."""
+    invocations: list[str] = []
+    pending: list[str] = []
+    for raw in script.splitlines():
+        line = raw.strip()
+        if pending:
+            pending.append(line.rstrip("\\").strip())
+            if not raw.rstrip().endswith("\\"):
+                invocations.append(" ".join(pending))
+                pending = []
+            continue
+        if line.startswith("exec uvicorn"):
+            pending = [line.rstrip("\\").strip()]
+            if not raw.rstrip().endswith("\\"):
+                invocations.append(" ".join(pending))
+                pending = []
+    return invocations
+
+
 def test_production_entrypoint_enables_proxy_headers() -> None:
     script = ENTRYPOINT.read_text(encoding="utf-8")
-    prod_block_start = script.index('if [ "${APP_ENV_VALUE}" = "production" ]; then')
-    prod_block_end = script.index("fi", prod_block_start)
-    prod_block = script[prod_block_start:prod_block_end]
-    assert "--proxy-headers" in prod_block
-    assert "--forwarded-allow-ips=" in prod_block
-    assert "--reload" not in prod_block
-    reload_block = script[prod_block_end:]
-    assert "--proxy-headers" not in reload_block
+    invocations = _uvicorn_invocations(script)
+    production = [cmd for cmd in invocations if "--workers" in cmd]
+    reload_cmds = [cmd for cmd in invocations if "--reload" in cmd]
+    assert len(production) == 1
+    assert len(reload_cmds) == 1
+    assert "--proxy-headers" in production[0]
+    assert "--forwarded-allow-ips=" in production[0]
+    assert "--reload" not in production[0]
+    assert "--proxy-headers" not in reload_cmds[0]
+    assert "--forwarded-allow-ips=" not in reload_cmds[0]
 
 
 def test_frontend_prod_nginx_passes_forwarded_proto() -> None:

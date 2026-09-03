@@ -20,6 +20,7 @@ from app.core.ai_constants import (
 )
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ValidationError
+from app.services.ai.embedding_identity import EmbeddingDimensionMismatchError
 
 DEFAULT_FAKE_EMBEDDING_DIMENSION = KB_CHUNK_VECTOR_DIMENSION
 MIN_EMBEDDING_DIMENSION = 1
@@ -108,6 +109,10 @@ class FakeEmbeddingProvider:
     def model(self) -> str:
         return "fake"
 
+    @property
+    def provider_name(self) -> str:
+        return "fake"
+
     async def embed(self, text: str) -> list[float]:
         vectors = await self.embed_batch((text,))
         return vectors[0]
@@ -122,7 +127,7 @@ class FakeEmbeddingProvider:
             _require_non_empty_text(text)
             vector = _l2_normalize(_hash_units(text, self._dimension))
             if len(vector) != self._dimension:
-                raise ValidationError(
+                raise EmbeddingDimensionMismatchError(
                     "embedding dimension mismatch: expected "
                     f"{self._dimension}, got {len(vector)}"
                 )

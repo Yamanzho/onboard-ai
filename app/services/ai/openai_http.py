@@ -12,6 +12,11 @@ import httpx
 
 from app.core.config import get_settings
 from app.core.exceptions import ServiceUnavailableError, ValidationError
+from app.core.metrics import (
+    record_provider_result,
+    record_provider_retry,
+    record_provider_usage,
+)
 from app.core.request_id import request_id_log_value
 from app.services.ai.metrics import incr, observe_latency_ms
 
@@ -148,6 +153,7 @@ def _record_failure(
     kind: Kind,
     failure: ProviderFailure,
     *,
+    model: str,
     retry_count: int,
     started: float,
 ) -> None:
@@ -160,6 +166,13 @@ def _record_failure(
         operation=operation,
         result="error",
         error_class=failure.error_class,
+    )
+    record_provider_result(
+        model=model,
+        operation=operation,
+        status="timeout" if failure.error_class == "timeout" else "error",
+        error_category=failure.error_class,
+        duration_seconds=duration_ms / 1000,
     )
     logging.getLogger(_KIND_LOGGER[kind]).info(
         "kb_%s_openai request_id=%s provider=openai operation=%s "
@@ -181,6 +194,7 @@ async def post_openai_json(
     *,
     timeout: float,
     kind: Kind,
+    model: str = "unknown",
 ) -> dict[str, Any]:
     """POST JSON to OpenAI with bounded retries. Never logs key, prompt, or body."""
     settings = get_settings()
@@ -224,6 +238,13 @@ async def post_openai_json(
                 operation=operation,
                 result="success",
             )
+            record_provider_result(
+                model=model,
+                operation=operation,
+                status="success",
+                duration_seconds=duration_ms / 1000,
+            )
+            record_provider_usage(model=model, operation=operation, usage=body.get("usage"))
             logging.getLogger(_KIND_LOGGER[kind]).info(
                 "kb_%s_openai request_id=%s provider=openai operation=%s "
                 "result=success retry_count=%s duration_ms=%.1f",
@@ -240,6 +261,7 @@ async def post_openai_json(
             _record_failure(
                 kind,
                 last_failure or ProviderFailure("unknown", "unknown", False),
+                model=model,
                 retry_count=retries_done,
                 started=started,
             )
@@ -256,3 +278,8 @@ async def post_openai_json(
             )
         )
         incr("ai_retries", provider="openai", operation=operation, result="error")
+        record_provider_retry(
+            model=model,
+            operation=operation,
+            error_category=last_failure.error_class,
+        )

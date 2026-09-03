@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import text
 
+from app.core.ai_constants import KB_CHUNK_VECTOR_DIMENSION
 from app.core.exceptions import ForbiddenError, NotFoundError
 from app.db.enums import (
     AssignmentStatus,
@@ -303,6 +304,9 @@ async def test_rls_blocks_cross_tenant_similarity_even_if_ids_are_passed(
         leaked = await uow.knowledge_article_chunks.search_similar_current_published(
             allowed_article_ids=[article_b.id],
             query_embedding=query_vec,
+            embedding_provider="fake",
+            embedding_model="fake",
+            embedding_dimension=KB_CHUNK_VECTOR_DIMENSION,
             limit=20,
         )
         raw = await uow.session.execute(

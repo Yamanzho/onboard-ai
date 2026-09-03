@@ -13,6 +13,13 @@ def test_default_llm_settings_are_fake() -> None:
     assert settings.ai_llm_provider == "fake"
     assert settings.ai_llm_model == "gpt-4o-mini"
     assert settings.ai_llm_api_key.get_secret_value() == ""
+    assert settings.ai_allow_fake_llm_in_production is False
+
+
+def test_development_allows_fake_llm() -> None:
+    settings = Settings(_env_file=None, app_env="development", ai_llm_provider="fake")
+    assert not settings.is_production
+    assert settings.ai_llm_provider == "fake"
 
 
 def test_llm_provider_is_normalized() -> None:

@@ -111,7 +111,7 @@ async def test_add_and_list_messages_deterministic_order(
     ]
 
     async with _uow_factory() as uow:
-        await uow.enter_tenant(company_id)
+        await uow.enter_employee(employee_id)
         await uow.session.execute(
             text("UPDATE ai_messages SET created_at = now() WHERE id IN (:a, :b)"),
             {"a": first.id, "b": second.id},

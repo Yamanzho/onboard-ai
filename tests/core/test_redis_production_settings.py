@@ -16,6 +16,7 @@ def _production_settings(**overrides: object) -> Settings:
         "debug": False,
         "secret_key": "unit-test-hmac-secret-key-32chars-min!!",
         "super_admin_password": "unit-test-super-admin-ok",
+        "bot_service_token": "unit-test-bot-service-token-32chars",
         "redis_url": "redis://:unit-test-redis-password@redis:6379/0",
         "database_url": (
             "postgresql+asyncpg://onboard_app:unit-test-postgres-password@db:5432/onboard_ai"
@@ -26,6 +27,8 @@ def _production_settings(**overrides: object) -> Settings:
         "onboard_owner_password": "unit-test-postgres-password",
         "onboard_app_password": "unit-test-postgres-password",
         "invite_base_url": "https://onboardai.example.test",
+        "ai_allow_fake_embeddings_in_production": True,
+        "ai_allow_fake_llm_in_production": True,
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

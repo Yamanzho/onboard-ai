@@ -107,10 +107,11 @@ ArticleService; historical chunk rows are not a grant of access.
 ### Lifecycle
 
 ```
-CREATE (draft)     → no index
-EDIT draft         → no index
-PUBLISH            → commit article → synchronous index of current version
-EDIT published     → new immutable current version → commit → index that version
+CREATE (draft)     → current version index_status=pending; no chunks
+EDIT draft         → new pending current version; no chunks
+PUBLISH            → commit pending → indexing → indexed | failed
+EDIT published     → new pending current version → commit → indexing
+                     → indexed | failed
 RESTORE            → new immutable current version (existing flow)
                      → if the article is published, index the new current version
 ARCHIVE            → no delete of historical chunks; article is not indexable
@@ -143,35 +144,70 @@ context is always `enter_tenant(actor_company_id)`.
 
 ### Transaction semantics
 
-Indexing is **synchronous and post-commit** (`INDEXING_RUNS_AFTER_KB_COMMIT`).
+Indexing is **synchronous, durable, and post-commit**
+(`INDEXING_RUNS_AFTER_KB_COMMIT`).
 
 1. ArticleService publish / published-version write commits in its UnitOfWork.
-2. The indexer opens a **separate** UnitOfWork and writes chunks.
-3. There is no Celery / Redis queue / worker.
+2. The indexer durably claims the version with a PostgreSQL lease.
+3. Chunking and embedding happen before any active chunk mutation.
+4. One transaction locks the claimed version, atomically replaces its complete
+   chunk set, validates the count, and marks the version `indexed`.
+5. There is no Celery / Redis queue / worker.
 
-If step 2 fails:
+If indexing fails:
 
-- the exception is logged and **re-raised** (not swallowed);
-- the HTTP/API caller does not observe success;
-- the already-committed published article remains readable;
-- the indexer’s UoW rolls back, so no partial chunk set is stored.
+- only a bounded failure category is persisted; raw provider exceptions are not;
+- first-time indexing becomes `failed` and RAG excludes the version;
+- a failed refresh of an already indexed version keeps the previous complete
+  index active and records a stale/failure indicator;
+- a chunk persistence failure rolls back the whole replacement;
+- an expired `indexing` lease can be reclaimed by a synchronous retry.
 
-A stale derived index is therefore observable (the write API errors) rather
-than silent. Manual recovery is `POST /api/v1/knowledge/articles/{id}/reindex`
-(HR/Admin, JWT tenant only).
+Business publication and retrieval publication are separate: an article may be
+business-published while its current version is pending or failed, but RAG only
+uses a current `indexed` version whose persisted chunk count is complete.
+Manual recovery is `POST /api/v1/knowledge/articles/{id}/reindex` (HR/Admin,
+JWT tenant only).
 
 ### Idempotency
 
-Re-indexing the same `(article, current published version)` deletes that
-version’s chunks and inserts the same `(version_id, chunk_index)` set. Unique
-constraint `uq_knowledge_article_chunks_version_id_chunk_index` prevents
-duplicates. Other versions are not deleted.
+Re-indexing the same `(article, current published version)` is serialized by a
+database lease. Finalization atomically deletes and inserts the same
+`(version_id, chunk_index)` set. Unique constraint
+`uq_knowledge_article_chunks_version_id_chunk_index` prevents duplicates.
+Other versions are not deleted.
 
 ### Observability
 
 Logger `app.kb.index` records `company_id`, `article_id`, `version_id`,
 `chunk_count`, `result`, `duration_ms`. It must not log article body,
 embeddings, secrets, tokens, or credentials.
+
+`KnowledgeArticleVersion` stores `index_status`, provider/model/dimension,
+successful chunk count, timestamps, and a sanitized failure category. Corpus
+reindex reports every version independently and never labels a partial run
+complete.
+
+### Embedding compatibility (Phase 7F)
+
+Vector eligibility requires exact equality of the active and indexed
+`(provider, model, dimension)` identities. Provider names are stripped and
+lowercased; model identifiers are stripped but otherwise exact. Equal vector
+width alone is never compatibility.
+
+Compatibility is applied after `ArticleService` computes the actor's allowed
+current published articles and before query embedding/vector SQL. Incompatible
+versions are excluded only from vector search; Phase 7E-eligible chunks remain
+available to lexical FTS. The vector repository repeats the exact metadata
+filters as defense in depth. This reuses already-loaded current-version
+metadata and adds no database query or per-chunk compatibility lookup.
+
+`index_status=indexed` remains a durable statement about the completed index
+that was built. API responses compute `embedding_compatible`,
+`reindex_required`, and a sanitized mismatch reason against the active
+configuration without mutating lifecycle state. Reindexing the current
+published version replaces chunks and metadata with the active identity; no
+republish or automatic whole-corpus reindex is required.
 
 ## ACL-first hybrid retriever (AI-4)
 
@@ -186,10 +222,12 @@ AUTH
 → EMPLOYEE
 → ArticleService.list_articles (published + visibility + program ACL)
 → allowed article ids
-→ embed query (configured EmbeddingProvider)
-→ exact pgvector cosine search **inside that id set**
+→ compare each loaded current version with active embedding identity
+→ embed query only when at least one compatible vector index exists
+→ exact pgvector cosine search **inside the compatible id subset**
+→ lexical FTS inside the full allowed Phase 7E-eligible id set
 → join live current_version_id (drop historical chunks)
-→ per-article cap → top-k
+→ existing hybrid merge → per-article cap → top-k
 ```
 
 Never: tenant-wide vector search → filter unauthorized hits afterwards.
@@ -277,8 +315,8 @@ Input limits: query ≤ 2000 characters after strip; `top_k` is an integer 1..20
 
 Reindex remains HR/Admin, JWT tenant only. Company A cannot reindex or replace
 Company B chunks. Indexing failure stays on the AI-3 contract (publication
-committed, exception visible, no partial chunks, historical chunks do not
-become current, manual reindex recovers).
+committed, durable failed/stale state visible, no partial chunks, historical
+chunks do not become current, manual reindex recovers).
 
 ## Real embedding provider + production reindex (AI-6)
 
@@ -742,10 +780,27 @@ or request ids. Logs may include `conversation_id`, `company_id`,
 
 ### RLS
 
-`ai_conversations` already has tenant FORCE RLS. `ai_messages` denormalizes
-`company_id` (same child-table pattern as `progress` / chunks) and uses the
-same `tenant_isolation` policy. Employee-scoped privacy is enforced in
-`ConversationService` on top of tenant RLS.
+`ai_conversations` and `ai_messages` both use FORCE RLS. Phase 7G adds a
+transaction-local `app.current_employee_id` context resolved from the
+PostgreSQL employee row. Conversation policies require both tenant and
+employee ownership. Message policies require the tenant and derive ownership
+through the parent conversation.
+
+The effective defense is layered:
+
+```
+database-resolved employee
+  → company + employee transaction context
+  → conversation/message ownership RLS
+  → repository owner predicates
+  → ConversationService owner checks
+```
+
+Employee, HR, and Admin roles may access only their own AI history. Runtime
+platform mode does not expose tenant AI content; schema-owner maintenance uses
+the existing migrator role with `BYPASSRLS`. Transaction-local context is
+cleared by commit, rollback, or connection close and re-established by the
+UnitOfWork when needed.
 
 AI freeze (AI-11A):
 
@@ -913,9 +968,18 @@ vectors. No conversation schema changes. No new migration.
 `/newchat` clears the Redis pointer only. It does not archive or delete
 Postgres rows. A missing Redis pointer starts a new conversation.
 
-Stale pointer (HTTP 404) or archived thread (HTTP 400 with the existing
-archived-conversation contract) is recovered **once**: clear pointer, retry
-without `conversation_id`, store the new id.
+For authenticated durable Telegram delivery, a missing or archived pointer is
+recovered inside the original AI request: `AIChatService` treats the unusable
+pointer as no current conversation, creates the fresh turn under the existing
+idempotency claim, and returns the new id. The bot performs no second AI HTTP
+request.
+
+The stable Telegram AI idempotency identity is the Telegram update key plus
+normalized message input. The Redis `conversation_id` is recoverable routing
+state and is excluded from the Telegram request hash. Generic API callers keep
+the stricter `(message, conversation_id)` hash and existing foreign/missing
+conversation denial. PostgreSQL ownership remains authoritative; recovery never
+loads history through an unowned pointer.
 
 ### Identity
 

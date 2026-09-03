@@ -445,7 +445,7 @@ async def test_updated_at_changes_on_successful_turn(
         employee_a.company_id, employee_a.id
     )
     async with _uow_factory() as uow:
-        await uow.enter_tenant(company_a.id)
+        await uow.enter_employee(employee_a.id)
         await uow.session.execute(
             text("UPDATE ai_conversations SET updated_at = now() - interval '1 hour' WHERE id = :id"),
             {"id": created.id},
@@ -522,7 +522,7 @@ async def test_complete_turn_inserts_both_roles_once(
         actor_role=employee_a.role,
     )
     async with _uow_factory() as uow:
-        await uow.enter_tenant(company_a.id)
+        await uow.enter_employee(employee_a.id)
         count = (
             await uow.session.execute(
                 select(func.count()).select_from(AIMessage).where(

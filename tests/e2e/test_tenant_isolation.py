@@ -144,7 +144,7 @@ async def test_tenant_a_cannot_access_tenant_b_resources(
     invited_b_token = _invite_token(invited_b.json().get("invite_url"))
 
     async with _uow_factory() as uow:
-        await uow.enter_platform()
+        await uow.enter_employee(employee_b.id)
         conversation = await uow.ai_conversations.create(
             AIConversation(
                 company_id=company_b.id,

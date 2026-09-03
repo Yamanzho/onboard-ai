@@ -11,7 +11,8 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func
@@ -32,6 +33,7 @@ from app.db.models.ai_message import AIMessage
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
 from app.repositories.ai_conversation import ConversationSummaryRow
+from app.services.telegram_outbound import TelegramOutboundService
 from app.services.tenancy import ensure_same_company
 
 logger = logging.getLogger("app.ai.conversations")
@@ -43,8 +45,13 @@ _NOT_FOUND = "Conversation not found"
 class ConversationService:
     """Create, read, archive, and persist messages for the acting employee."""
 
-    def __init__(self, uow_factory: Callable[[], UnitOfWork] | None = None) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork] | None = None,
+        outbound_service: TelegramOutboundService | None = None,
+    ) -> None:
         self._uow_factory = uow_factory or UnitOfWork
+        self._outbound = outbound_service or TelegramOutboundService()
 
     async def create_conversation(
         self,
@@ -56,7 +63,6 @@ class ConversationService:
         started = time.perf_counter()
         normalized_title = _validate_title(title)
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             employee = await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -90,7 +96,6 @@ class ConversationService:
         include_archived: bool = True,
     ) -> AIConversation:
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -122,7 +127,6 @@ class ConversationService:
         """Active owned conversation plus chronological messages. One UoW."""
         _validate_page(offset=offset, limit=limit)
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -155,7 +159,6 @@ class ConversationService:
     ) -> list[AIConversation]:
         _validate_page(offset=offset, limit=limit)
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -179,7 +182,6 @@ class ConversationService:
         """Active conversations only, with last-message preview. Not archived."""
         _validate_page(offset=offset, limit=limit)
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -211,7 +213,6 @@ class ConversationService:
     ) -> AIConversation:
         started = time.perf_counter()
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -252,7 +253,6 @@ class ConversationService:
         normalized_content = _validate_content(content)
         try:
             async with self._uow_factory() as uow:
-                await uow.enter_tenant(actor_company_id)
                 await self._require_actor_employee(
                     uow,
                     actor_company_id=actor_company_id,
@@ -305,7 +305,6 @@ class ConversationService:
     ) -> list[AIMessage]:
         _validate_page(offset=offset, limit=limit)
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -332,7 +331,6 @@ class ConversationService:
         message_id: UUID,
     ) -> AIMessage:
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -358,7 +356,6 @@ class ConversationService:
         """Newest ``limit`` messages, returned oldest-first for the LLM."""
         _validate_page(offset=0, limit=limit)
         async with self._uow_factory() as uow:
-            await uow.enter_tenant(actor_company_id)
             await self._require_actor_employee(
                 uow,
                 actor_company_id=actor_company_id,
@@ -389,6 +386,11 @@ class ConversationService:
         conversation_id: UUID | None = None,
         citations: list[dict[str, str]] | None = None,
         no_answer: bool = False,
+        idempotency_receipt_id: UUID | None = None,
+        idempotency_owner_token: UUID | None = None,
+        idempotency_response: dict[str, Any] | None = None,
+        telegram_outbound_source_key: str | None = None,
+        telegram_outbound_body: str | None = None,
     ) -> AIConversation:
         """Persist one user+assistant turn in a single commit. No LLM/retrieval.
 
@@ -401,9 +403,17 @@ class ConversationService:
         normalized_assistant = _validate_content(assistant_content)
         stored_citations = _validate_citations(citations)
         title = title_from_user_message(normalized_user)
+        idempotency_values = (
+            idempotency_receipt_id,
+            idempotency_owner_token,
+            idempotency_response,
+        )
+        if any(value is not None for value in idempotency_values) and not all(
+            value is not None for value in idempotency_values
+        ):
+            raise ValueError("Complete idempotency ownership data is required")
         try:
             async with self._uow_factory() as uow:
-                await uow.enter_tenant(actor_company_id)
                 employee = await self._require_actor_employee(
                     uow,
                     actor_company_id=actor_company_id,
@@ -432,7 +442,7 @@ class ConversationService:
                         )
                     if conversation.title is None:
                         conversation.title = title
-                turned_at = datetime.now(timezone.utc)
+                turned_at = datetime.now(UTC)
                 await uow.ai_messages.create(
                     AIMessage(
                         conversation_id=conversation.id,
@@ -459,6 +469,37 @@ class ConversationService:
                 conversation.updated_at = func.now()
                 await uow.session.flush()
                 await uow.session.refresh(conversation)
+                if telegram_outbound_source_key is not None:
+                    if telegram_outbound_body is None:
+                        raise ValueError("Telegram outbound body is required")
+                    if employee.telegram_chat_id is None:
+                        raise ConflictError("Employee has no linked Telegram chat")
+                    await self._outbound.enqueue_in_uow(
+                        uow,
+                        company_id=employee.company_id,
+                        employee_id=employee.id,
+                        chat_id=employee.telegram_chat_id,
+                        source_type="ai_chat",
+                        source_key=telegram_outbound_source_key,
+                        body=telegram_outbound_body,
+                    )
+                if (
+                    idempotency_receipt_id is not None
+                    and idempotency_owner_token is not None
+                    and idempotency_response is not None
+                ):
+                    cached_response = dict(idempotency_response)
+                    cached_response["conversation_id"] = str(conversation.id)
+                    receipt = await uow.idempotency_receipts.complete(
+                        receipt_id=idempotency_receipt_id,
+                        owner_token=idempotency_owner_token,
+                        completed_at=datetime.now(UTC),
+                        response=cached_response,
+                        company_id=employee.company_id,
+                        employee_id=employee.id,
+                    )
+                    if receipt is None:
+                        raise ConflictError("Idempotency claim ownership was lost")
                 await uow.commit()
         except IntegrityError as exc:
             raise ConflictError("Could not persist conversation turn") from exc
@@ -479,16 +520,17 @@ class ConversationService:
         actor_company_id: UUID,
         actor_employee_id: UUID,
     ) -> Employee:
-        employee = await uow.employees.get_by_id(actor_employee_id)
-        if employee is None:
+        try:
+            employee = await uow.enter_employee(actor_employee_id)
+        except LookupError as exc:
+            raise NotFoundError("Employee not found") from exc
+        if employee.id != actor_employee_id:
             raise NotFoundError("Employee not found")
         ensure_same_company(
             resource_company_id=employee.company_id,
             actor_company_id=actor_company_id,
             not_found_message="Employee not found",
         )
-        if employee.id != actor_employee_id:
-            raise NotFoundError("Employee not found")
         return employee
 
 

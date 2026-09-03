@@ -14,6 +14,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from app.bot.api.client import OnboardApiClient
 from app.bot.handlers import get_handlers_router
 from app.bot.middlewares.api_client import ApiClientMiddleware
+from app.bot.middlewares.idempotency import TelegramUpdateIdempotencyMiddleware
 from app.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,7 @@ def create_dispatcher(
 ) -> Dispatcher:
     settings = settings or get_settings()
     dispatcher = Dispatcher(storage=_create_storage(settings))
+    dispatcher.update.middleware(TelegramUpdateIdempotencyMiddleware(api_client))
     dispatcher.update.middleware(ApiClientMiddleware(api_client))
     dispatcher.include_router(get_handlers_router())
     return dispatcher

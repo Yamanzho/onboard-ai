@@ -1,175 +1,296 @@
-# Runbook: PostgreSQL backup and restore (production pilot)
+# Runbook: automated PostgreSQL backup and recovery
 
-This is an **operator** runbook. OnboardAI does not ship backup infrastructure
-inside the application. Do not add backup workers, object-storage clients, or
-scheduled jobs to the API.
+This is an operator runbook for the single-VPS production pilot. Backup and
+restore jobs run on the host, not in the API or bot. Repository templates do
+not install timers, upload a backup, or touch production automatically.
 
-Production Compose keeps Postgres on the internal network only
-(`docker-compose.prod.yml` publishes no DB port). All backup/restore commands
-run on the VPS via `docker compose exec`.
+Production PostgreSQL is `pgvector/pgvector:pg16`, service `db`, database
+`onboard_ai`, with data in external volume `onboard-ai_postgres_data`.
+A copy on that VPS is not disaster recovery; every valid production backup is
+stored off the VPS.
 
-Never paste live passwords, dump contents, or encryption keys into tickets,
-chat, or git.
+## Recovery objectives
 
-Related: [postgres-password-rotation.md](postgres-password-rotation.md).
+- Target RPO: **6 hours**, once all four daily backup timer runs complete and
+  upload successfully. There is no WAL archive/PITR in Phase 8A.
+- Target RTO: **4 hours** assuming a replacement VPS, Docker, repository,
+  application secrets, and backup credentials are available.
+- The RTO is a pilot target, not a guarantee. Record production-sized drills.
+- Restore verification runs daily against the newest remotely stored artifact.
 
----
+A backup is valid only after an isolated PostgreSQL instance restores it and
+passes the automated integrity checks.
 
-## 1. PostgreSQL backup
+## Protection model
 
-Use logical dumps (`pg_dump`) for the pilot. This captures the application
-database (schema + data) without copying Redis or container images.
+The production job creates a PostgreSQL custom-format logical dump using
+`onboard_owner`. This role has `BYPASSRLS` and can dump all tenants; never use
+`onboard_app`, whose FORCE RLS view may be empty or tenant-scoped.
 
-From the compose project directory (typically `/opt/onboard-ai`):
+Artifacts:
 
-```bash
-set -eu
-STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-BACKUP_DIR=/var/backups/onboard-ai
-sudo mkdir -p "$BACKUP_DIR"
-sudo chmod 700 "$BACKUP_DIR"
-
-# Dump from inside the db container (no host Postgres port in production).
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T db \
-  pg_dump -U "${POSTGRES_USER:-onboard}" -d "${POSTGRES_DB:-onboard_ai}" \
-  --format=custom --file="/tmp/onboard_ai_${STAMP}.dump"
-
-docker compose -f docker-compose.yml -f docker-compose.prod.yml cp \
-  "db:/tmp/onboard_ai_${STAMP}.dump" \
-  "${BACKUP_DIR}/onboard_ai_${STAMP}.dump"
-
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T db \
-  rm -f "/tmp/onboard_ai_${STAMP}.dump"
+```text
+onboardai-postgres-onboard_ai-YYYYMMDDTHHMMSSZ.dump
+onboardai-postgres-onboard_ai-YYYYMMDDTHHMMSSZ.dump.sha256
 ```
 
-Custom format (`--format=custom`) is restore-friendly (`pg_restore`) and
-compresses better than plain SQL.
+Custom format is compressed (`--compress=9`) and restore-friendly. The script
+writes mode-0600 partial files, fsyncs them, validates the `PGDMP` signature,
+atomically renames them, then generates SHA-256. It never treats an S3 ETag as
+a checksum.
 
-Do **not** treat `docker volume backup` / copying `postgres_data` as the primary
-method: it is version-sensitive and easy to restore onto the wrong image.
+Off-host storage uses:
 
-Redis is cache + bot FSM. Do not back it up as source of truth. After restore,
-bot sessions re-authenticate via Telegram.
+- a private S3-compatible bucket;
+- HTTPS transport;
+- prefix-scoped credentials;
+- no public ACL;
+- mandatory `AES256` SSE-S3 or configured `aws:kms`;
+- dump and SHA-256 sidecar uploaded separately;
+- remote size verification before success;
+- 30-day prefix-scoped retention by default.
 
----
+SSE protects storage media but does not hide data from the storage provider.
+For an untrusted-provider threat model, add standard client-side `age`
+encryption in a later reviewed change and keep its private identity outside
+both the VPS and object-storage account. Do not invent cryptography or reuse a
+database/application password as an encryption key.
 
-## 2. Backup storage
+## Prerequisites
 
-Keep **at least one copy off the VPS**. A dump that only lives on the same disk
-as `postgres_data` is lost with the server.
+On the VPS:
 
-Recommended split:
+1. Docker Engine and Compose plugin (already required by deployment).
+2. Python 3.
+3. AWS CLI compatible with the chosen S3 endpoint.
+4. A private bucket and credential limited to the configured prefix. Required
+   actions are ListBucket on the prefix plus GetObject, PutObject, DeleteObject,
+   and HeadObject for prefix objects.
+5. Bucket public access blocked. Enable bucket versioning/lifecycle protection
+   as defense in depth when supported.
 
-| Copy | Location | Purpose |
-|------|----------|---------|
-| Local | `/var/backups/onboard-ai` on the VPS (`mode 700`, root-only) | Fast restore |
-| Off-box | Separate object storage / another host / encrypted USB held by ops | Disaster recovery |
-
-Copy off-box with the operator’s existing tool (`scp`, `rclone`, provider CLI).
-Do not commit dumps to git.
-
----
-
-## 3. Encryption
-
-Encrypt dumps **before** they leave the VPS. Age or GnuPG both work. Example
-with age (recipient public key stored in the operator’s secret manager):
+Do not store backup credentials in the application `.env`. Create a separate
+host-only file:
 
 ```bash
-age -r "$BACKUP_AGE_RECIPIENT" \
-  -o "${BACKUP_DIR}/onboard_ai_${STAMP}.dump.age" \
-  "${BACKUP_DIR}/onboard_ai_${STAMP}.dump"
-shred -u "${BACKUP_DIR}/onboard_ai_${STAMP}.dump"
+sudo install -d -m 700 /etc/onboard-ai
+sudo install -m 600 \
+  /opt/onboard-ai/deploy/systemd/backup.env.example \
+  /etc/onboard-ai/backup.env
+sudoedit /etc/onboard-ai/backup.env
 ```
 
-Store the age identity / GPG private key **outside** the VPS. A key that only
-exists on the same host as the ciphertext is not a recovery plan.
+Replace every placeholder. `BACKUP_S3_ENDPOINT` must be HTTPS. Use `AES256` or
+`aws:kms`; the latter also requires `BACKUP_S3_KMS_KEY_ID`.
 
-Do not encrypt with a passphrase that is also `POSTGRES_PASSWORD` or `SECRET_KEY`.
+## Manual backup
 
----
+Start the same oneshot service used by the timer. `EnvironmentFile` avoids
+putting secrets in shell arguments:
 
-## 4. Retention
+```bash
+sudo systemctl start onboardai-postgres-backup.service
+sudo journalctl -u onboardai-postgres-backup.service --since today
+```
 
-Pilot policy (adjust only with an explicit ops decision):
+For a local drill only, with disposable credentials and database:
 
-| Age | Action |
-|-----|--------|
-| Daily | Keep 7 encrypted dumps |
-| Weekly | Keep 4 encrypted dumps (one per week) |
-| Older | Delete from the VPS **after** confirming the off-box copy exists |
+```bash
+python3 -m scripts.postgres_backup --local-only
+```
 
-Document the actual job (cron / systemd timer) on the server. This repository
-does not install that timer.
+`--local-only` is not a production backup because it does not survive VPS loss.
 
----
+## Install scheduling
 
-## 5. Restore
+Review paths first; templates assume `/opt/onboard-ai`.
 
-Restoring **replaces** the live database. Take a fresh dump first if the current
-volume still has data you might need.
+```bash
+sudo install -d -m 700 /var/backups/onboard-ai /var/lib/onboard-ai-backup
+sudo install -m 644 deploy/systemd/onboardai-postgres-backup.service \
+  deploy/systemd/onboardai-postgres-backup.timer \
+  deploy/systemd/onboardai-postgres-restore-verify.service \
+  deploy/systemd/onboardai-postgres-restore-verify.timer \
+  /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now onboardai-postgres-backup.timer
+sudo systemctl enable --now onboardai-postgres-restore-verify.timer
+sudo systemctl list-timers 'onboardai-postgres-*'
+```
 
-1. Decrypt the chosen dump on an operator workstation or on the VPS into a
-   root-only directory.
-2. Stop writers:
+The backup timer runs at 00:15, 06:15, 12:15, and 18:15 UTC with randomized
+delay. Restore verification runs daily at 03:30 UTC. `Persistent=true` runs a
+missed job after host recovery. Application deploy/restart does not control
+either schedule.
+
+## Automated restore verification
+
+The verification service:
+
+1. Lists only recognized objects below `BACKUP_S3_PREFIX`.
+2. Downloads the newest dump and matching checksum to a private temporary dir.
+3. Verifies non-empty size, SHA-256, and `PGDMP` signature.
+4. Creates a uniquely named, unpublished, network-isolated
+   `pgvector/pgvector:pg16` container.
+5. Refuses production names and requires `--confirm-non-production`.
+6. Creates disposable `onboard_owner`/`onboard_app` roles.
+7. Runs `pg_restore --list`, restores with `--exit-on-error`, and checks:
+   - readable Alembic revision;
+   - `vector` extension;
+   - core application tables and row-count queries;
+   - RLS helper functions and policies;
+   - RLS and FORCE RLS flags;
+   - `onboard_owner` BYPASSRLS and `onboard_app` NOBYPASSRLS;
+   - runtime table grants;
+   - representative foreign keys.
+8. Removes the disposable container and temporary download on every outcome.
+
+Manual local verification:
+
+```bash
+python3 -m scripts.postgres_restore_verify \
+  --artifact /safe/path/onboardai-postgres-onboard_ai-YYYYMMDDTHHMMSSZ.dump \
+  --checksum /safe/path/onboardai-postgres-onboard_ai-YYYYMMDDTHHMMSSZ.dump.sha256 \
+  --confirm-non-production
+```
+
+Do not rename a production container to bypass the guard. This command never
+restores into an existing database or volume.
+
+## Retention
+
+`BACKUP_RETENTION_DAYS=30` retains recognized daily artifacts for 30 days.
+Deletion occurs only after the current dump and checksum both upload and pass
+remote size checks. The same prefix/name/age guard prunes completed local
+artifacts so the VPS backup directory does not grow without bound. The current
+pair is excluded.
+
+Only keys matching this shape beneath the configured prefix are eligible:
+
+```text
+onboardai-postgres-<configured-database>-YYYYMMDDTHHMMSSZ.dump[.sha256]
+```
+
+Unrelated bucket objects are ignored. A retention failure logs
+`event=retention_warning` but does not invalidate an already uploaded backup.
+Provider lifecycle policy may be configured as additional protection, but must
+not retain fewer objects than the documented RPO/retention policy.
+
+## Status and future alerts
+
+Stable logs begin with:
+
+```text
+onboardai_postgres_backup event=...
+onboardai_postgres_restore_verify event=...
+```
+
+Success markers (mode 0600):
+
+```text
+/var/lib/onboard-ai-backup/last-backup.json
+/var/lib/onboard-ai-backup/last-restore-verification.json
+```
+
+Phase 8B monitoring can alert on:
+
+- non-zero systemd service result;
+- no successful remote backup marker for more than 8 hours
+  (6-hour schedule plus 2 hours of timer/runtime slack);
+- no successful restore-verification marker for more than 36 hours
+  (daily schedule plus 12 hours of timer/runtime slack);
+- `event=retention_warning`;
+- artifact/checksum/restore/integrity failure.
+
+Logs include timestamps, artifact/object names, byte size, checksum prefix,
+duration, and outcomes. They must never include database URLs, passwords,
+access keys, dump contents, prompts, or application row values.
+
+## Failure behavior
+
+| Failure | Backup valid? | Exit | Operator action |
+|---|---:|---:|---|
+| PostgreSQL unavailable or `pg_dump` fails | No | non-zero | Check `docker compose ps db`, storage, role password; retry |
+| Local disk full/write/fsync failure | No | non-zero | Free space, remove only known old artifacts; retry |
+| Empty/wrong-format artifact | No | non-zero | Inspect PostgreSQL/container logs; retry |
+| Checksum creation/mismatch | No | non-zero | Discard artifact pair and rerun |
+| Remote unavailable/upload timeout | No off-host backup | non-zero | Keep local completed dump, fix network/credentials, rerun |
+| Remote size mismatch | No | non-zero | Remove bad remote object and rerun |
+| Retention cleanup failure after upload | Yes | zero with warning | Review prefix and clean up safely |
+| Restore verification failure | Backup unverified | non-zero | Preserve evidence, test previous artifact, investigate immediately |
+
+Incomplete `.partial` files are removed. A completed local artifact is retained
+when remote upload fails so an operator can retry/recover it.
+
+## Full VPS-loss recovery
+
+Do not start API/bot writers before database restoration.
+
+1. Provision a new host and install Docker/Compose.
+2. Clone the reviewed repository revision.
+3. Restore application and backup credentials from the secret manager. Backup
+   restoration does not recover `SECRET_KEY`, Telegram/OpenAI tokens, SMTP
+   credentials, or object-storage credentials.
+4. Create a fresh PostgreSQL volume; do not attach an unknown old volume.
+5. Start only PostgreSQL:
 
    ```bash
-   docker compose -f docker-compose.yml -f docker-compose.prod.yml stop api bot
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d db
    ```
 
-3. Restore into the running `db` container (empty the target database first, or
-   restore onto a new volume — do not mix two dumps):
+6. Download the latest **successfully restore-verified** dump and checksum.
+   Validate SHA-256 before restore.
+7. Bootstrap roles/extensions without starting the normal API entrypoint:
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm \
+     --no-deps --entrypoint python api -m scripts.bootstrap_rls_roles
+   ```
+
+8. Copy the dump to `db` and restore as the bootstrap superuser. The logical
+   dump preserves schema ownership, grants, policies, RLS, and data:
 
    ```bash
    docker compose -f docker-compose.yml -f docker-compose.prod.yml cp \
-     ./onboard_ai_RESTORE.dump db:/tmp/restore.dump
-
+     ./onboardai-postgres-RESTORE.dump db:/tmp/restore.dump
    docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T db \
-     pg_restore -U "${POSTGRES_USER:-onboard}" -d "${POSTGRES_DB:-onboard_ai}" \
-     --clean --if-exists --no-owner --role=onboard_owner \
-     /tmp/restore.dump
-   ```
-
-   If `--role=onboard_owner` fails on a particular dump, restore as
-   `POSTGRES_USER` then start the API so `bootstrap_rls_roles` re-applies
-   `onboard_app` / `onboard_owner` privileges.
-
-4. Remove the plaintext dump from the container:
-
-   ```bash
+     pg_restore -U "${POSTGRES_USER:-onboard}" \
+       -d "${POSTGRES_DB:-onboard_ai}" --clean --if-exists --exit-on-error \
+       /tmp/restore.dump
    docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T db \
      rm -f /tmp/restore.dump
    ```
 
-5. Start API/bot and confirm Super Admin login still works.
+9. Read the restored revision before upgrading:
 
-Do **not** delete `postgres_data` to “make restore easier” unless you are
-intentionally rebuilding from dump onto a new volume. Volume wipe is data loss.
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T db \
+     psql -U "${POSTGRES_USER:-onboard}" -d "${POSTGRES_DB:-onboard_ai}" \
+       -c 'TABLE alembic_version'
+   ```
 
----
+10. Run `alembic upgrade head` only if deploying application code newer than
+    the restored revision. Do not silently upgrade during basic verification.
+11. Start API, Redis, frontend, and bot; check `/ready`, Super Admin login,
+    tenant access, Telegram authentication, and the production golden path.
+12. Record artifact, checksum prefix, dump/restore/verification durations,
+    operator, and outcome.
 
-## 6. Restore verification
+Redis contains cache/FSM/session-pointer state and is not the PostgreSQL source
+of truth. Users/bot sessions may need to authenticate again.
 
-After every restore (including a scheduled drill, not only incidents):
+## Credential compromise
 
-1. `curl -fsS https://<pilot-host>/health` returns `{"status":"ok"}`.
-2. Super Admin can log in (`POST /api/v1/super-admin/auth/login`).
-3. The pilot company row exists; `company_subscriptions.is_current` is trial or
-   active with `ends_at` in the future (or NULL).
-4. An invited or active employee can be loaded; invite tokens remain **hashed**
-   (`employee_invites.token_hash`) — plaintext tokens must not appear in the dump
-   in usable form (they were never stored).
-5. HR can open an assignment and see progress rows.
-6. Record the drill: dump filename, restore time, who ran it, pass/fail.
+A database restore does not make compromised external credentials safe. Rotate
+affected database, JWT, bot, OpenAI, SMTP, and storage credentials through
+their dedicated procedures. Do not overwrite restored database state merely to
+rotate a role password.
 
-Run a restore drill **before** the first real employees join, and at least once
-per retention cycle.
+## Not provided by Phase 8A
 
----
-
-## What this runbook does not do
-
-- Application-level backup APIs
-- WAL-G / Barman / PITR (add later if the pilot outgrows `pg_dump`)
-- Redis persistence as a recovery target
-- Automatic off-site replication
+- WAL archiving or point-in-time recovery;
+- high availability or automatic failover;
+- managed PostgreSQL;
+- Redis disaster recovery;
+- automatic installation on production;
+- client-side encryption/key escrow.

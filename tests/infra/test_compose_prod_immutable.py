@@ -114,11 +114,16 @@ def test_entrypoint_api_reload_only_outside_production() -> None:
     assert len(reload_lines) == 1
     assert reload_lines[0].startswith("exec uvicorn")
     # Production branch must not mention --reload on the workers line.
-    prod_block_start = script.index('if [ "${APP_ENV_VALUE}" = "production" ]; then')
-    prod_block_end = script.index("fi", prod_block_start)
+    prod_block_start = script.index("starting uvicorn")
+    prod_block_start = script.index(
+        'if [ "${APP_ENV_VALUE}" = "production" ]; then',
+        prod_block_start,
+    )
+    prod_block_end = script.index("\nfi\n", prod_block_start)
     prod_block = script[prod_block_start:prod_block_end]
     assert "--reload" not in prod_block
     assert "--workers" in prod_block
+    assert "--timeout-graceful-shutdown" in prod_block
     assert "--proxy-headers" in prod_block
     assert "--forwarded-allow-ips=" in prod_block
 

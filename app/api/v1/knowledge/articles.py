@@ -12,14 +12,17 @@ from app.schemas.knowledge.article import (
     ArticleListResponse,
     ArticleResponse,
     ArticleUpdate,
+    CorpusReindexItemResponse,
     CorpusReindexResponse,
     article_response,
 )
 from app.schemas.knowledge.version import (
     ArticleVersionListResponse,
     ArticleVersionResponse,
-    ArticleVersionSummary,
+    article_version_response,
+    article_version_summary,
 )
+from app.services.ai.embedding_identity import active_embedding_identity
 from app.services.ai.indexer import KnowledgeChunkIndexer
 from app.services.knowledge.article_service import ArticleService
 
@@ -134,8 +137,12 @@ async def list_articles(
         actor_role=current_user.role,
         actor_employee_id=current_user.id,
     )
+    active = active_embedding_identity()
     return ArticleListResponse(
-        items=[article_response(article) for article in articles],
+        items=[
+            article_response(article, active_embedding=active)
+            for article in articles
+        ],
     )
 
 
@@ -203,8 +210,9 @@ async def list_article_versions(
         offset=offset,
         limit=limit,
     )
+    active = active_embedding_identity()
     return ArticleVersionListResponse(
-        items=[ArticleVersionSummary.model_validate(row) for row in versions],
+        items=[article_version_summary(row, active=active) for row in versions],
     )
 
 
@@ -236,7 +244,7 @@ async def get_article_version(
         company_id=current_user.company_id,
         actor_role=current_user.role,
     )
-    return ArticleVersionResponse.model_validate(row)
+    return article_version_response(row)
 
 
 @router.post(
@@ -361,9 +369,7 @@ async def publish_article(
         status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
             status.HTTP_500_INTERNAL_SERVER_ERROR
         ],
-        status.HTTP_503_SERVICE_UNAVAILABLE: ERROR_RESPONSES[
-            status.HTTP_503_SERVICE_UNAVAILABLE
-        ],
+        status.HTTP_503_SERVICE_UNAVAILABLE: ERROR_RESPONSES[status.HTTP_503_SERVICE_UNAVAILABLE],
     },
 )
 async def reindex_published_corpus(
@@ -386,8 +392,22 @@ async def reindex_published_corpus(
         claimed_company_id=company_id,
     )
     return CorpusReindexResponse(
+        attempted_articles=result.attempted_articles,
+        succeeded_articles=result.succeeded_articles,
+        failed_articles=result.failed_articles,
         indexed_articles=result.indexed_articles,
         indexed_chunks=result.indexed_chunks,
+        complete=result.complete,
+        items=[
+            CorpusReindexItemResponse(
+                article_id=item.article_id,
+                version_id=item.version_id,
+                status=item.status,
+                indexed_chunks=item.indexed_chunks,
+                failure_category=item.failure_category,
+            )
+            for item in result.items
+        ],
     )
 
 
@@ -412,9 +432,7 @@ async def reindex_published_corpus(
         status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
             status.HTTP_500_INTERNAL_SERVER_ERROR
         ],
-        status.HTTP_503_SERVICE_UNAVAILABLE: ERROR_RESPONSES[
-            status.HTTP_503_SERVICE_UNAVAILABLE
-        ],
+        status.HTTP_503_SERVICE_UNAVAILABLE: ERROR_RESPONSES[status.HTTP_503_SERVICE_UNAVAILABLE],
     },
 )
 async def reindex_article(
@@ -435,8 +453,7 @@ async def reindex_article(
         UUID | None,
         Query(
             description=(
-                "Version to index. Must be the article's current published "
-                "version when provided."
+                "Version to index. Must be the article's current published version when provided."
             ),
         ),
     ] = None,
@@ -451,9 +468,7 @@ async def reindex_article(
         )
         resolved_version_id = article.current_version_id
         if resolved_version_id is None:
-            raise ValidationError(
-                f"Cannot index article {article_id} without a current version"
-            )
+            raise ValidationError(f"Cannot index article {article_id} without a current version")
     await indexer.index_published_version(
         actor_company_id=actor_company_id,
         article_id=article_id,

@@ -20,10 +20,53 @@ from app.db.models.onboarding_program import OnboardingProgram
 from app.db.models.platform_audit_log import PlatformAuditLog
 from app.db.models.refresh_session import RefreshSession
 from app.db.uow import UnitOfWork
+from app.services.telegram_outbound import TelegramOutboundService
 from tests.conftest import auth_header
 
 
 pytestmark = pytest.mark.security
+
+
+@pytest.mark.asyncio
+async def test_telegram_outbox_rls_blocks_cross_tenant_read_and_update(
+    app_role_session: AsyncSession,
+    company_a: Company,
+    company_b: Company,
+    employee_a: Employee,
+) -> None:
+    source_key = f"telegram-update:{uuid4().int}:ai-chat"
+    async with _uow() as uow:
+        await uow.enter_tenant(company_a.id)
+        row = await TelegramOutboundService().enqueue_in_uow(
+            uow,
+            company_id=company_a.id,
+            employee_id=employee_a.id,
+            chat_id=employee_a.telegram_chat_id or employee_a.telegram_user_id,
+            source_type="ai_chat",
+            source_key=source_key,
+            body="Tenant A only",
+        )
+        await uow.commit()
+
+    await _set_tenant(app_role_session, company_b.id)
+    visible = (
+        await app_role_session.execute(
+            text(
+                "SELECT count(*) FROM telegram_outbound_messages WHERE id = :id"
+            ),
+            {"id": row.id},
+        )
+    ).scalar_one()
+    mutated = await app_role_session.execute(
+        text(
+            "UPDATE telegram_outbound_messages SET status = 'sent' "
+            "WHERE id = :id"
+        ),
+        {"id": row.id},
+    )
+    assert visible == 0
+    assert mutated.rowcount == 0
+    await app_role_session.rollback()
 
 
 def _uow() -> UnitOfWork:
@@ -50,6 +93,7 @@ async def _set_tenant(session: AsyncSession, company_id) -> None:
         text("SELECT set_config('app.current_company_id', :v, true)"),
         {"v": str(company_id)},
     )
+    await session.execute(text("SELECT set_config('app.current_employee_id', '', true)"))
     await session.execute(text("SELECT set_config('app.platform_admin', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_mode', '', true)"))
     await session.execute(text("SELECT set_config('app.session_mode', '', true)"))
@@ -63,6 +107,7 @@ async def _set_tenant(session: AsyncSession, company_id) -> None:
 async def _set_platform(session: AsyncSession) -> None:
     await session.execute(text("SELECT set_config('app.platform_admin', 'on', true)"))
     await session.execute(text("SELECT set_config('app.current_company_id', '', true)"))
+    await session.execute(text("SELECT set_config('app.current_employee_id', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_mode', '', true)"))
     await session.execute(text("SELECT set_config('app.session_mode', '', true)"))
     await session.execute(text("SELECT set_config('app.auth_employee_id', '', true)"))
@@ -75,6 +120,7 @@ async def _set_platform(session: AsyncSession) -> None:
 async def _clear_gucs(session: AsyncSession) -> None:
     for key in (
         "app.current_company_id",
+        "app.current_employee_id",
         "app.platform_admin",
         "app.auth_mode",
         "app.session_mode",
@@ -101,6 +147,7 @@ async def _set_auth(
 ) -> None:
     await session.execute(text("SELECT set_config('app.auth_mode', 'bootstrap', true)"))
     await session.execute(text("SELECT set_config('app.current_company_id', '', true)"))
+    await session.execute(text("SELECT set_config('app.current_employee_id', '', true)"))
     await session.execute(text("SELECT set_config('app.platform_admin', '', true)"))
     await session.execute(text("SELECT set_config('app.session_mode', '', true)"))
     await session.execute(

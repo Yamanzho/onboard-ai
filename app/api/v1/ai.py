@@ -6,7 +6,7 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.api.auth_deps import EmployeeUser
 from app.api.deps import get_ai_chat_service
@@ -14,6 +14,7 @@ from app.api.v1.responses import ERROR_RESPONSES
 from app.core.config import get_settings
 from app.core.rate_limit import is_rate_limited
 from app.core.request_id import request_id_log_value
+from app.core.security import verify_bot_service_token
 from app.schemas.ai import AIChatCitation, AIChatRequest, AIChatResponse
 from app.services.ai.chat import AIChatService, ChatAnswer
 from app.services.ai.metrics import incr
@@ -31,6 +32,7 @@ _CHAT_RESPONSES = {
         "description": "Authenticated employee required, or Super Admin without impersonation",
     },
     status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+    status.HTTP_409_CONFLICT: ERROR_RESPONSES[status.HTTP_409_CONFLICT],
     status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
         status.HTTP_422_UNPROCESSABLE_CONTENT
     ],
@@ -64,18 +66,56 @@ async def create_ai_chat(
     payload: AIChatRequest,
     current_user: EmployeeUser,
     service: AIChatServiceDep,
+    idempotency_key: Annotated[
+        str | None,
+        Header(
+            alias="Idempotency-Key",
+            min_length=8,
+            max_length=128,
+        ),
+    ] = None,
+    x_telegram_delivery: Annotated[
+        str | None,
+        Header(alias="X-Telegram-Delivery"),
+    ] = None,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
 ) -> AIChatResponse:
-    _enforce_ai_chat_rate_limit(
-        company_id=current_user.company_id,
-        employee_id=current_user.id,
-        actor_role=current_user.role,
-    )
+    telegram_delivery = x_telegram_delivery == "durable"
+    if x_telegram_delivery is not None and not telegram_delivery:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Telegram delivery mode",
+        )
+    if telegram_delivery and not verify_bot_service_token(
+        x_bot_service_token or ""
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
+    def enforce_rate_limit() -> None:
+        _enforce_ai_chat_rate_limit(
+            company_id=current_user.company_id,
+            employee_id=current_user.id,
+            actor_role=current_user.role,
+        )
+
+    if idempotency_key is None:
+        enforce_rate_limit()
     result = await service.answer(
         payload.message,
         actor_company_id=current_user.company_id,
         actor_employee_id=current_user.id,
         actor_role=current_user.role,
         conversation_id=payload.conversation_id,
+        idempotency_key=idempotency_key,
+        on_idempotency_acquired=(
+            enforce_rate_limit if idempotency_key is not None else None
+        ),
+        telegram_delivery=telegram_delivery,
     )
     return _to_http_response(result)
 

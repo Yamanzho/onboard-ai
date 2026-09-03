@@ -17,6 +17,7 @@ from app.core.ai_constants import (
 )
 from app.core.exceptions import ServiceUnavailableError, ValidationError
 from app.core.request_id import request_id_log_value
+from app.services.ai.embedding_identity import EmbeddingDimensionMismatchError
 from app.services.ai.embeddings import _require_non_empty_text
 from app.services.ai.openai_http import (
     ProviderFailure,
@@ -70,6 +71,10 @@ class OpenAIEmbeddingProvider:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def provider_name(self) -> str:
+        return "openai"
 
     async def embed(self, text: str) -> list[float]:
         vectors = await self.embed_batch((text,))
@@ -137,6 +142,7 @@ class OpenAIEmbeddingProvider:
                 payload,
                 timeout=self._timeout,
                 kind="embedding",
+                model=self._model,
             )
         except ProviderFailure as exc:
             exc.reraise_app()
@@ -165,7 +171,7 @@ def _parse_embedding_response(
         if not isinstance(index, int) or isinstance(index, bool):
             raise ValidationError("embedding provider returned an invalid vector")
         if not isinstance(embedding, list) or len(embedding) != dimension:
-            raise ValidationError(
+            raise EmbeddingDimensionMismatchError(
                 "embedding dimension mismatch: expected "
                 f"{dimension}, got {len(embedding) if isinstance(embedding, list) else 0}"
             )

@@ -12,6 +12,7 @@ from app.bot.handlers.ai import ai_question, cmd_newchat
 from app.bot.services.ai_client import (
     MSG_INTERNAL,
     MSG_NEW_CHAT,
+    MSG_UNAUTHENTICATED,
     MSG_UNAVAILABLE,
     ask_company_knowledge,
     format_ai_reply,
@@ -107,27 +108,18 @@ async def test_newchat_does_not_run_during_onboarding_fsm(
 
 
 @pytest.mark.asyncio
-async def test_stale_404_is_retried_once_without_conversation_id(
+async def test_stale_404_is_not_retried_by_bot(
     telegram_conversation_store: TelegramConversationStore,
 ) -> None:
     stale = uuid4()
-    fresh = uuid4()
     await telegram_conversation_store.set_current_conversation(42, stale)
     api = AsyncMock(spec=OnboardApiClient)
     api.post_ai_chat = AsyncMock(
-        side_effect=[
-            OnboardApiError(
-                "API POST /api/v1/ai/chat failed (404): Conversation not found",
-                status_code=404,
-                detail="Conversation not found",
-            ),
-            {
-                "answer": "ok",
-                "no_answer": False,
-                "conversation_id": str(fresh),
-                "citations": [],
-            },
-        ]
+        side_effect=OnboardApiError(
+            "API POST /api/v1/ai/chat failed (404): Conversation not found",
+            status_code=404,
+            detail="Conversation not found",
+        )
     )
     reply = await ask_company_knowledge(
         api,
@@ -135,37 +127,25 @@ async def test_stale_404_is_retried_once_without_conversation_id(
         telegram_user_id=42,
         conversations=telegram_conversation_store,
     )
-    assert reply == "ok"
-    assert api.post_ai_chat.await_count == 2
-    assert api.post_ai_chat.await_args_list[0].kwargs["conversation_id"] == stale
-    assert api.post_ai_chat.await_args_list[1].args == ("VPN?",)
-    assert api.post_ai_chat.await_args_list[1].kwargs == {}
-    assert await telegram_conversation_store.get_current_conversation(42) == fresh
+    assert reply == MSG_UNAUTHENTICATED
+    api.post_ai_chat.assert_awaited_once_with("VPN?", conversation_id=stale)
+    assert await telegram_conversation_store.get_current_conversation(42) == stale
 
 
 @pytest.mark.asyncio
-async def test_archived_400_is_retried_once(
+async def test_archived_400_is_not_retried_by_bot(
     telegram_conversation_store: TelegramConversationStore,
 ) -> None:
     stale = uuid4()
-    fresh = uuid4()
     await telegram_conversation_store.set_current_conversation(42, stale)
     api = AsyncMock(spec=OnboardApiClient)
     api.post_ai_chat = AsyncMock(
-        side_effect=[
-            OnboardApiError(
-                "API POST /api/v1/ai/chat failed (400): "
-                "Cannot add messages to an archived conversation",
-                status_code=400,
-                detail="Cannot add messages to an archived conversation",
-            ),
-            {
-                "answer": "new thread",
-                "no_answer": True,
-                "conversation_id": str(fresh),
-                "citations": [],
-            },
-        ]
+        side_effect=OnboardApiError(
+            "API POST /api/v1/ai/chat failed (400): "
+            "Cannot add messages to an archived conversation",
+            status_code=400,
+            detail="Cannot add messages to an archived conversation",
+        )
     )
     reply = await ask_company_knowledge(
         api,
@@ -173,9 +153,9 @@ async def test_archived_400_is_retried_once(
         telegram_user_id=42,
         conversations=telegram_conversation_store,
     )
-    assert "new thread" in reply
-    assert api.post_ai_chat.await_count == 2
-    assert await telegram_conversation_store.get_current_conversation(42) == fresh
+    assert reply == MSG_INTERNAL
+    api.post_ai_chat.assert_awaited_once_with("VPN?", conversation_id=stale)
+    assert await telegram_conversation_store.get_current_conversation(42) == stale
 
 
 @pytest.mark.asyncio
@@ -201,31 +181,6 @@ async def test_generic_400_is_not_retried(
     assert reply == MSG_INTERNAL
     api.post_ai_chat.assert_awaited_once()
     assert await telegram_conversation_store.get_current_conversation(42) == stale
-
-
-@pytest.mark.asyncio
-async def test_stale_retry_failure_is_not_looped(
-    telegram_conversation_store: TelegramConversationStore,
-) -> None:
-    stale = uuid4()
-    await telegram_conversation_store.set_current_conversation(42, stale)
-    api = AsyncMock(spec=OnboardApiClient)
-    api.post_ai_chat = AsyncMock(
-        side_effect=OnboardApiError(
-            "API POST /api/v1/ai/chat failed (404): Conversation not found",
-            status_code=404,
-            detail="Conversation not found",
-        )
-    )
-    reply = await ask_company_knowledge(
-        api,
-        "VPN?",
-        telegram_user_id=42,
-        conversations=telegram_conversation_store,
-    )
-    assert "Conversation not found" not in reply
-    assert api.post_ai_chat.await_count == 2
-    assert await telegram_conversation_store.get_current_conversation(42) is None
 
 
 @pytest.mark.asyncio

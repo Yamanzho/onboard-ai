@@ -94,7 +94,7 @@ async def test_stale_pointer_does_not_reveal_404_body(
     )
     assert secret not in reply
     assert "404" not in reply
-    assert api.post_ai_chat.await_count == 2
+    api.post_ai_chat.assert_awaited_once()
 
 
 @pytest.mark.asyncio

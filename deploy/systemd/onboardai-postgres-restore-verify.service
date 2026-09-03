@@ -1,0 +1,27 @@
+[Unit]
+Description=Verify latest OnboardAI PostgreSQL backup by isolated restore
+Documentation=file:/opt/onboard-ai/docs/runbooks/postgres-backup.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+EnvironmentFile=/etc/onboard-ai/backup.env
+WorkingDirectory=/opt/onboard-ai
+ExecStart=/usr/bin/python3 /opt/onboard-ai/scripts/postgres_restore_verify.py --latest-remote --confirm-non-production
+UMask=0077
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/onboard-ai-backup
+
+[Install]
+WantedBy=multi-user.target

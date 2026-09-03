@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -24,12 +24,49 @@ _telegram_user_id_var: ContextVar[int | None] = ContextVar(
     "onboard_api_telegram_user_id",
     default=None,
 )
+_telegram_update_id_var: ContextVar[int | None] = ContextVar(
+    "onboard_api_telegram_update_id",
+    default=None,
+)
 
 
 @dataclass(slots=True)
 class _TokenPair:
     access_token: str
     refresh_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramUpdateClaim:
+    state: str
+    receipt_id: UUID
+    owner_token: UUID | None
+
+    @property
+    def acquired(self) -> bool:
+        return self.state == "acquired" and self.owner_token is not None
+
+
+@dataclass(frozen=True, slots=True)
+class TelegramOutboundDelivery:
+    state: str
+    message_id: UUID | None
+    owner_token: UUID | None
+    chat_id: int | None
+    source_type: str | None
+    source_key: str | None
+    body: str | None
+    parse_mode: str | None
+    attempt_count: int
+    telegram_message_id: int | None
+
+    @property
+    def acquired(self) -> bool:
+        return (
+            self.state == "acquired"
+            and self.message_id is not None
+            and self.owner_token is not None
+        )
 
 
 class OnboardApiError(Exception):
@@ -181,6 +218,126 @@ class OnboardApiClient:
         )
         return EmployeeDTO.model_validate(payload["employee"])
 
+    async def claim_telegram_update(
+        self,
+        *,
+        update_id: int,
+        update_type: str,
+    ) -> TelegramUpdateClaim:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/updates/claim",
+            json={"update_id": update_id, "update_type": update_type},
+        )
+        return TelegramUpdateClaim(
+            state=str(payload["state"]),
+            receipt_id=UUID(str(payload["receipt_id"])),
+            owner_token=(
+                UUID(str(payload["owner_token"]))
+                if payload.get("owner_token") is not None
+                else None
+            ),
+        )
+
+    async def complete_telegram_update(
+        self,
+        *,
+        receipt_id: UUID,
+        owner_token: UUID,
+    ) -> bool:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/updates/complete",
+            json={
+                "receipt_id": str(receipt_id),
+                "owner_token": str(owner_token),
+            },
+        )
+        return bool(payload.get("updated"))
+
+    async def fail_telegram_update(
+        self,
+        *,
+        receipt_id: UUID,
+        owner_token: UUID,
+    ) -> bool:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/updates/fail",
+            json={
+                "receipt_id": str(receipt_id),
+                "owner_token": str(owner_token),
+            },
+        )
+        return bool(payload.get("updated"))
+
+    async def claim_telegram_outbound(
+        self,
+        *,
+        source_type: str,
+        source_key: str,
+    ) -> TelegramOutboundDelivery:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/outbound/claim",
+            json={"source_type": source_type, "source_key": source_key},
+        )
+        return _telegram_outbound_from_payload(payload)
+
+    async def claim_due_telegram_outbound(
+        self,
+        *,
+        limit: int = 20,
+    ) -> list[TelegramOutboundDelivery]:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/outbound/claim-due",
+            json={"limit": limit},
+        )
+        raw = payload.get("deliveries")
+        if not isinstance(raw, list):
+            raise OnboardApiError("API returned invalid Telegram outbound batch")
+        return [
+            _telegram_outbound_from_payload(item)
+            for item in raw
+            if isinstance(item, dict)
+        ]
+
+    async def mark_telegram_outbound_sent(
+        self,
+        *,
+        message_id: UUID,
+        owner_token: UUID,
+        telegram_message_id: int,
+    ) -> bool:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/outbound/sent",
+            json={
+                "message_id": str(message_id),
+                "owner_token": str(owner_token),
+                "telegram_message_id": telegram_message_id,
+            },
+        )
+        return bool(payload.get("updated"))
+
+    async def mark_telegram_outbound_failed(
+        self,
+        *,
+        message_id: UUID,
+        owner_token: UUID,
+        retryable: bool,
+        error_category: str,
+        retry_after_seconds: int | None = None,
+    ) -> bool:
+        body: dict[str, object] = {
+            "message_id": str(message_id),
+            "owner_token": str(owner_token),
+            "retryable": retryable,
+            "error_category": error_category,
+        }
+        if retry_after_seconds is not None:
+            body["retry_after_seconds"] = retry_after_seconds
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/outbound/failed",
+            json=body,
+        )
+        return bool(payload.get("updated"))
+
     async def accept_invite_via_telegram(
         self,
         *,
@@ -294,7 +451,21 @@ class OnboardApiClient:
         body: dict[str, str] = {"message": message}
         if conversation_id is not None:
             body["conversation_id"] = str(conversation_id)
-        payload = await self._post("/api/v1/ai/chat", json=body)
+        update_id = _telegram_update_id_var.get()
+        headers = (
+            {
+                "Idempotency-Key": f"telegram-update:{update_id}:ai-chat",
+                "X-Telegram-Delivery": "durable",
+                "X-Bot-Service-Token": self._service_token,
+            }
+            if update_id is not None
+            else None
+        )
+        payload = await self._post(
+            "/api/v1/ai/chat",
+            json=body,
+            headers=headers,
+        )
         assert isinstance(payload, dict)
         return payload
 
@@ -309,6 +480,10 @@ class OnboardApiClient:
         response = await self._post(
             f"/api/v1/progress/{progress_id}/complete",
             json={"payload": body},
+            headers={
+                "X-Telegram-Delivery": "durable",
+                "X-Bot-Service-Token": self._service_token,
+            },
         )
         return ProgressItemDTO.model_validate(response)
 
@@ -337,6 +512,22 @@ class OnboardApiClient:
             _access_token_var.set(None)
             _telegram_user_id_var.set(None)
 
+    def bind_telegram_update(self, update_id: int) -> Token[int | None]:
+        """Bind a claimed Telegram update to this concurrent handler task."""
+        return _telegram_update_id_var.set(update_id)
+
+    def reset_telegram_update(self, token: Token[int | None]) -> None:
+        _telegram_update_id_var.reset(token)
+
+    def current_ai_outbound_source_key(self) -> str | None:
+        update_id = _telegram_update_id_var.get()
+        if update_id is None:
+            return None
+        return f"telegram-update:{update_id}:ai-chat"
+
+    def current_telegram_update_id(self) -> int | None:
+        return _telegram_update_id_var.get()
+
     def _store_tokens(
         self,
         telegram_user_id: int,
@@ -354,8 +545,14 @@ class OnboardApiClient:
     async def _get(self, path: str, *, params: dict | None = None) -> object:
         return await self._request("GET", path, params=params)
 
-    async def _post(self, path: str, *, json: dict | None = None) -> object:
-        return await self._request("POST", path, json=json)
+    async def _post(
+        self,
+        path: str,
+        *,
+        json: dict | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> object:
+        return await self._request("POST", path, json=json, headers=headers)
 
     async def _request(
         self,
@@ -364,14 +561,16 @@ class OnboardApiClient:
         *,
         params: dict | None = None,
         json: dict | None = None,
+        headers: dict[str, str] | None = None,
     ) -> object:
         client = self._ensure_client()
+        request_headers = {**self._auth_headers(), **(headers or {})}
         response = await client.request(
             method,
             path,
             params=params,
             json=json,
-            headers=self._auth_headers(),
+            headers=request_headers,
         )
         if response.status_code == 401:
             telegram_user_id = _telegram_user_id_var.get()
@@ -381,9 +580,25 @@ class OnboardApiClient:
                     path,
                     params=params,
                     json=json,
-                    headers=self._auth_headers(),
+                    headers={**self._auth_headers(), **(headers or {})},
                 )
         return self._parse(response)
+
+    async def _bot_service_post(
+        self,
+        path: str,
+        *,
+        json: dict[str, object],
+    ) -> dict[str, object]:
+        client = self._ensure_client()
+        response = await client.post(
+            path,
+            headers={"X-Bot-Service-Token": self._service_token},
+            json=json,
+        )
+        payload = self._parse(response)
+        assert isinstance(payload, dict)
+        return payload
 
     def _auth_headers(self) -> dict[str, str]:
         token = _access_token_var.get()
@@ -419,6 +634,55 @@ class OnboardApiClient:
         if response.status_code == 204:
             return None
         return response.json()
+
+
+def _telegram_outbound_from_payload(
+    payload: dict[str, object],
+) -> TelegramOutboundDelivery:
+    return TelegramOutboundDelivery(
+        state=str(payload.get("state") or ""),
+        message_id=(
+            UUID(str(payload["message_id"]))
+            if payload.get("message_id") is not None
+            else None
+        ),
+        owner_token=(
+            UUID(str(payload["owner_token"]))
+            if payload.get("owner_token") is not None
+            else None
+        ),
+        chat_id=(
+            int(payload["chat_id"])
+            if payload.get("chat_id") is not None
+            else None
+        ),
+        source_type=(
+            str(payload["source_type"])
+            if payload.get("source_type") is not None
+            else None
+        ),
+        source_key=(
+            str(payload["source_key"])
+            if payload.get("source_key") is not None
+            else None
+        ),
+        body=(
+            str(payload["body"])
+            if payload.get("body") is not None
+            else None
+        ),
+        parse_mode=(
+            str(payload["parse_mode"])
+            if payload.get("parse_mode") is not None
+            else None
+        ),
+        attempt_count=int(payload.get("attempt_count") or 0),
+        telegram_message_id=(
+            int(payload["telegram_message_id"])
+            if payload.get("telegram_message_id") is not None
+            else None
+        ),
+    )
 
 
 def _retry_after_seconds(response: httpx.Response) -> int | None:

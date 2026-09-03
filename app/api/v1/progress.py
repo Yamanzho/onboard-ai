@@ -1,11 +1,12 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 
 from app.api.auth_deps import EmployeeUser, assert_can_complete_assignment_progress
 from app.api.deps import get_assignment_service, get_progress_service
 from app.api.v1.responses import ERROR_RESPONSES
+from app.core.security import verify_bot_service_token
 from app.schemas.progress import ProgressCompleteRequest, ProgressResponse
 from app.services.assignment import AssignmentService
 from app.services.progress import ProgressService
@@ -50,7 +51,28 @@ async def complete_progress(
     progress_service: ProgressServiceDep,
     assignment_service: AssignmentServiceDep,
     payload: ProgressCompleteRequest | None = None,
+    x_telegram_delivery: Annotated[
+        str | None,
+        Header(alias="X-Telegram-Delivery"),
+    ] = None,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
 ) -> ProgressResponse:
+    telegram_delivery = x_telegram_delivery == "durable"
+    if x_telegram_delivery is not None and not telegram_delivery:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid Telegram delivery mode",
+        )
+    if telegram_delivery and not verify_bot_service_token(
+        x_bot_service_token or ""
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
     progress = await progress_service.get_progress_by_id(
         progress_id,
         company_id=current_user.company_id,
@@ -66,6 +88,9 @@ async def complete_progress(
         progress_id,
         company_id=current_user.company_id,
         payload=body.payload,
+        telegram_outbound_employee_id=(
+            current_user.id if telegram_delivery else None
+        ),
     )
     # Explicit construction — ORM Progress.step relationship is not loaded here.
     return ProgressResponse(

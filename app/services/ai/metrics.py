@@ -17,6 +17,8 @@ _ALLOWED_RESULTS = frozenset(
         "timeout",
         "forbidden",
         "success",
+        "idempotent_replay",
+        "idempotency_in_progress",
     }
 )
 _ALLOWED_ERROR_CLASSES = frozenset(

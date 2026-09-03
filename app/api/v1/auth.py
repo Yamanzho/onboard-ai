@@ -9,7 +9,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.api.auth_deps import CurrentUser, EmployeeServiceDep
-from app.api.deps import get_platform_service
+from app.api.deps import (
+    get_idempotency_service,
+    get_platform_service,
+    get_telegram_outbound_service,
+)
 from app.api.v1.responses import ERROR_RESPONSES
 from app.core.auth_cookies import (
     clear_auth_cookies,
@@ -26,6 +30,7 @@ from app.core.exceptions import (
     ValidationError,
 )
 from app.core.rate_limit import is_rate_limited
+from app.core.request_id import request_id_log_value
 from app.core.security import (
     dummy_password_hash,
     hash_password,
@@ -39,13 +44,22 @@ from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
 from app.schemas.auth import (
     BotInviteAcceptRequest,
+    BotOutboundBatchRequest,
+    BotOutboundBatchResponse,
+    BotOutboundClaimRequest,
+    BotOutboundDeliveryResponse,
+    BotOutboundFailedRequest,
+    BotOutboundSentRequest,
     BotTelegramLoginRequest,
     BotTelegramLoginResponse,
+    BotUpdateClaimRequest,
+    BotUpdateClaimResponse,
+    BotUpdateFinishRequest,
+    BotUpdateFinishResponse,
     BrowserSessionResponse,
     CurrentUserResponse,
     PasswordChangeRequest,
     PasswordResetConfirmRequest,
-    PasswordResetInitiateResponse,
     PasswordResetPreviewRequest,
     PasswordResetPreviewResponse,
     ProfileUpdateRequest,
@@ -58,14 +72,25 @@ from app.schemas.super_admin import (
     InvitePreviewResponse,
 )
 from app.services.employee import EmployeeService
+from app.services.idempotency import IdempotencyService
 from app.services.platform import PlatformService
 from app.services.refresh_session import SUBJECT_EMPLOYEE, RefreshSessionService
+from app.services.telegram_outbound import OutboundDelivery, TelegramOutboundService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 logger = logging.getLogger("app.auth.bot_login")
 
 PlatformServiceDep = Annotated[PlatformService, Depends(get_platform_service)]
+IdempotencyServiceDep = Annotated[
+    IdempotencyService,
+    Depends(get_idempotency_service),
+]
+TelegramOutboundServiceDep = Annotated[
+    TelegramOutboundService,
+    Depends(get_telegram_outbound_service),
+]
 _refresh_sessions = RefreshSessionService()
+_BOT_AUTH_UNAUTHORIZED_DETAIL = "Could not validate credentials"
 
 
 async def _issue_tokens(employee: Employee) -> TokenResponse:
@@ -381,14 +406,14 @@ async def bot_telegram_login(
 
     if not verify_bot_service_token(x_bot_service_token or ""):
         logger.warning(
-            "bot_login failed reason=invalid_service_token ip=%s "
-            "telegram_user_id=%s",
+            "bot_login failed request_id=%s source=bot_api "
+            "reason=invalid_service_credential ip=%s",
+            request_id_log_value(),
             ip,
-            payload.telegram_user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid bot service token",
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
         )
 
     try:
@@ -397,10 +422,10 @@ async def bot_telegram_login(
         )
     except NotFoundError as exc:
         logger.warning(
-            "bot_login failed reason=employee_not_found ip=%s "
-            "telegram_user_id=%s",
+            "bot_login failed request_id=%s source=bot_api "
+            "reason=identity_not_found ip=%s",
+            request_id_log_value(),
             ip,
-            payload.telegram_user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -408,10 +433,10 @@ async def bot_telegram_login(
         ) from exc
     except ConflictError as exc:
         logger.warning(
-            "bot_login failed reason=ambiguous_telegram_identity ip=%s "
-            "telegram_user_id=%s",
+            "bot_login failed request_id=%s source=bot_api "
+            "reason=ambiguous_identity ip=%s",
+            request_id_log_value(),
             ip,
-            payload.telegram_user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -420,12 +445,10 @@ async def bot_telegram_login(
 
     if employee.status == EmployeeStatus.ARCHIVED.value:
         logger.warning(
-            "bot_login failed reason=employee_archived ip=%s "
-            "company_id=%s telegram_user_id=%s employee_id=%s",
+            "bot_login failed request_id=%s source=bot_api "
+            "reason=employee_archived ip=%s",
+            request_id_log_value(),
             ip,
-            employee.company_id,
-            payload.telegram_user_id,
-            employee.id,
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -433,12 +456,10 @@ async def bot_telegram_login(
         )
     if employee.status == EmployeeStatus.INVITED.value:
         logger.warning(
-            "bot_login failed reason=employee_invited ip=%s "
-            "company_id=%s telegram_user_id=%s employee_id=%s",
+            "bot_login failed request_id=%s source=bot_api "
+            "reason=employee_invited ip=%s",
+            request_id_log_value(),
             ip,
-            employee.company_id,
-            payload.telegram_user_id,
-            employee.id,
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -449,11 +470,10 @@ async def bot_telegram_login(
         await employees.assert_company_active(employee.company_id)
     except ForbiddenError as exc:
         logger.warning(
-            "bot_login failed reason=company_deactivated ip=%s "
-            "company_id=%s telegram_user_id=%s",
+            "bot_login failed request_id=%s source=bot_api "
+            "reason=company_access_denied ip=%s",
+            request_id_log_value(),
             ip,
-            employee.company_id,
-            payload.telegram_user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -462,11 +482,11 @@ async def bot_telegram_login(
 
     tokens = await _issue_tokens(employee)
     logger.info(
-        "bot_login success ip=%s company_id=%s telegram_user_id=%s "
-        "employee_id=%s role=%s",
+        "bot_login success request_id=%s source=bot_api ip=%s "
+        "company_id=%s employee_id=%s role=%s",
+        request_id_log_value(),
         ip,
         employee.company_id,
-        payload.telegram_user_id,
         employee.id,
         employee.role,
     )
@@ -516,14 +536,14 @@ async def bot_accept_invite(
 
     if not verify_bot_service_token(x_bot_service_token or ""):
         logger.warning(
-            "bot_invite_accept failed reason=invalid_service_token ip=%s "
-            "telegram_user_id=%s",
+            "bot_invite_accept failed request_id=%s source=bot_api "
+            "reason=invalid_service_credential ip=%s",
+            request_id_log_value(),
             ip,
-            payload.telegram_user_id,
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid bot service token",
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
         )
 
     try:
@@ -560,11 +580,11 @@ async def bot_accept_invite(
     tokens = await _issue_tokens(employee)
     # Never log the invite token — only ids.
     logger.info(
-        "bot_invite_accept success ip=%s company_id=%s telegram_user_id=%s "
-        "employee_id=%s",
+        "bot_invite_accept success request_id=%s source=bot_api ip=%s "
+        "company_id=%s employee_id=%s",
+        request_id_log_value(),
         ip,
         employee.company_id,
-        payload.telegram_user_id,
         employee.id,
     )
     return BotTelegramLoginResponse(
@@ -573,6 +593,208 @@ async def bot_accept_invite(
         token_type=tokens.token_type,
         employee=CurrentUserResponse.model_validate(employee),
     )
+
+
+@router.post(
+    "/bot/updates/claim",
+    response_model=BotUpdateClaimResponse,
+    summary="Claim Telegram update",
+    description="Internal bot-only durable Telegram update claim.",
+)
+async def claim_bot_update(
+    payload: BotUpdateClaimRequest,
+    idempotency: IdempotencyServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> BotUpdateClaimResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    claim = await idempotency.claim_telegram_update(
+        update_id=payload.update_id,
+        update_type=payload.update_type,
+    )
+    return BotUpdateClaimResponse(
+        state=claim.state,
+        receipt_id=claim.receipt_id,
+        owner_token=claim.owner_token,
+    )
+
+
+@router.post(
+    "/bot/updates/complete",
+    response_model=BotUpdateFinishResponse,
+    summary="Complete Telegram update",
+    description="Internal bot-only completion of an owned Telegram update claim.",
+)
+async def complete_bot_update(
+    payload: BotUpdateFinishRequest,
+    idempotency: IdempotencyServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> BotUpdateFinishResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    updated = await idempotency.complete_telegram_update(
+        receipt_id=payload.receipt_id,
+        owner_token=payload.owner_token,
+    )
+    return BotUpdateFinishResponse(updated=updated)
+
+
+@router.post(
+    "/bot/updates/fail",
+    response_model=BotUpdateFinishResponse,
+    summary="Fail Telegram update",
+    description="Internal bot-only retryable failure of an owned update claim.",
+)
+async def fail_bot_update(
+    payload: BotUpdateFinishRequest,
+    idempotency: IdempotencyServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> BotUpdateFinishResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    updated = await idempotency.fail_telegram_update(
+        receipt_id=payload.receipt_id,
+        owner_token=payload.owner_token,
+    )
+    return BotUpdateFinishResponse(updated=updated)
+
+
+def _bot_outbound_response(
+    delivery: OutboundDelivery,
+) -> BotOutboundDeliveryResponse:
+    return BotOutboundDeliveryResponse(
+        state=delivery.state,  # type: ignore[arg-type]
+        message_id=delivery.message_id,
+        owner_token=delivery.owner_token,
+        chat_id=delivery.chat_id,
+        source_type=delivery.source_type,  # type: ignore[arg-type]
+        source_key=delivery.source_key,
+        body=delivery.body,
+        parse_mode=delivery.parse_mode,  # type: ignore[arg-type]
+        attempt_count=delivery.attempt_count,
+        telegram_message_id=delivery.telegram_message_id,
+    )
+
+
+@router.post(
+    "/bot/outbound/claim",
+    response_model=BotOutboundDeliveryResponse,
+    summary="Claim durable Telegram outbound by source",
+)
+async def claim_bot_outbound(
+    payload: BotOutboundClaimRequest,
+    outbound: TelegramOutboundServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> BotOutboundDeliveryResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    delivery = await outbound.claim_source(
+        source_type=payload.source_type,
+        source_key=payload.source_key,
+    )
+    return _bot_outbound_response(delivery)
+
+
+@router.post(
+    "/bot/outbound/claim-due",
+    response_model=BotOutboundBatchResponse,
+    summary="Claim a bounded batch of due Telegram outbounds",
+)
+async def claim_due_bot_outbound(
+    payload: BotOutboundBatchRequest,
+    outbound: TelegramOutboundServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> BotOutboundBatchResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    deliveries = await outbound.claim_due_batch(limit=payload.limit)
+    return BotOutboundBatchResponse(
+        deliveries=[_bot_outbound_response(item) for item in deliveries]
+    )
+
+
+@router.post(
+    "/bot/outbound/sent",
+    response_model=BotUpdateFinishResponse,
+    summary="Acknowledge successful Telegram delivery",
+)
+async def mark_bot_outbound_sent(
+    payload: BotOutboundSentRequest,
+    outbound: TelegramOutboundServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> BotUpdateFinishResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    updated = await outbound.mark_sent(
+        message_id=payload.message_id,
+        owner_token=payload.owner_token,
+        telegram_message_id=payload.telegram_message_id,
+    )
+    return BotUpdateFinishResponse(updated=updated)
+
+
+@router.post(
+    "/bot/outbound/failed",
+    response_model=BotUpdateFinishResponse,
+    summary="Record retryable or terminal Telegram failure",
+)
+async def mark_bot_outbound_failed(
+    payload: BotOutboundFailedRequest,
+    outbound: TelegramOutboundServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> BotUpdateFinishResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    updated = await outbound.mark_failed(
+        message_id=payload.message_id,
+        owner_token=payload.owner_token,
+        retryable=payload.retryable,
+        error_category=payload.error_category,
+        retry_after_seconds=payload.retry_after_seconds,
+    )
+    return BotUpdateFinishResponse(updated=updated)
 
 
 @router.post(
