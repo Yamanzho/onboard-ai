@@ -14,7 +14,7 @@ from app.core.security import hash_token
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from app.db.models.employee_invite import EmployeeInvite
-from tests.conftest import _uow_factory
+from tests.conftest import _uow_factory, unique_telegram_user_id
 
 pytestmark = pytest.mark.security
 
@@ -59,14 +59,14 @@ async def test_bot_login_ignores_body_company_id(
                 email=f"bot-{uuid4().hex[:8]}@example.com",
                 role=EmployeeRole.EMPLOYEE.value,
                 status=EmployeeStatus.ACTIVE.value,
-                telegram_user_id=9_100_001,
+                telegram_user_id=unique_telegram_user_id(),
             )
         )
         await uow.commit()
 
     ok = await api_client.post(
         "/api/v1/auth/bot/telegram",
-        json={"telegram_user_id": 9_100_001},
+        json={"telegram_user_id": employee.telegram_user_id},
         headers={"X-Bot-Service-Token": "test-bot-service-token-32chars!!"},
     )
     assert ok.status_code == 200, ok.text
@@ -75,7 +75,7 @@ async def test_bot_login_ignores_body_company_id(
 
     spoof = await api_client.post(
         "/api/v1/auth/bot/telegram",
-        json={"company_id": str(company_b.id), "telegram_user_id": 9_100_001},
+        json={"company_id": str(company_b.id), "telegram_user_id": employee.telegram_user_id},
         headers={"X-Bot-Service-Token": "test-bot-service-token-32chars!!"},
     )
     assert spoof.status_code == 200, spoof.text

@@ -8,6 +8,7 @@ import {
   PageHeader,
 } from '../../components/common/PageHeader'
 import { AssignmentStatusBadge } from '../../components/assignments/AssignmentStatusBadge'
+import { AssignmentPriorityBadge } from '../../components/assignments/AssignmentPriorityBadge'
 import { Button } from '../../components/ui/Button'
 import { Input, Select } from '../../components/ui/Field'
 import {
@@ -20,6 +21,7 @@ import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { labelAssignmentStatus, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as assignmentsApi from '../../services/assignmentsApi'
+import { compareAssignmentsByPriorityDeadline, isAssignmentOverdue } from '../../lib/progressUtils'
 import {
   ASSIGNMENT_STATUSES,
   type Assignment,
@@ -30,6 +32,7 @@ type SortKey =
   | 'employee'
   | 'program'
   | 'status'
+  | 'priority'
   | 'due_at'
   | 'assigned_by'
   | 'created_at'
@@ -50,8 +53,8 @@ export function AssignmentListPage() {
   const paths = useWorkspacePaths()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
-  const [sortKey, setSortKey] = useState<SortKey>('created_at')
-  const [sortDir, setSortDir] = useState<SortDir>('desc')
+  const [sortKey, setSortKey] = useState<SortKey>('priority')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [page, setPage] = useState(1)
   const [actionError, setActionError] = useState<string | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
@@ -104,6 +107,10 @@ export function AssignmentListPage() {
           return cmp(programTitle(a.program_id), programTitle(b.program_id))
         case 'status':
           return cmp(a.status, b.status)
+        case 'priority': {
+          const ranked = compareAssignmentsByPriorityDeadline(a, b)
+          return sortDir === 'asc' ? ranked : -ranked
+        }
         case 'due_at':
           return cmp(a.due_at ?? '', b.due_at ?? '')
         case 'assigned_by':
@@ -137,7 +144,7 @@ export function AssignmentListPage() {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortKey(key)
-      setSortDir(key === 'employee' || key === 'program' ? 'asc' : 'desc')
+                    setSortDir(key === 'employee' || key === 'program' || key === 'priority' ? 'asc' : 'desc')
     }
   }
 
@@ -230,6 +237,7 @@ export function AssignmentListPage() {
                       ['employee', t('assignments.colEmployee')],
                       ['program', t('assignments.colProgram')],
                       ['status', t('common.status')],
+                      ['priority', t('assignments.colPriority')],
                     ] as const
                   ).map(([key, label]) => (
                     <th key={key} className="px-4 py-3">
@@ -270,8 +278,9 @@ export function AssignmentListPage() {
                   const canCancel =
                     assignment.status === 'pending' ||
                     assignment.status === 'in_progress'
+                  const overdue = isAssignmentOverdue(assignment)
                   return (
-                    <tr key={assignment.id}>
+                    <tr key={assignment.id} className={overdue ? 'bg-red-50/40' : undefined}>
                       <td className="px-4 py-3">
                         <Link
                           to={paths.employee(assignment.employee_id)}
@@ -291,6 +300,9 @@ export function AssignmentListPage() {
                       <td className="px-4 py-3">
                         <AssignmentStatusBadge status={assignment.status} />
                       </td>
+                      <td className="px-4 py-3">
+                        <AssignmentPriorityBadge priority={assignment.priority} />
+                      </td>
                       <td className="px-4 py-3 text-[var(--color-muted)]">
                         {progress?.isLoading
                           ? '…'
@@ -299,7 +311,14 @@ export function AssignmentListPage() {
                             : t('common.emDash')}
                       </td>
                       <td className="px-4 py-3 text-[var(--color-muted)]">
-                        {formatDate(assignment.due_at)}
+                        <span className="flex flex-col">
+                          <span>{formatDate(assignment.due_at)}</span>
+                          {overdue ? (
+                            <span className="text-xs font-medium text-[var(--color-danger)]">
+                              {t('assignments.overdue')}
+                            </span>
+                          ) : null}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-muted)]">
                         {employeeName(assignment.assigned_by_id)}

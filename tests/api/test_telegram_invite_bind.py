@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.core.security import hash_token
 from app.db.enums import EmployeeRole, EmployeeStatus, InvitePurpose
 from app.db.models.employee import Employee
-from tests.conftest import _uow_factory, auth_header
+from tests.conftest import _uow_factory, auth_header, unique_telegram_user_id
 
 pytestmark = [pytest.mark.security, pytest.mark.telegram]
 
@@ -98,7 +98,7 @@ async def test_telegram_accept_binds_and_marks_invite_used(
     invite_url = create.json()["invite_url"]
     token = invite_url.split("#", 1)[1]
     employee_id = create.json()["id"]
-    tg_id = 9_100_000_001
+    tg_id = unique_telegram_user_id()
 
     accept = await api_client.post(
         "/api/v1/auth/bot/invite/accept",
@@ -179,7 +179,7 @@ async def test_hr_invite_rejected_via_telegram(
         headers={"X-Bot-Service-Token": bot_service_token},
         json={
             "token": token,
-            "telegram_user_id": 9_100_000_002,
+            "telegram_user_id": unique_telegram_user_id(),
             "company_id": str(company_a.id),
         },
     )
@@ -197,7 +197,7 @@ async def test_telegram_cannot_bind_second_employee(
 ) -> None:
     monkeypatch.setenv("SMTP_HOST", "")
     _bind_bot_company(monkeypatch, company_a.id)
-    tg_id = 9_100_000_003
+    tg_id = unique_telegram_user_id()
 
     async def _invite(name: str) -> str:
         res = await api_client.post(
@@ -277,7 +277,10 @@ async def test_concurrent_telegram_accept_only_one_wins(
         )
         return res.status_code
 
-    codes = await asyncio.gather(_accept(9_100_000_010), _accept(9_100_000_011))
+    codes = await asyncio.gather(
+        _accept(unique_telegram_user_id()),
+        _accept(unique_telegram_user_id()),
+    )
     assert sorted(codes).count(200) == 1
     assert 400 in codes or 403 in codes or codes.count(200) == 1
     assert codes.count(200) == 1

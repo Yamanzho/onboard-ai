@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.db.assignment_rules import is_assignment_overdue
 from app.db.base import Base
-from app.db.enums import AssignmentStatus
+from app.db.enums import AssignmentPriority, AssignmentStatus
 from app.db.mixins import TimestampMixin
 
 if TYPE_CHECKING:
@@ -26,8 +27,25 @@ class Assignment(Base, TimestampMixin):
             "status IN ('pending', 'in_progress', 'completed', 'cancelled')",
             name="ck_assignments_status",
         ),
+        CheckConstraint(
+            "priority IN ('normal', 'important', 'critical')",
+            name="ck_assignments_priority",
+        ),
         Index("ix_assignments_company_id_status", "company_id", "status"),
         Index("ix_assignments_employee_id_status", "employee_id", "status"),
+        Index(
+            "ix_assignments_company_id_priority_due_at",
+            "company_id",
+            "priority",
+            "due_at",
+        ),
+        Index(
+            "ix_assignments_employee_id_priority_due_at",
+            "employee_id",
+            "priority",
+            "due_at",
+        ),
+        Index("ix_assignments_source_batch_id", "source_batch_id"),
         Index(
             "uq_assignments_employee_program_active",
             "employee_id",
@@ -60,7 +78,7 @@ class Assignment(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    assigned_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    assigned_by_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("employees.id", ondelete="SET NULL"),
         nullable=True,
@@ -71,10 +89,20 @@ class Assignment(Base, TimestampMixin):
         nullable=False,
         default=AssignmentStatus.PENDING.value,
     )
+    priority: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=AssignmentPriority.NORMAL.value,
+        server_default=text("'normal'"),
+    )
+    source_batch_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     company: Mapped[Company] = relationship(back_populates="assignments")
     employee: Mapped[Employee] = relationship(
@@ -82,7 +110,7 @@ class Assignment(Base, TimestampMixin):
         foreign_keys=[employee_id],
     )
     program: Mapped[OnboardingProgram] = relationship(back_populates="assignments")
-    assigned_by: Mapped[Optional[Employee]] = relationship(
+    assigned_by: Mapped[Employee | None] = relationship(
         back_populates="assigned_assignments",
         foreign_keys=[assigned_by_id],
     )
@@ -90,6 +118,10 @@ class Assignment(Base, TimestampMixin):
         back_populates="assignment",
         cascade="all, delete-orphan",
     )
+
+    @property
+    def overdue(self) -> bool:
+        return is_assignment_overdue(self.due_at, self.status)
 
     def __repr__(self) -> str:
         return f"<Assignment id={self.id} status={self.status!r}>"

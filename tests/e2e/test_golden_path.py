@@ -16,7 +16,11 @@ from app.core.security import hash_password
 from app.db.enums import EmployeeRole, EmployeeStatus, ProgressStatus
 from app.db.models.super_admin import SuperAdmin
 from app.db.uow import UnitOfWork
-from tests.conftest import sa_tokens_from_response, tenant_tokens_from_response
+from tests.conftest import (
+    sa_tokens_from_response,
+    tenant_tokens_from_response,
+    unique_telegram_user_id,
+)
 
 _PASSWORD = "PilotPass1!"
 _BOT_SERVICE_TOKEN = "ci-golden-path-bot-service-token-32c"
@@ -171,7 +175,7 @@ async def test_production_pilot_golden_path(
     emp_token = _invite_token(emp_invite_url)
 
     _bind_bot_company(monkeypatch, company_id)
-    tg_id = 9_200_000_001
+    tg_id = unique_telegram_user_id()
     bind = await api_client.post(
         "/api/v1/auth/bot/invite/accept",
         headers={"X-Bot-Service-Token": _BOT_SERVICE_TOKEN},

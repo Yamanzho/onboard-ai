@@ -16,7 +16,7 @@ from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.company import Company
 from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
-from tests.conftest import auth_header
+from tests.conftest import auth_header, unique_email
 
 
 def test_render_step_content_body_known_and_empty() -> None:
@@ -92,7 +92,7 @@ async def test_progress_includes_step_content_and_complete_flow(
             "company_id": str(company_a.id),
             "telegram_user_id": uuid4().int % 1_000_000_000 + 20,
             "full_name": "Bot Employee",
-            "email": "bot-employee@example.com",
+            "email": unique_email("bot-employee"),
             "role": "employee",
             "status": "invited",
         },
@@ -183,7 +183,7 @@ async def test_progress_includes_step_content_and_complete_flow(
             "company_id": str(company_a.id),
             "telegram_user_id": uuid4().int % 1_000_000_000 + 30,
             "full_name": "Peer",
-            "email": "peer@example.com",
+            "email": unique_email("peer"),
             "role": "employee",
             "status": "invited",
         },
@@ -237,7 +237,7 @@ async def test_no_active_assignment_list_empty_for_employee(
             "company_id": str(company_a.id),
             "telegram_user_id": uuid4().int % 1_000_000_000 + 40,
             "full_name": "No Assign",
-            "email": "no-assign@example.com",
+            "email": unique_email("no-assign"),
             "role": "employee",
             "status": "invited",
         },

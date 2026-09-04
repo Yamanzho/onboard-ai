@@ -36,6 +36,7 @@ class AssignmentDTO(BaseModel):
     due_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
+    priority: str = "normal"
 
 
 class ProgramDTO(BaseModel):

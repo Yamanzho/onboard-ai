@@ -16,7 +16,12 @@ from app.db.models.employee import Employee
 from app.db.models.refresh_session import RefreshSession
 from app.main import app
 from app.services.refresh_session import SUBJECT_EMPLOYEE, RefreshSessionService
-from tests.conftest import auth_header, _uow_factory, tenant_tokens_from_response
+from tests.conftest import (
+    _uow_factory,
+    auth_header,
+    tenant_tokens_from_response,
+    unique_telegram_user_id,
+)
 
 _PASSWORD = "SecurePass1!"
 _NEW_PASSWORD = "SecurePass2!"
@@ -34,7 +39,7 @@ async def _create_active_employee(
         employee = await uow.employees.create(
             Employee(
                 company_id=company_id,
-                telegram_user_id=telegram_user_id or (uuid4().int % 1_000_000_000 + 8000),
+                telegram_user_id=telegram_user_id or unique_telegram_user_id(),
                 full_name="Session Harden User",
                 role=role,
                 status=EmployeeStatus.ACTIVE.value,
@@ -146,7 +151,7 @@ async def test_bot_login_rejects_invited_allows_active_rejects_archived(
         invited = await uow.employees.create(
             Employee(
                 company_id=company_a.id,
-                telegram_user_id=91006001,
+                telegram_user_id=unique_telegram_user_id(),
                 full_name="Bot Invited",
                 role=EmployeeRole.EMPLOYEE.value,
                 status=EmployeeStatus.INVITED.value,
@@ -155,7 +160,7 @@ async def test_bot_login_rejects_invited_allows_active_rejects_archived(
         active = await uow.employees.create(
             Employee(
                 company_id=company_a.id,
-                telegram_user_id=91006002,
+                telegram_user_id=unique_telegram_user_id(),
                 full_name="Bot Active",
                 role=EmployeeRole.EMPLOYEE.value,
                 status=EmployeeStatus.ACTIVE.value,
@@ -165,7 +170,7 @@ async def test_bot_login_rejects_invited_allows_active_rejects_archived(
         archived = await uow.employees.create(
             Employee(
                 company_id=company_a.id,
-                telegram_user_id=91006003,
+                telegram_user_id=unique_telegram_user_id(),
                 full_name="Bot Archived",
                 role=EmployeeRole.EMPLOYEE.value,
                 status=EmployeeStatus.ARCHIVED.value,
@@ -282,8 +287,8 @@ async def test_logout_all_revokes_only_current_subject(
     api_client: AsyncClient,
     company_a,
 ) -> None:
-    user_a = await _create_active_employee(company_a.id, telegram_user_id=91007001)
-    user_b = await _create_active_employee(company_a.id, telegram_user_id=91007002)
+    user_a = await _create_active_employee(company_a.id)
+    user_b = await _create_active_employee(company_a.id)
 
     tokens_a1 = await _login(api_client, user_a.id)
     tokens_a2 = await RefreshSessionService().issue(
@@ -377,8 +382,8 @@ async def test_logout_all_does_not_revoke_other_tenant_sessions(
     company_b,
     admin_a: Employee,
 ) -> None:
-    emp_a = await _create_active_employee(company_a.id, telegram_user_id=91008001)
-    emp_b = await _create_active_employee(company_b.id, telegram_user_id=91008002)
+    emp_a = await _create_active_employee(company_a.id)
+    emp_b = await _create_active_employee(company_b.id)
 
     tokens_a = await _login(api_client, emp_a.id)
     tokens_b = await _login(api_client, emp_b.id)
@@ -419,9 +424,9 @@ async def test_soft_delete_archives_revokes_sessions_and_rejects_refresh(
     company_b,
     admin_a: Employee,
 ) -> None:
-    target = await _create_active_employee(company_a.id, telegram_user_id=91009001)
-    peer = await _create_active_employee(company_a.id, telegram_user_id=91009002)
-    foreign = await _create_active_employee(company_b.id, telegram_user_id=91009003)
+    target = await _create_active_employee(company_a.id)
+    peer = await _create_active_employee(company_a.id)
+    foreign = await _create_active_employee(company_b.id)
 
     target_tokens = await _login(api_client, target.id)
     second = await RefreshSessionService().issue(

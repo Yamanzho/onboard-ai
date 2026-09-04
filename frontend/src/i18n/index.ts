@@ -47,6 +47,10 @@ export function labelAssignmentStatus(status: string): string {
   return labelEnum('assignmentStatus', status)
 }
 
+export function labelAssignmentPriority(priority: string): string {
+  return labelEnum('assignmentPriority', priority)
+}
+
 export function labelArticleStatus(status: string): string {
   return labelEnum('articleStatus', status)
 }

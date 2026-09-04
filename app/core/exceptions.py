@@ -16,6 +16,15 @@ class NotFoundError(AppError):
 class ConflictError(AppError):
     """Request conflicts with current state (e.g. unique constraint)."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        conflicts: list[dict] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.conflicts = conflicts
+
 
 class ValidationError(AppError):
     """Business rule or domain invariant was violated."""

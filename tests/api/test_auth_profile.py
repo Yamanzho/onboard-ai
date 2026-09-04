@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from app.core.security import hash_password
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
-from tests.conftest import auth_header, _uow_factory
+from tests.conftest import _uow_factory, auth_header, unique_email
 
 _PASSWORD = "ProfilePass1!"
 _SECRET_FIELDS = {
@@ -75,15 +75,16 @@ async def test_patch_auth_me_updates_allowed_fields(
     company_a,
 ) -> None:
     employee = await _active_employee(company_a.id, role=EmployeeRole.HR.value)
+    email = unique_email("updated")
     res = await api_client.patch(
         "/api/v1/auth/me",
         headers=auth_header(employee),
-        json={"full_name": "Updated Name", "email": "updated@example.com"},
+        json={"full_name": "Updated Name", "email": email},
     )
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["full_name"] == "Updated Name"
-    assert body["email"] == "updated@example.com"
+    assert body["email"] == email
     assert body["role"] == EmployeeRole.HR.value
     assert body["company_id"] == str(company_a.id)
     for secret in _SECRET_FIELDS:

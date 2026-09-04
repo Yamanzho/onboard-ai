@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query'
 import * as assignmentsApi from '../services/assignmentsApi'
 import type { Assignment } from '../types/assignment'
+import { compareAssignmentsByPriorityDeadline } from '../lib/progressUtils'
 
 export function useEmployeeAssignments(
   employeeId: string | undefined,
@@ -18,11 +19,15 @@ export function useEmployeeAssignments(
             status: 'in_progress',
           }),
         ])
-        return [...inProgress, ...pending]
+        return [...inProgress, ...pending].sort(compareAssignmentsByPriorityDeadline)
       }
-      return assignmentsApi.listEmployeeAssignments(employeeId!, {
+      const items = await assignmentsApi.listEmployeeAssignments(employeeId!, {
         status: options.status,
       })
+      if (options.status === 'pending' || options.status === 'in_progress') {
+        return [...items].sort(compareAssignmentsByPriorityDeadline)
+      }
+      return items
     },
     enabled: Boolean(employeeId),
   })

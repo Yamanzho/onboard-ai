@@ -6,11 +6,12 @@ import {
   LoadingBlock,
   PageHeader,
 } from '../../components/common/PageHeader'
+import { AssignmentPriorityBadge } from '../../components/assignments/AssignmentPriorityBadge'
 import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
-import { isActiveAssignment } from '../../lib/progressUtils'
+import { isActiveAssignment, isAssignmentOverdue } from '../../lib/progressUtils'
 import * as assignmentsApi from '../../services/assignmentsApi'
 import * as programsApi from '../../services/programsApi'
 import type { AssignmentProgress } from '../../types/assignment'
@@ -90,6 +91,14 @@ export function MyActivePage() {
                 <p className="font-semibold">
                   {program?.title ?? a.program_id.slice(0, 8)}
                 </p>
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <AssignmentPriorityBadge priority={a.priority} />
+                  {isAssignmentOverdue(a) ? (
+                    <span className="text-xs font-medium text-[var(--color-danger)]">
+                      {t('assignments.overdue')}
+                    </span>
+                  ) : null}
+                </div>
                 <p className="mt-1 text-[var(--color-muted)]">
                   {t('employeePortal.progress')}:{' '}
                   {progress?.percentage != null ? `${progress.percentage}%` : '…'}

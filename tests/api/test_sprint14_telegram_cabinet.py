@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.core.security import hash_token
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
-from tests.conftest import _uow_factory, auth_header
+from tests.conftest import _uow_factory, auth_header, unique_telegram_user_id
 
 pytestmark = [pytest.mark.security, pytest.mark.telegram]
 
@@ -164,7 +164,7 @@ async def test_expired_telegram_invite_denied(
         headers={"X-Bot-Service-Token": bot_service_token},
         json={
             "token": token,
-            "telegram_user_id": 9_200_000_010,
+            "telegram_user_id": unique_telegram_user_id(),
             "company_id": str(company_a.id),
         },
     )
@@ -203,7 +203,7 @@ async def test_admin_invite_rejected_via_telegram(
         headers={"X-Bot-Service-Token": bot_service_token},
         json={
             "token": token,
-            "telegram_user_id": 9_200_000_020,
+            "telegram_user_id": unique_telegram_user_id(),
             "company_id": str(company_a.id),
         },
     )
@@ -232,7 +232,7 @@ async def test_shared_bot_accepts_invite_for_any_company(
         headers={"X-Bot-Service-Token": bot_service_token},
         json={
             "token": token,
-            "telegram_user_id": 9_200_000_030,
+            "telegram_user_id": unique_telegram_user_id(),
             "company_id": str(company_b.id),
         },
     )

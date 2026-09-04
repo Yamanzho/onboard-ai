@@ -4,7 +4,7 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.department import Department
-from app.repositories.base import BaseRepository, _MAX_LIST_LIMIT
+from app.repositories.base import _MAX_LIST_LIMIT, BaseRepository
 
 
 class DepartmentRepository(BaseRepository[Department]):
@@ -35,6 +35,14 @@ class DepartmentRepository(BaseRepository[Department]):
             offset=offset,
             limit=limit,
         )
+        result = await self._session.scalars(stmt)
+        return list(result.all())
+
+    async def list_by_ids(self, department_ids: list[UUID]) -> list[Department]:
+        self._ensure_rls_context()
+        if not department_ids:
+            return []
+        stmt = select(Department).where(Department.id.in_(department_ids))
         result = await self._session.scalars(stmt)
         return list(result.all())
 

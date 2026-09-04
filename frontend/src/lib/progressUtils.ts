@@ -4,7 +4,37 @@ import { t } from '../i18n'
 
 const DONE = new Set(['completed', 'skipped'])
 
+const PRIORITY_RANK: Record<string, number> = {
+  critical: 0,
+  important: 1,
+  normal: 2,
+}
+
+function statusRank(status: string): number {
+  if (status === 'in_progress') return 0
+  if (status === 'pending') return 1
+  return 2
+}
+
+export function compareAssignmentsByPriorityDeadline(
+  a: Assignment,
+  b: Assignment,
+): number {
+  const pa = PRIORITY_RANK[a.priority ?? 'normal'] ?? 9
+  const pb = PRIORITY_RANK[b.priority ?? 'normal'] ?? 9
+  if (pa !== pb) return pa - pb
+  if (a.due_at && b.due_at) {
+    const delta = new Date(a.due_at).getTime() - new Date(b.due_at).getTime()
+    if (delta !== 0) return delta
+  } else if (a.due_at) return -1
+  else if (b.due_at) return 1
+  const sr = statusRank(a.status) - statusRank(b.status)
+  if (sr !== 0) return sr
+  return new Date(b.assigned_at).getTime() - new Date(a.assigned_at).getTime()
+}
+
 export function isAssignmentOverdue(assignment: Assignment, now = new Date()): boolean {
+  if (typeof assignment.overdue === 'boolean') return assignment.overdue
   if (!assignment.due_at) return false
   if (assignment.status === 'completed' || assignment.status === 'cancelled') {
     return false

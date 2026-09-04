@@ -4,6 +4,8 @@ export type AssignmentStatus =
   | 'completed'
   | 'cancelled'
 
+export type AssignmentPriority = 'normal' | 'important' | 'critical'
+
 export interface Assignment {
   id: string
   company_id: string
@@ -11,6 +13,9 @@ export interface Assignment {
   program_id: string
   assigned_by_id: string | null
   status: AssignmentStatus | string
+  priority?: AssignmentPriority | string
+  source_batch_id?: string | null
+  overdue?: boolean
   assigned_at: string
   due_at: string | null
   started_at: string | null
@@ -20,10 +25,20 @@ export interface Assignment {
 }
 
 export interface AssignmentCreate {
-  employee_id: string
+  employee_id?: string
+  employee_ids?: string[]
+  department_ids?: string[]
   program_id: string
   assigned_by_id?: string | null
   due_at?: string | null
+  priority?: AssignmentPriority | string
+  deadline_overrides?: Record<string, string>
+}
+
+export interface AssignmentBulkCreateResult {
+  items: Assignment[]
+  source_batch_id: string | null
+  count: number
 }
 
 export interface AssignmentListParams {
@@ -63,4 +78,10 @@ export const ASSIGNMENT_STATUSES: AssignmentStatus[] = [
   'in_progress',
   'completed',
   'cancelled',
+]
+
+export const ASSIGNMENT_PRIORITIES: AssignmentPriority[] = [
+  'critical',
+  'important',
+  'normal',
 ]

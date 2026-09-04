@@ -27,7 +27,7 @@ async def test_list_and_get_assignment(
             "company_id": str(company_a.id),
             "telegram_user_id": uuid4().int % 1_000_000_000 + 10,
             "full_name": "Assignee",
-            "email": "assignee@example.com",
+            "email": f"assignee-{uuid4().hex[:8]}@example.com",
             "role": "employee",
             "status": "invited",
         },

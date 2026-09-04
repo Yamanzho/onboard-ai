@@ -8,8 +8,9 @@ import { apiRequest } from './apiClient'
 export async function listDepartments(
   companyId: string,
   isActive?: boolean,
+  limit = 1000,
 ): Promise<Department[]> {
-  const params = new URLSearchParams({ company_id: companyId })
+  const params = new URLSearchParams({ company_id: companyId, limit: String(limit) })
   if (isActive !== undefined) params.set('is_active', String(isActive))
   return apiRequest<Department[]>(`/api/v1/departments?${params}`)
 }

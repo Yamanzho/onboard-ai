@@ -5,12 +5,14 @@ import {
   LoadingBlock,
 } from '../common/PageHeader'
 import { AssignmentStatusBadge } from './AssignmentStatusBadge'
+import { AssignmentPriorityBadge } from './AssignmentPriorityBadge'
 import { Button } from '../ui/Button'
 import { useEmployeeAssignments } from '../../hooks/useAssignments'
 import { usePrograms } from '../../hooks/usePrograms'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useQueries } from '@tanstack/react-query'
 import { t } from '../../i18n'
+import { isAssignmentOverdue } from '../../lib/progressUtils'
 import * as assignmentsApi from '../../services/assignmentsApi'
 
 function formatDate(value: string | null | undefined) {
@@ -65,6 +67,7 @@ export function EmployeeAssignmentsPanel({
           <tr>
             <th className="px-4 py-3">{t('assignments.colProgram')}</th>
             <th className="px-4 py-3">{t('common.status')}</th>
+            <th className="px-4 py-3">{t('assignments.colPriority')}</th>
             <th className="px-4 py-3">{t('assignments.progress')}</th>
             <th className="px-4 py-3">{t('assignments.panel.colDue')}</th>
             <th className="px-4 py-3" />
@@ -73,13 +76,17 @@ export function EmployeeAssignmentsPanel({
         <tbody className="divide-y divide-[var(--color-border)]">
           {assignments.map((assignment, index) => {
             const pct = progressQueries[index]?.data?.percentage
+            const overdue = isAssignmentOverdue(assignment)
             return (
-              <tr key={assignment.id}>
+              <tr key={assignment.id} className={overdue ? 'bg-red-50/40' : undefined}>
                 <td className="px-4 py-3 font-medium">
                   {programTitle(assignment.program_id)}
                 </td>
                 <td className="px-4 py-3">
                   <AssignmentStatusBadge status={assignment.status} />
+                </td>
+                <td className="px-4 py-3">
+                  <AssignmentPriorityBadge priority={assignment.priority} />
                 </td>
                 <td className="px-4 py-3 text-[var(--color-muted)]">
                   {progressQueries[index]?.isLoading
@@ -89,7 +96,12 @@ export function EmployeeAssignmentsPanel({
                       : t('common.emDash')}
                 </td>
                 <td className="px-4 py-3 text-[var(--color-muted)]">
-                  {formatDate(assignment.due_at)}
+                  <span>{formatDate(assignment.due_at)}</span>
+                  {overdue ? (
+                    <span className="ml-2 text-xs font-medium text-[var(--color-danger)]">
+                      {t('assignments.overdue')}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="px-4 py-3 text-right">
                   <Link to={paths.assignment(assignment.id)}>

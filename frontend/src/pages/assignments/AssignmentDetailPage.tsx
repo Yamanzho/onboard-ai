@@ -7,6 +7,7 @@ import {
   PageHeader,
 } from '../../components/common/PageHeader'
 import { AssignmentStatusBadge } from '../../components/assignments/AssignmentStatusBadge'
+import { AssignmentPriorityBadge } from '../../components/assignments/AssignmentPriorityBadge'
 import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import {
@@ -19,6 +20,7 @@ import { useProgram, useProgramSteps } from '../../hooks/usePrograms'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { labelProgressStatus, labelStepType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
+import { isAssignmentOverdue } from '../../lib/progressUtils'
 
 function formatDate(value: string | null | undefined) {
   if (!value) return t('common.emDash')
@@ -88,6 +90,7 @@ export function AssignmentDetailPage() {
   const items = progress?.items ?? []
   const canCancel =
     assignment.status === 'pending' || assignment.status === 'in_progress'
+  const overdue = isAssignmentOverdue(assignment)
 
   const rows: { label: string; value: ReactNode }[] = [
     {
@@ -123,6 +126,10 @@ export function AssignmentDetailPage() {
       value: assigner?.full_name ?? t('common.emDash'),
     },
     { label: t('assignments.dueDate'), value: formatDate(assignment.due_at) },
+    {
+      label: t('assignments.priority'),
+      value: <AssignmentPriorityBadge priority={assignment.priority} />,
+    },
     { label: t('assignments.assignedAt'), value: formatDate(assignment.assigned_at) },
     { label: t('assignments.startedAt'), value: formatDate(assignment.started_at) },
     {
@@ -163,6 +170,12 @@ export function AssignmentDetailPage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm">
         <AssignmentStatusBadge status={assignment.status} />
+        <AssignmentPriorityBadge priority={assignment.priority} />
+        {overdue ? (
+          <span className="text-xs font-medium text-[var(--color-danger)]">
+            {t('assignments.overdue')}
+          </span>
+        ) : null}
         <span className="text-[var(--color-muted)]">
           {employee?.full_name ?? t('assignments.employee')}
         </span>

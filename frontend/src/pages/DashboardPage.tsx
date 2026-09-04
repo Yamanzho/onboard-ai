@@ -8,6 +8,7 @@ import {
   PageHeader,
 } from '../components/common/PageHeader'
 import { AssignmentStatusBadge } from '../components/assignments/AssignmentStatusBadge'
+import { AssignmentPriorityBadge } from '../components/assignments/AssignmentPriorityBadge'
 import { Button } from '../components/ui/Button'
 import { Input, Select } from '../components/ui/Field'
 import {
@@ -25,6 +26,7 @@ import {
   isActiveAssignment,
   isAssignmentOverdue,
   lastActivityAt,
+  compareAssignmentsByPriorityDeadline,
 } from '../lib/progressUtils'
 import { ApiError } from '../services/apiClient'
 import * as assignmentsApi from '../services/assignmentsApi'
@@ -40,6 +42,7 @@ type SortKey =
   | 'program'
   | 'progress'
   | 'status'
+  | 'priority'
   | 'due_at'
   | 'last_activity'
 type SortDir = 'asc' | 'desc'
@@ -178,6 +181,10 @@ export function DashboardPage() {
           return cmpStr(programTitle(a.program_id), programTitle(b.program_id))
         case 'status':
           return cmpStr(a.status, b.status)
+        case 'priority': {
+          const ranked = compareAssignmentsByPriorityDeadline(a, b)
+          return sortDir === 'asc' ? ranked : -ranked
+        }
         case 'due_at':
           return cmpStr(a.due_at ?? '', b.due_at ?? '')
         case 'progress': {
@@ -229,6 +236,7 @@ export function DashboardPage() {
     program: t('dashboard.colProgram'),
     progress: t('dashboard.colProgress'),
     status: t('dashboard.colStatus'),
+    priority: t('assignments.colPriority'),
     due_at: t('dashboard.colDueDate'),
     last_activity: t('dashboard.colLastActivity'),
   }
@@ -238,7 +246,11 @@ export function DashboardPage() {
       setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
     } else {
       setSortKey(key)
-      setSortDir(key === 'employee' || key === 'program' ? 'asc' : 'desc')
+      setSortDir(
+        key === 'employee' || key === 'program' || key === 'priority'
+          ? 'asc'
+          : 'desc',
+      )
     }
   }
 
@@ -415,6 +427,15 @@ export function DashboardPage() {
                         <button
                           type="button"
                           className="font-medium uppercase hover:text-[var(--color-text)]"
+                          onClick={() => toggleSort('priority')}
+                        >
+                          {sortLabel('priority')}
+                        </button>
+                      </th>
+                      <th className="px-4 py-3">
+                        <button
+                          type="button"
+                          className="font-medium uppercase hover:text-[var(--color-text)]"
                           onClick={() => toggleSort('due_at')}
                         >
                           {sortLabel('due_at')}
@@ -476,6 +497,9 @@ export function DashboardPage() {
                                 </span>
                               ) : null}
                             </div>
+                          </td>
+                          <td className="px-4 py-3">
+                            <AssignmentPriorityBadge priority={assignment.priority} />
                           </td>
                           <td className="px-4 py-3 text-[var(--color-muted)]">
                             {formatDate(assignment.due_at)}

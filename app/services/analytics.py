@@ -8,7 +8,13 @@ from sqlalchemy import case, cast, func, select
 from sqlalchemy.types import Date
 
 from app.core.exceptions import NotFoundError
-from app.db.enums import AssignmentStatus, EmployeeRole, EmployeeStatus, ProgressStatus
+from app.db.enums import (
+    AssignmentPriority,
+    AssignmentStatus,
+    EmployeeRole,
+    EmployeeStatus,
+    ProgressStatus,
+)
 from app.db.models.assignment import Assignment
 from app.db.models.employee import Employee
 from app.db.models.onboarding_program import OnboardingProgram
@@ -198,6 +204,35 @@ class AnalyticsService:
                 if day is not None
             ]
 
+            now = datetime.now(UTC)
+            overdue_count = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(Assignment)
+                    .where(
+                        Assignment.company_id == company_id,
+                        Assignment.status.in_(_ACTIVE),
+                        Assignment.due_at.is_not(None),
+                        Assignment.due_at < now,
+                    )
+                )
+                or 0
+            )
+            by_priority: dict[str, int] = {}
+            for priority in AssignmentPriority:
+                by_priority[priority.value] = int(
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(Assignment)
+                        .where(
+                            Assignment.company_id == company_id,
+                            Assignment.status.in_(_ACTIVE),
+                            Assignment.priority == priority.value,
+                        )
+                    )
+                    or 0
+                )
+
             return OnboardingAnalyticsResponse(
                 total_employees=total_employees,
                 active_onboarding=active_onboarding,
@@ -214,4 +249,6 @@ class AnalyticsService:
                 employees_completed=employees_completed,
                 by_program=by_program,
                 completed_over_time=completed_over_time,
+                overdue_count=overdue_count,
+                by_priority=by_priority,
             )

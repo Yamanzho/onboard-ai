@@ -32,9 +32,12 @@ def register_exception_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(ConflictError)
     async def conflict_handler(_: Request, exc: ConflictError) -> JSONResponse:
+        content: dict = {"detail": exc.message}
+        if exc.conflicts:
+            content["conflicts"] = jsonable_encoder(exc.conflicts)
         return JSONResponse(
             status_code=status.HTTP_409_CONFLICT,
-            content={"detail": exc.message},
+            content=content,
         )
 
     @app.exception_handler(ValidationError)

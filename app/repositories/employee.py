@@ -4,8 +4,9 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.db.enums import EmployeeStatus
 from app.db.models.employee import Employee
-from app.repositories.base import BaseRepository, _MAX_LIST_LIMIT
+from app.repositories.base import _MAX_LIST_LIMIT, BaseRepository
 
 _ORG_LOAD = (
     selectinload(Employee.department),
@@ -81,6 +82,33 @@ class EmployeeRepository(BaseRepository[Employee]):
             status=status,
             department_id=department_id,
             with_org=with_org,
+        )
+        result = await self._session.scalars(stmt)
+        return list(result.all())
+
+    async def list_by_ids(self, employee_ids: list[UUID]) -> list[Employee]:
+        self._ensure_rls_context()
+        if not employee_ids:
+            return []
+        stmt = select(Employee).where(Employee.id.in_(employee_ids))
+        result = await self._session.scalars(stmt)
+        return list(result.all())
+
+    async def list_non_archived_by_department_ids(
+        self,
+        department_ids: list[UUID],
+    ) -> list[Employee]:
+        """Snapshot department members eligible for a new assignment."""
+        self._ensure_rls_context()
+        if not department_ids:
+            return []
+        stmt = (
+            select(Employee)
+            .where(
+                Employee.department_id.in_(department_ids),
+                Employee.status != EmployeeStatus.ARCHIVED.value,
+            )
+            .order_by(Employee.full_name.asc(), Employee.id.asc())
         )
         result = await self._session.scalars(stmt)
         return list(result.all())

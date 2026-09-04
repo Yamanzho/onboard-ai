@@ -14,6 +14,7 @@ from app.bot.api.schemas import (
     ProgressItemDTO,
 )
 from app.bot.identity_debug import log_identity
+from app.db.assignment_rules import assignment_sort_key
 
 _DONE_STATUSES = frozenset({"completed", "skipped"})
 _access_token_var: ContextVar[str | None] = ContextVar(
@@ -421,13 +422,19 @@ class OnboardApiClient:
 
     async def get_active_assignment(self, employee_id: UUID) -> AssignmentDTO | None:
         in_progress = await self.list_assignments(employee_id, status="in_progress")
-        if in_progress:
-            return sorted(in_progress, key=lambda a: a.assigned_at, reverse=True)[0]
-
         pending = await self.list_assignments(employee_id, status="pending")
-        if pending:
-            return sorted(pending, key=lambda a: a.assigned_at, reverse=True)[0]
-        return None
+        items = [*in_progress, *pending]
+        if not items:
+            return None
+        return sorted(
+            items,
+            key=lambda a: assignment_sort_key(
+                priority=a.priority,
+                due_at=a.due_at,
+                status=a.status,
+                assigned_at=a.assigned_at,
+            ),
+        )[0]
 
     async def get_program(self, program_id: UUID) -> ProgramDTO:
         payload = await self._get(f"/api/v1/programs/{program_id}")

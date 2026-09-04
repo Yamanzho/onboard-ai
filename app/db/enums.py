@@ -50,6 +50,12 @@ class AssignmentStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AssignmentPriority(StrEnum):
+    NORMAL = "normal"
+    IMPORTANT = "important"
+    CRITICAL = "critical"
+
+
 class ProgressStatus(StrEnum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"

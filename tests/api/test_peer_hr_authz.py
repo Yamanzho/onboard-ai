@@ -5,8 +5,6 @@ Authorization uses the target's persisted role from the DB before mutation.
 
 from __future__ import annotations
 
-from uuid import uuid4
-
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -17,10 +15,14 @@ from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
 from app.db.models.refresh_session import RefreshSession
 from app.services.refresh_session import SUBJECT_EMPLOYEE
-from tests.conftest import auth_header, _uow_factory, tenant_tokens_from_response
+from tests.conftest import (
+    _uow_factory,
+    auth_header,
+    tenant_tokens_from_response,
+    unique_telegram_user_id,
+)
 
 _PASSWORD = "PeerHrPass1!"
-_ATTACKER_TELEGRAM = 999_777_666
 
 
 async def _create_peer_hr(
@@ -35,8 +37,7 @@ async def _create_peer_hr(
         employee = await uow.employees.create(
             Employee(
                 company_id=company_id,
-                telegram_user_id=telegram_user_id
-                or (uuid4().int % 1_000_000_000 + 9200),
+                telegram_user_id=telegram_user_id or unique_telegram_user_id(),
                 full_name=full_name,
                 role=EmployeeRole.HR.value,
                 status=EmployeeStatus.ACTIVE.value,
@@ -122,7 +123,8 @@ async def test_hr_cannot_rebind_peer_hr_telegram(
     monkeypatch.setattr(settings, "bot_service_token", bot_token)
     monkeypatch.setattr(settings, "bot_company_id", str(company_a.id))
 
-    peer_telegram = 92001111
+    peer_telegram = unique_telegram_user_id()
+    attacker_telegram = unique_telegram_user_id()
     peer = await _create_peer_hr(
         company_a.id,
         full_name="HR Telegram Target",
@@ -132,7 +134,7 @@ async def test_hr_cannot_rebind_peer_hr_telegram(
     response = await api_client.patch(
         f"/api/v1/employees/{peer.id}",
         headers=auth_header(hr_a),
-        json={"telegram_user_id": _ATTACKER_TELEGRAM},
+        json={"telegram_user_id": attacker_telegram},
     )
     assert response.status_code == 403, response.text
 
@@ -157,7 +159,7 @@ async def test_hr_cannot_rebind_peer_hr_telegram(
         headers=bot_headers,
         json={
             "company_id": str(company_a.id),
-            "telegram_user_id": _ATTACKER_TELEGRAM,
+            "telegram_user_id": attacker_telegram,
         },
     )
     assert attack.status_code == 404, attack.text
@@ -278,7 +280,7 @@ async def test_hr_cannot_modify_admin(
     response = await api_client.patch(
         f"/api/v1/employees/{admin_a.id}",
         headers=auth_header(hr_a),
-        json={"telegram_user_id": _ATTACKER_TELEGRAM},
+        json={"telegram_user_id": unique_telegram_user_id()},
     )
     assert response.status_code == 403, response.text
 
@@ -325,7 +327,7 @@ async def test_peer_hr_sessions_untouched_after_rejected_ops(
     assert sessions_before >= 1
 
     for payload in (
-        {"telegram_user_id": _ATTACKER_TELEGRAM},
+        {"telegram_user_id": unique_telegram_user_id()},
         {"role": "employee"},
         {"status": "archived"},
         {"full_name": "Should Not Apply"},

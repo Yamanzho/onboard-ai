@@ -22,7 +22,7 @@ from app.db.models.company import Company
 from app.db.models.employee import Employee
 from app.db.models.onboarding_program import OnboardingProgram
 from app.db.models.super_admin import SuperAdmin
-from tests.conftest import _uow_factory, auth_header
+from tests.conftest import _uow_factory, auth_header, unique_telegram_user_id
 
 
 def _sa_header(admin: SuperAdmin) -> dict[str, str]:
@@ -62,13 +62,12 @@ async def _create_employee(
     email: str | None = None,
     full_name: str = "Restore Target",
 ) -> Employee:
-    suffix = uuid4().int % 1_000_000_000
     async with _uow_factory() as uow:
         await uow.enter_platform()
         employee = await uow.employees.create(
             Employee(
                 company_id=company_id,
-                telegram_user_id=telegram_user_id or (suffix + 1),
+                telegram_user_id=telegram_user_id or unique_telegram_user_id(),
                 telegram_chat_id=telegram_chat_id,
                 telegram_username=telegram_username,
                 full_name=full_name,
@@ -348,8 +347,8 @@ async def test_telegram_login_archive_restore_roundtrip(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _bind_bot_company(monkeypatch, company_a.id)
-    tg_id = 9_300_000_101
-    chat_id = 9_300_000_201
+    tg_id = unique_telegram_user_id()
+    chat_id = unique_telegram_user_id()
     employee = await _create_employee(
         company_a.id,
         telegram_user_id=tg_id,
@@ -418,8 +417,8 @@ async def test_telegram_bound_without_password_restores_active(
     monkeypatch.setenv("TELEGRAM_BOT_USERNAME", "onboardai_demo_bot")
     _bind_bot_company(monkeypatch, company_a.id)
     headers = _sa_header(super_admin)
-    tg_id = 9_300_000_301
-    chat_id = 9_300_000_401
+    tg_id = unique_telegram_user_id()
+    chat_id = unique_telegram_user_id()
 
     created = await api_client.post(
         "/api/v1/employees",
@@ -485,10 +484,12 @@ async def test_restore_preserves_assignments_identity_and_audit(
     super_admin: SuperAdmin,
     company_a: Company,
 ) -> None:
+    tg_id = unique_telegram_user_id()
+    chat_id = unique_telegram_user_id()
     employee = await _create_employee(
         company_a.id,
-        telegram_user_id=9_300_000_501,
-        telegram_chat_id=9_300_000_601,
+        telegram_user_id=tg_id,
+        telegram_chat_id=chat_id,
         telegram_username="keep_identity",
     )
     async with _uow_factory() as uow:
@@ -535,8 +536,8 @@ async def test_restore_preserves_assignments_identity_and_audit(
     assert refreshed_assignment.status == AssignmentStatus.IN_PROGRESS.value
     assert refreshed_assignment.employee_id == employee.id
     assert restored_emp is not None
-    assert restored_emp.telegram_user_id == 9_300_000_501
-    assert restored_emp.telegram_chat_id == 9_300_000_601
+    assert restored_emp.telegram_user_id == tg_id
+    assert restored_emp.telegram_chat_id == chat_id
     assert restored_emp.telegram_username == "keep_identity"
     assert restored_emp.role == EmployeeRole.EMPLOYEE.value
     assert restored_emp.company_id == company_a.id

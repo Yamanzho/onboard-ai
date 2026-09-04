@@ -133,6 +133,16 @@ def _uow_factory() -> UnitOfWork:
     return UnitOfWork(session_factory=db_session.async_session_factory)
 
 
+def unique_email(prefix: str = "emp") -> str:
+    """Globally unique employee email for shared/reused Postgres test DBs."""
+    return f"{prefix}-{uuid4().hex[:12]}@example.test"
+
+
+def unique_telegram_user_id() -> int:
+    """Globally unique Telegram user id (positive int64, above leftover ranges)."""
+    return uuid4().int % 2_000_000_000_000 + 10_000_000_000
+
+
 async def _create_company(*, name: str | None = None) -> Company:
     suffix = uuid4().hex[:10]
     async with _uow_factory() as uow:
@@ -155,13 +165,12 @@ async def _create_employee(
     company_id,
     role: str = EmployeeRole.HR.value,
 ) -> Employee:
-    suffix = uuid4().int % 1_000_000_000
     async with _uow_factory() as uow:
         await uow.enter_platform()
         employee = await uow.employees.create(
             Employee(
                 company_id=company_id,
-                telegram_user_id=suffix + 1,
+                telegram_user_id=unique_telegram_user_id(),
                 full_name=f"Test {role}",
                 role=role,
                 status=EmployeeStatus.ACTIVE.value,

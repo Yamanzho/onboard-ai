@@ -9,7 +9,7 @@ from httpx import AsyncClient
 from app.core.security import hash_password
 from app.db.enums import EmployeeRole, EmployeeStatus
 from app.db.models.employee import Employee
-from tests.conftest import auth_header, _uow_factory
+from tests.conftest import _uow_factory, auth_header, unique_email
 
 _PASSWORD = "EmpCrudPass1!"
 _SECRET_FIELDS = {"password_hash", "password", "refresh_token", "token"}
@@ -77,7 +77,7 @@ async def test_admin_and_hr_can_edit_allowed_fields(
     admin_patch = await api_client.patch(
         f"/api/v1/employees/{target.id}",
         headers=auth_header(admin_a),
-        json={"full_name": "Admin Edited", "email": "admin-edited@example.com"},
+        json={"full_name": "Admin Edited", "email": unique_email("admin-edited")},
     )
     assert admin_patch.status_code == 200, admin_patch.text
     assert admin_patch.json()["full_name"] == "Admin Edited"

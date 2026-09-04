@@ -12,7 +12,11 @@ from app.api.auth_deps import (
 from app.api.deps import get_assignment_service, get_progress_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.db.enums import EmployeeRole
-from app.schemas.assignment import AssignmentCreate, AssignmentResponse
+from app.schemas.assignment import (
+    AssignmentBulkCreateResponse,
+    AssignmentCreate,
+    AssignmentResponse,
+)
 from app.schemas.progress import (
     AssignmentProgressResponse,
     ProgressResponse,
@@ -55,10 +59,15 @@ _ASSIGNMENT_LIST_AUTH_RESPONSES = {
 
 @router.post(
     "/assignments",
-    response_model=AssignmentResponse,
+    response_model=AssignmentResponse | AssignmentBulkCreateResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Assign program to employee",
-    description="Create an assignment within the caller's company.",
+    summary="Assign program to employee(s)",
+    description=(
+        "Create assignment(s) within the caller's company. "
+        "A body with only employee_id returns a single assignment. "
+        "employee_ids and/or department_ids return a bulk result. "
+        "Department targeting snapshots current members; future members are not assigned."
+    ),
     responses={
         **_HR_AUTH_RESPONSES,
         status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
@@ -76,16 +85,41 @@ async def create_assignment(
     payload: AssignmentCreate,
     current_user: HRUser,
     service: AssignmentServiceDep,
-) -> AssignmentResponse:
-    assignment = await service.assign_employee(
-        employee_id=payload.employee_id,
-        program_id=payload.program_id,
+) -> AssignmentResponse | AssignmentBulkCreateResponse:
+    if payload.is_legacy_single:
+        assert payload.employee_id is not None
+        assignment = await service.assign_employee(
+            employee_id=payload.employee_id,
+            program_id=payload.program_id,
+            company_id=current_user.company_id,
+            assigned_by_id=payload.assigned_by_id,
+            due_at=payload.due_at,
+            priority=payload.priority,
+            actor_employee_id=current_user.id,
+        )
+        return AssignmentResponse.model_validate(assignment)
+
+    employee_ids = list(payload.employee_ids)
+    if payload.employee_id is not None:
+        employee_ids.append(payload.employee_id)
+    created = await service.create_many(
         company_id=current_user.company_id,
+        program_id=payload.program_id,
+        employee_ids=employee_ids,
+        department_ids=payload.department_ids,
         assigned_by_id=payload.assigned_by_id,
         due_at=payload.due_at,
+        priority=payload.priority,
+        deadline_overrides=payload.deadline_overrides,
         actor_employee_id=current_user.id,
+        stamp_batch=True,
     )
-    return AssignmentResponse.model_validate(assignment)
+    items = [AssignmentResponse.model_validate(item) for item in created]
+    return AssignmentBulkCreateResponse(
+        items=items,
+        source_batch_id=created[0].source_batch_id if created else None,
+        count=len(items),
+    )
 
 
 @router.get(

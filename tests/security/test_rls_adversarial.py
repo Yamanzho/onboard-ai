@@ -21,8 +21,7 @@ from app.db.models.platform_audit_log import PlatformAuditLog
 from app.db.models.refresh_session import RefreshSession
 from app.db.uow import UnitOfWork
 from app.services.telegram_outbound import TelegramOutboundService
-from tests.conftest import auth_header
-
+from tests.conftest import auth_header, unique_email, unique_telegram_user_id
 
 pytestmark = pytest.mark.security
 
@@ -891,6 +890,7 @@ async def test_f01_scoped_invite_and_sa_uow_lookups_work(
     email = f"sa-f01-login-{uuid4().hex[:8]}@test.local"
     password = "StrongSAPass!23456"
 
+    email = unique_email("invitee")
     async with _uow() as uow:
         await uow.enter_platform()
         invited = await uow.employees.create(
@@ -899,8 +899,8 @@ async def test_f01_scoped_invite_and_sa_uow_lookups_work(
                 full_name="Invite Preview Emp",
                 role=EmployeeRole.EMPLOYEE.value,
                 status=EmployeeStatus.INVITED.value,
-                telegram_user_id=900_000_000 + (uuid4().int % 1_000_000),
-                email="invitee@example.com",
+                telegram_user_id=unique_telegram_user_id(),
+                email=email,
             ),
         )
         await uow.employee_invites.create(
@@ -912,7 +912,7 @@ async def test_f01_scoped_invite_and_sa_uow_lookups_work(
                     __import__("datetime").UTC
                 )
                 + __import__("datetime").timedelta(hours=1),
-                invited_email="invitee@example.com",
+                invited_email=email,
                 purpose='employee',
             ),
         )

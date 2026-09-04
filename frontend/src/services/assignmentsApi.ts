@@ -1,11 +1,18 @@
 import type {
   Assignment,
+  AssignmentBulkCreateResult,
   AssignmentCreate,
   AssignmentListParams,
   AssignmentProgress,
   ProgressItem,
 } from '../types/assignment'
 import { apiRequest } from './apiClient'
+
+function isBulkResult(
+  value: Assignment | AssignmentBulkCreateResult,
+): value is AssignmentBulkCreateResult {
+  return 'items' in value && Array.isArray(value.items)
+}
 
 export async function listAssignments(
   params: AssignmentListParams,
@@ -39,11 +46,16 @@ export async function getAssignment(assignmentId: string): Promise<Assignment> {
 
 export async function createAssignment(
   payload: AssignmentCreate,
-): Promise<Assignment> {
-  return apiRequest<Assignment>('/api/v1/assignments', {
-    method: 'POST',
-    body: payload,
-  })
+): Promise<Assignment[]> {
+  const result = await apiRequest<Assignment | AssignmentBulkCreateResult>(
+    '/api/v1/assignments',
+    {
+      method: 'POST',
+      body: payload,
+    },
+  )
+  if (isBulkResult(result)) return result.items
+  return [result]
 }
 
 export async function cancelAssignment(assignmentId: string): Promise<void> {

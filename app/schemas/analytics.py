@@ -32,6 +32,8 @@ class OnboardingAnalyticsResponse(BaseModel):
     employees_completed: int
     by_program: list[CompletionByProgram] = Field(default_factory=list)
     completed_over_time: list[CompletionOverTimePoint] = Field(default_factory=list)
+    overdue_count: int = 0
+    by_priority: dict[str, int] = Field(default_factory=dict)
 
 
 class CompanyAuditLogResponse(BaseModel):

@@ -12,7 +12,7 @@ import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
-import { isActiveAssignment } from '../../lib/progressUtils'
+import { compareAssignmentsByPriorityDeadline, isActiveAssignment } from '../../lib/progressUtils'
 import * as assignmentsApi from '../../services/assignmentsApi'
 import * as programsApi from '../../services/programsApi'
 
@@ -30,10 +30,7 @@ export function EmployeeDashboardPage() {
     () =>
       assignments
         .filter(isActiveAssignment)
-        .sort(
-          (a, b) =>
-            new Date(b.assigned_at).getTime() - new Date(a.assigned_at).getTime(),
-        )[0] ?? null,
+        .sort(compareAssignmentsByPriorityDeadline)[0] ?? null,
     [assignments],
   )
 

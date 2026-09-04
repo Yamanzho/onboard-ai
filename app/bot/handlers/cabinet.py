@@ -18,6 +18,7 @@ from app.bot.keyboards.menu import (
     MENU_HISTORY,
     MENU_PROFILE,
 )
+from app.db.assignment_rules import assignment_sort_key
 
 router = Router(name="cabinet")
 
@@ -79,8 +80,12 @@ async def active_assignments(
 
     items = sorted(
         [*in_progress, *pending],
-        key=lambda a: a.assigned_at,
-        reverse=True,
+        key=lambda a: assignment_sort_key(
+            priority=a.priority,
+            due_at=a.due_at,
+            status=a.status,
+            assigned_at=a.assigned_at,
+        ),
     )
     if not items:
         await message.answer("🔥 Активные\n\nАктивных назначений нет.")

@@ -29,7 +29,14 @@ from app.services.subscription_guard import (
     ensure_subscription_allows_access,
     subscription_grants_access,
 )
-from tests.conftest import _uow_factory, auth_header, sa_tokens_from_response, tenant_tokens_from_response
+from tests.conftest import (
+    _uow_factory,
+    auth_header,
+    sa_tokens_from_response,
+    tenant_tokens_from_response,
+    unique_email,
+    unique_telegram_user_id,
+)
 
 _DEFAULT_FUTURE_ENDS = object()
 
@@ -502,14 +509,15 @@ async def test_invite_accept_does_not_grant_api_when_subscription_blocked(
 
     raw_token = f"invite-{uuid4().hex}"
     password = "InviteAccept1!"
+    email = unique_email("invited-blocked")
     async with _uow_factory() as uow:
         await uow.enter_platform()
         invited = await uow.employees.create(
             Employee(
                 company_id=company_a.id,
-                telegram_user_id=880099001,
+                telegram_user_id=unique_telegram_user_id(),
                 full_name="Invited Blocked Sub",
-                email="invited-blocked@example.com",
+                email=email,
                 role=EmployeeRole.EMPLOYEE.value,
                 status=EmployeeStatus.INVITED.value,
             ),
@@ -520,7 +528,7 @@ async def test_invite_accept_does_not_grant_api_when_subscription_blocked(
                 employee_id=invited.id,
                 token_hash=hash_token(raw_token),
                 expires_at=datetime.now(UTC) + timedelta(hours=24),
-                invited_email="invited-blocked@example.com",
+                invited_email=email,
                 purpose='employee',
             ),
         )
