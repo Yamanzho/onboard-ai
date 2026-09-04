@@ -99,6 +99,13 @@ def check_ai_config() -> None:
     if settings.ai_embedding_provider == "openai":
         if not settings.ai_embedding_api_key.get_secret_value().strip():
             raise ServiceUnavailableError("ai embedding not configured")
-    if settings.ai_llm_provider == "openai":
+    from app.core.ai_constants import HOSTED_LLM_PROVIDERS
+
+    if settings.ai_llm_provider in HOSTED_LLM_PROVIDERS:
         if not settings.ai_llm_api_key.get_secret_value().strip():
+            raise ServiceUnavailableError("ai llm not configured")
+        if (
+            settings.ai_llm_provider == "openai_compatible"
+            and not settings.ai_llm_base_url.strip()
+        ):
             raise ServiceUnavailableError("ai llm not configured")

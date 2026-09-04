@@ -89,7 +89,7 @@ When `APP_ENV=production`, the API **fail-fast** rejects missing or obviously we
 | `SEED_DEMO` | Forced `false` in production Compose; entrypoint refuses `true` |
 | `AI_EMBEDDING_PROVIDER` | Production rejects `fake` unless `AI_ALLOW_FAKE_EMBEDDINGS_IN_PRODUCTION=true` |
 | `AI_LLM_PROVIDER` | Production rejects `fake` unless `AI_ALLOW_FAKE_LLM_IN_PRODUCTION=true` |
-| `AI_EMBEDDING_API_KEY` / `AI_LLM_API_KEY` | Required when the matching provider is `openai` (`OPENAI_API_KEY` is an alias) |
+| `AI_EMBEDDING_API_KEY` / `AI_LLM_API_KEY` | Required when the matching hosted provider is selected (`OPENAI_API_KEY` is an alias). `AI_LLM_BASE_URL` is required only for `openai_compatible` |
 
 `docker-compose.prod.yml` also refuses to interpolate if `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `REDIS_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_OWNER_PASSWORD`, `ONBOARD_APP_PASSWORD`, `BOT_SERVICE_TOKEN`, or `INVITE_BASE_URL` is missing/empty. `BOT_COMPANY_ID` is optional (`${BOT_COMPANY_ID:-}`). If set in production, it must **not** be the demo seed UUID `11111111-1111-4111-8111-111111111111`. Identity is `telegram_user_id` → Employee → `employee.company_id`.
 

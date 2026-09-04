@@ -51,7 +51,7 @@ async def test_openai_llm_rejected_credentials() -> None:
 
     with pytest.raises(ValidationError, match="credentials"):
         _decode_openai_llm_response(httpx.Response(401, json={"error": {}}))
-    with pytest.raises(ValidationError, match="credentials"):
+    with pytest.raises(ValidationError, match="denied access"):
         _decode_openai_llm_response(httpx.Response(403, json={"error": {}}))
 
 

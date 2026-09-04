@@ -1,7 +1,8 @@
 """Provider-independent LLM interface. Not an authorization source.
 
 Dev/CI: ``FakeLLMProvider`` (in-process, no network).
-Production hosted: ``OpenAILLMProvider`` (Chat Completions via httpx, no SDK).
+Hosted: OpenAI, Anthropic, Gemini, or OpenAI-compatible (httpx, no SDK).
+Embeddings are selected independently and are not affected by this factory.
 
 API keys must never be logged. The LLM must not be treated as ACL.
 """
@@ -128,14 +129,47 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
     provider = resolved.ai_llm_provider.strip().lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
         raise ValidationError(f"Unsupported LLM provider {resolved.ai_llm_provider!r}")
+    model = resolved.ai_llm_model.strip()
+    timeout = resolved.ai_llm_timeout_seconds
+    api_key = resolved.ai_llm_api_key.get_secret_value()
+    base_url = resolved.ai_llm_base_url.strip()
     if provider == "fake":
-        return FakeLLMProvider(model=resolved.ai_llm_model.strip() or "fake-llm")
+        return FakeLLMProvider(model=model or "fake-llm")
     if provider == "openai":
         from app.services.ai.openai_llm import OpenAILLMProvider
+        from app.services.ai.provider_urls import openai_chat_completions_url
 
         return OpenAILLMProvider(
-            api_key=resolved.ai_llm_api_key.get_secret_value(),
-            model=resolved.ai_llm_model.strip() or OPENAI_LLM_MODEL,
-            timeout_seconds=resolved.ai_llm_timeout_seconds,
+            api_key=api_key,
+            model=model or OPENAI_LLM_MODEL,
+            timeout_seconds=timeout,
+            base_url=openai_chat_completions_url(base_url),
+        )
+    if provider == "openai_compatible":
+        from app.services.ai.openai_compatible_llm import OpenAICompatibleLLMProvider
+
+        return OpenAICompatibleLLMProvider(
+            api_key=api_key,
+            model=model,
+            base_url=base_url,
+            timeout_seconds=timeout,
+        )
+    if provider == "anthropic":
+        from app.services.ai.anthropic_llm import AnthropicLLMProvider
+
+        return AnthropicLLMProvider(
+            api_key=api_key,
+            model=model,
+            timeout_seconds=timeout,
+            base_url=base_url,
+        )
+    if provider == "gemini":
+        from app.services.ai.gemini_llm import GeminiLLMProvider
+
+        return GeminiLLMProvider(
+            api_key=api_key,
+            model=model,
+            timeout_seconds=timeout,
+            base_url=base_url,
         )
     raise ValidationError(f"Unsupported LLM provider {resolved.ai_llm_provider!r}")

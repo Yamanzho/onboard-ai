@@ -25,15 +25,25 @@ def _reset_metrics() -> None:
 
 
 def test_classify_credentials_are_not_retryable() -> None:
-    for status in (401, 403):
-        with pytest.raises(ProviderFailure) as captured:
-            classify_openai_response(
-                httpx.Response(status, json={"error": {"message": "sk-secret"}}),
-                kind="embedding",
-            )
-        assert captured.value.retryable is False
-        assert captured.value.error_class == "credentials"
-        assert "sk-secret" not in str(captured.value)
+    with pytest.raises(ProviderFailure) as captured:
+        classify_openai_response(
+            httpx.Response(401, json={"error": {"message": "sk-secret"}}),
+            kind="embedding",
+        )
+    assert captured.value.retryable is False
+    assert captured.value.error_class == "credentials"
+    assert "sk-secret" not in str(captured.value)
+
+
+def test_classify_permission_is_not_retryable() -> None:
+    with pytest.raises(ProviderFailure) as captured:
+        classify_openai_response(
+            httpx.Response(403, json={"error": {"message": "sk-secret"}}),
+            kind="embedding",
+        )
+    assert captured.value.retryable is False
+    assert captured.value.error_class == "permission"
+    assert "sk-secret" not in str(captured.value)
 
 
 def test_classify_transient_statuses() -> None:

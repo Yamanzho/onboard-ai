@@ -55,7 +55,56 @@ def test_llm_api_key_is_not_in_repr() -> None:
     assert secret not in dumped
 
 
-@pytest.mark.parametrize("provider", ["anthropic", "azure", ""])
+@pytest.mark.parametrize(
+    "provider",
+    ["anthropic", "gemini", "openai_compatible"],
+)
+def test_hosted_llm_requires_api_key(provider: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AI_LLM_API_KEY", raising=False)
+    kwargs: dict[str, str] = {"ai_llm_provider": provider, "ai_llm_model": "test-model"}
+    if provider == "openai_compatible":
+        kwargs["ai_llm_base_url"] = "https://example.test/compatible-mode/v1"
+    with pytest.raises(ValidationError, match="AI_LLM_API_KEY"):
+        Settings(_env_file=None, **kwargs)
+
+
+def test_compatible_requires_base_url() -> None:
+    with pytest.raises(ValidationError, match="AI_LLM_BASE_URL"):
+        Settings(
+            _env_file=None,
+            ai_llm_provider="openai_compatible",
+            ai_llm_model="qwen-test",
+            ai_llm_api_key="secret-qwen-123",
+        )
+
+
+def test_openai_does_not_require_base_url() -> None:
+    settings = Settings(
+        _env_file=None,
+        ai_llm_provider="openai",
+        ai_llm_api_key="sk-unit-test-not-a-real-key",
+    )
+    assert settings.ai_llm_base_url == ""
+
+
+def test_fake_needs_no_key_or_base_url() -> None:
+    settings = Settings(_env_file=None, ai_llm_provider="fake")
+    assert settings.ai_llm_api_key.get_secret_value() == ""
+    assert settings.ai_llm_base_url == ""
+
+
+def test_empty_hosted_model_is_rejected() -> None:
+    with pytest.raises(ValidationError, match="AI_LLM_MODEL"):
+        Settings(
+            _env_file=None,
+            ai_llm_provider="anthropic",
+            ai_llm_model="   ",
+            ai_llm_api_key="secret-anthropic-123",
+        )
+
+
+@pytest.mark.parametrize("provider", ["azure", "qwen", ""])
 def test_unknown_llm_provider_is_rejected(provider: str) -> None:
     with pytest.raises(ValidationError, match="AI_LLM_PROVIDER must be"):
         Settings(_env_file=None, ai_llm_provider=provider)

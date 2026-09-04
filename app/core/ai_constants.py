@@ -15,10 +15,22 @@ DEFAULT_EMBEDDING_TIMEOUT_SECONDS = 30.0
 SUPPORTED_EMBEDDING_PROVIDERS = frozenset({"fake", "openai"})
 
 # AI-9A/9B LLM. HTTP chat is POST /api/v1/ai/chat. Telegram is a thin client (AI-9C).
+# Phase 9J: chat providers are independent of embeddings. Qwen uses openai_compatible.
 OPENAI_LLM_MODEL = "gpt-4o-mini"
 OPENAI_CHAT_COMPLETIONS_URL = "https://api.openai.com/v1/chat/completions"
+ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_API_VERSION = "2023-06-01"
+GEMINI_GENERATE_CONTENT_URL = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
 DEFAULT_LLM_TIMEOUT_SECONDS = 30.0
-SUPPORTED_LLM_PROVIDERS = frozenset({"fake", "openai"})
+DEFAULT_LLM_MAX_OUTPUT_TOKENS = 4096
+SUPPORTED_LLM_PROVIDERS = frozenset(
+    {"fake", "openai", "anthropic", "gemini", "openai_compatible"}
+)
+HOSTED_LLM_PROVIDERS = frozenset(
+    {"openai", "anthropic", "gemini", "openai_compatible"}
+)
 
 # AI-10A reliability. Bounded OpenAI retries; chat budget stays under the
 # Telegram HTTP client timeout (30s).

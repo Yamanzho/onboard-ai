@@ -230,6 +230,9 @@ class Settings(BaseSettings):
         default=SecretStr(""),
         validation_alias=AliasChoices("AI_LLM_API_KEY", "OPENAI_API_KEY"),
     )
+    # Required only for openai_compatible (e.g. Qwen / Model Studio compatible-mode).
+    # Optional override for openai / anthropic / gemini official endpoints.
+    ai_llm_base_url: str = ""
     ai_llm_timeout_seconds: float = 30.0
     # AI-9B HTTP chat rate limit (per authenticated employee, fixed window).
     # 0 disables the limiter (tests). Not an authorization mechanism.
@@ -285,7 +288,10 @@ class Settings(BaseSettings):
 
         normalized = value.strip().lower()
         if normalized not in SUPPORTED_LLM_PROVIDERS:
-            raise ValueError("AI_LLM_PROVIDER must be 'fake' or 'openai'")
+            raise ValueError(
+                "AI_LLM_PROVIDER must be one of: fake, openai, anthropic, "
+                "gemini, openai_compatible"
+            )
         return normalized
 
     @field_validator("ai_llm_timeout_seconds")
@@ -376,6 +382,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _harden_runtime(self) -> "Settings":
         from app.core.ai_constants import (
+            HOSTED_LLM_PROVIDERS,
             KB_CHUNK_VECTOR_DIMENSION,
             OPENAI_EMBEDDING_DIMENSION,
         )
@@ -399,14 +406,33 @@ class Settings(BaseSettings):
             if not self.ai_embedding_model.strip():
                 raise ValueError("AI_EMBEDDING_MODEL must not be empty")
 
-        if self.ai_llm_provider == "openai":
+        if self.ai_llm_provider in HOSTED_LLM_PROVIDERS:
             if not self.ai_llm_api_key.get_secret_value().strip():
                 raise ValueError(
                     "AI_LLM_API_KEY (or OPENAI_API_KEY) is required when "
-                    "AI_LLM_PROVIDER=openai"
+                    f"AI_LLM_PROVIDER={self.ai_llm_provider}"
                 )
             if not self.ai_llm_model.strip():
                 raise ValueError("AI_LLM_MODEL must not be empty")
+        if self.ai_llm_provider == "openai_compatible":
+            base_url = self.ai_llm_base_url.strip()
+            if not base_url:
+                raise ValueError(
+                    "AI_LLM_BASE_URL is required when "
+                    "AI_LLM_PROVIDER=openai_compatible"
+                )
+            if not (
+                base_url.startswith("https://") or base_url.startswith("http://")
+            ):
+                raise ValueError("AI_LLM_BASE_URL must be an http(s) URL")
+            object.__setattr__(self, "ai_llm_base_url", base_url.rstrip("/"))
+        elif self.ai_llm_base_url.strip():
+            base_url = self.ai_llm_base_url.strip()
+            if not (
+                base_url.startswith("https://") or base_url.startswith("http://")
+            ):
+                raise ValueError("AI_LLM_BASE_URL must be an http(s) URL")
+            object.__setattr__(self, "ai_llm_base_url", base_url.rstrip("/"))
 
         # Bot service token authenticates the bot process, not a tenant.
         # BOT_COMPANY_ID is optional metadata; identity is telegram_user_id
