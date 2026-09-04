@@ -29,7 +29,10 @@ class TelegramOutboundMessage(Base, TimestampMixin):
     __tablename__ = "telegram_outbound_messages"
     __table_args__ = (
         CheckConstraint(
-            "source_type IN ('ai_chat', 'quiz_result')",
+            "source_type IN ("
+            "'ai_chat', 'quiz_result', 'assignment_initial', "
+            "'assignment_reminder', 'assignment_manual_reminder'"
+            ")",
             name="ck_telegram_outbound_source_type",
         ),
         CheckConstraint(

@@ -18,6 +18,7 @@ from app.services.onboarding_program import OnboardingProgramService
 from app.services.platform import PlatformService, SuperAdminAuthService
 from app.services.progress import ProgressService
 from app.services.question_topic import QuestionTopicService
+from app.services.reminder import ReminderService
 from app.services.responsibility import ResponsibilityLookupService
 from app.services.step import StepService
 from app.services.telegram_outbound import TelegramOutboundService
@@ -82,6 +83,11 @@ def get_progress_service() -> ProgressService:
 @lru_cache
 def get_learning_progress_service() -> LearningProgressService:
     return LearningProgressService()
+
+
+@lru_cache
+def get_reminder_service() -> ReminderService:
+    return ReminderService()
 
 
 @lru_cache

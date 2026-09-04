@@ -1,11 +1,13 @@
 from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import Select, case, select
+from sqlalchemy import Select, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.enums import AssignmentStatus
+from app.db.enums import AssignmentStatus, ReminderMode
 from app.db.models.assignment import Assignment
+from app.db.models.assignment_reminder_preference import AssignmentReminderPreference
+from app.db.models.employee import Employee
 from app.repositories.base import _MAX_LIST_LIMIT, BaseRepository
 
 _ACTIVE_STATUSES = (
@@ -120,6 +122,32 @@ class AssignmentRepository(BaseRepository[Assignment]):
         )
         result = await self._session.scalars(stmt)
         return set(result.all())
+
+    async def list_open_for_reminders(self, *, limit: int = 200) -> list[Assignment]:
+        """Pending/in_progress Telegram-bound assignments for a reminder scan tick."""
+        self._ensure_rls_context()
+        if limit < 1 or limit > _MAX_LIST_LIMIT:
+            raise ValueError(f"limit must be between 1 and {_MAX_LIST_LIMIT}")
+        stmt = (
+            select(Assignment)
+            .join(Employee, Employee.id == Assignment.employee_id)
+            .outerjoin(
+                AssignmentReminderPreference,
+                AssignmentReminderPreference.assignment_id == Assignment.id,
+            )
+            .where(
+                Assignment.status.in_(_ACTIVE_STATUSES),
+                Employee.telegram_chat_id.is_not(None),
+                or_(
+                    AssignmentReminderPreference.id.is_(None),
+                    AssignmentReminderPreference.mode != ReminderMode.DISABLED.value,
+                ),
+            )
+            .order_by(Assignment.assigned_at.asc(), Assignment.id.asc())
+            .limit(limit)
+        )
+        result = await self._session.scalars(stmt)
+        return list(result.all())
 
     def _employee_list_statement(
         self,

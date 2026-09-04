@@ -339,6 +339,37 @@ class OnboardApiClient:
         )
         return bool(payload.get("updated"))
 
+    async def allow_assignment_outbound(
+        self,
+        *,
+        source_type: str,
+        source_key: str,
+    ) -> bool:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/outbound/allow",
+            json={"source_type": source_type, "source_key": source_key},
+        )
+        return bool(payload.get("allowed"))
+
+    async def scan_assignment_reminders(self) -> dict[str, int]:
+        payload = await self._bot_service_post(
+            "/api/v1/auth/bot/reminders/scan",
+            json={},
+        )
+        return {
+            "scanned": int(payload.get("scanned") or 0),
+            "enqueued": int(payload.get("enqueued") or 0),
+        }
+
+    async def acknowledge_assignment_reminder(self, assignment_id: UUID) -> None:
+        await self._post(f"/api/v1/assignments/{assignment_id}/reminders/acknowledge")
+
+    async def reduce_assignment_reminders(self, assignment_id: UUID) -> None:
+        await self._post(f"/api/v1/assignments/{assignment_id}/reminders/reduce")
+
+    async def disable_assignment_reminders(self, assignment_id: UUID) -> None:
+        await self._post(f"/api/v1/assignments/{assignment_id}/reminders/disable")
+
     async def accept_invite_via_telegram(
         self,
         *,

@@ -7,6 +7,9 @@ COMPLETE_CALLBACK_PREFIX = "progress:complete:"
 BLOCK_NEXT_PREFIX = "pnext:"
 BLOCK_READ_PREFIX = "pread:"
 ASSIGN_OPEN_PREFIX = "aopen:"
+REMIND_ACK_PREFIX = "rack:"
+REMIND_REDUCE_PREFIX = "rred:"
+REMIND_DISABLE_PREFIX = "rdis:"
 QUIZ_RETRY_PREFIX = "qretry:"
 QUIZ_SELECT_PREFIX = "qsel:"
 QUIZ_CONFIRM_PREFIX = "qok:"
@@ -68,6 +71,71 @@ def parse_assign_open_callback(data: str) -> UUID | None:
         return UUID(data.removeprefix(ASSIGN_OPEN_PREFIX))
     except ValueError:
         return None
+
+
+def _parse_uuid_prefix(data: str, prefix: str) -> UUID | None:
+    if not data.startswith(prefix):
+        return None
+    try:
+        return UUID(data.removeprefix(prefix))
+    except ValueError:
+        return None
+
+
+def parse_remind_ack_callback(data: str) -> UUID | None:
+    return _parse_uuid_prefix(data, REMIND_ACK_PREFIX)
+
+
+def parse_remind_reduce_callback(data: str) -> UUID | None:
+    return _parse_uuid_prefix(data, REMIND_REDUCE_PREFIX)
+
+
+def parse_remind_disable_callback(data: str) -> UUID | None:
+    return _parse_uuid_prefix(data, REMIND_DISABLE_PREFIX)
+
+
+def assignment_notice_keyboard(assignment_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Открыть",
+                    callback_data=f"{ASSIGN_OPEN_PREFIX}{assignment_id}",
+                )
+            ]
+        ]
+    )
+
+
+def reminder_keyboard(assignment_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Открыть",
+                    callback_data=f"{ASSIGN_OPEN_PREFIX}{assignment_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Понял",
+                    callback_data=f"{REMIND_ACK_PREFIX}{assignment_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Напоминать реже",
+                    callback_data=f"{REMIND_REDUCE_PREFIX}{assignment_id}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Не напоминать больше",
+                    callback_data=f"{REMIND_DISABLE_PREFIX}{assignment_id}",
+                )
+            ],
+        ]
+    )
 
 
 def parse_quiz_retry_callback(data: str) -> UUID | None:

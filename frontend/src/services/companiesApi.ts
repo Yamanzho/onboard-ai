@@ -7,7 +7,11 @@ export async function getCompany(companyId: string): Promise<Company> {
 
 export async function updateCompany(
   companyId: string,
-  payload: { name?: string; timezone?: string },
+  payload: {
+    name?: string
+    timezone?: string
+    settings?: Record<string, unknown>
+  },
 ): Promise<Company> {
   return apiRequest<Company>(`/api/v1/companies/${companyId}`, {
     method: 'PATCH',

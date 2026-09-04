@@ -19,6 +19,7 @@ from app.db.models.progress import Progress
 from app.db.uow import UnitOfWork
 from app.services.company_audit import record_company_audit
 from app.services.course_snapshot import build_structure_snapshot
+from app.services.reminder import ReminderService
 from app.services.tenancy import ensure_same_company
 
 _VALID_PRIORITIES = {item.value for item in AssignmentPriority}
@@ -27,8 +28,15 @@ _VALID_PRIORITIES = {item.value for item in AssignmentPriority}
 class AssignmentService:
     """Application service for assigning onboarding programs to employees."""
 
-    def __init__(self, uow_factory: Callable[[], UnitOfWork] | None = None) -> None:
+    def __init__(
+        self,
+        uow_factory: Callable[[], UnitOfWork] | None = None,
+        reminder_service: ReminderService | None = None,
+    ) -> None:
         self._uow_factory = uow_factory or UnitOfWork
+        self._reminders = reminder_service or ReminderService(
+            uow_factory=self._uow_factory
+        )
 
     async def assign_employee(
         self,
@@ -98,6 +106,9 @@ class AssignmentService:
             program = await uow.onboarding_programs.get_by_id(program_id)
             program_revision = program.revision if program is not None else 1
             structure_snapshot = build_structure_snapshot(program_revision, steps)
+            company = await uow.companies.get_by_id(company_id)
+            assert company is not None
+            program_title = program.title if program is not None else "курс"
 
             created: list[Assignment] = []
             try:
@@ -148,6 +159,14 @@ class AssignmentService:
                                 str(source_batch_id) if source_batch_id else None
                             ),
                         },
+                    )
+                    await self._reminders.enqueue_initial_in_uow(
+                        uow,
+                        assignment=assignment,
+                        employee=employee,
+                        company=company,
+                        program_title=program_title,
+                        now=now,
                     )
                     created.append(assignment)
                 await uow.commit()

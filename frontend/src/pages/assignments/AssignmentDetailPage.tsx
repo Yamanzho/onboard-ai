@@ -13,12 +13,13 @@ import { Button } from '../../components/ui/Button'
 import {
   useAssignment,
   useAssignmentMutations,
+  useAssignmentNotifications,
   useAssignmentProgress,
 } from '../../hooks/useAssignments'
 import { useEmployee } from '../../hooks/useEmployees'
 import { useProgram } from '../../hooks/usePrograms'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
-import { labelProgressStatus, labelStepType, t } from '../../i18n'
+import { labelProgressStatus, labelReminderMode, labelNotificationKind, labelOutboundStatus, labelStepType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import { isAssignmentOverdue } from '../../lib/progressUtils'
 import { parseQuizAttemptSummary, quizScoreLabel } from '../../lib/quizUtils'
@@ -45,11 +46,29 @@ export function AssignmentDetailPage() {
   const { data: assignment, isLoading, error } = useAssignment(assignmentId)
   const { data: progress, isLoading: progressLoading } =
     useAssignmentProgress(assignmentId)
+  const { data: notifications, isLoading: notificationsLoading } =
+    useAssignmentNotifications(assignmentId)
   const { data: employee } = useEmployee(assignment?.employee_id)
   const { data: program } = useProgram(assignment?.program_id)
   const { data: assigner } = useEmployee(assignment?.assigned_by_id ?? undefined)
-  const { cancel } = useAssignmentMutations()
+  const { cancel, remindNow } = useAssignmentMutations()
   const [actionError, setActionError] = useState<string | null>(null)
+  const [remindOk, setRemindOk] = useState<string | null>(null)
+
+  async function onRemindNow() {
+    if (!assignment) return
+    if (notifications?.preference.mode === 'disabled') return
+    setActionError(null)
+    setRemindOk(null)
+    try {
+      await remindNow.mutateAsync(assignment.id)
+      setRemindOk(t('assignments.remindNowOk'))
+    } catch (err) {
+      setActionError(
+        err instanceof ApiError ? err.message : t('assignments.remindNowFailed'),
+      )
+    }
+  }
 
   async function onCancel() {
     if (!assignment) return
@@ -79,6 +98,7 @@ export function AssignmentDetailPage() {
   const items = progress?.items ?? []
   const canCancel =
     assignment.status === 'pending' || assignment.status === 'in_progress'
+  const remindersDisabled = notifications?.preference.mode === 'disabled'
   const overdue = isAssignmentOverdue(assignment)
 
   const rows: { label: string; value: ReactNode }[] = [
@@ -132,6 +152,14 @@ export function AssignmentDetailPage() {
     { label: t('common.created'), value: formatDate(assignment.created_at) },
     { label: t('common.updated'), value: formatDate(assignment.updated_at) },
     { label: t('assignments.assignmentId'), value: assignment.id },
+    {
+      label: t('assignments.reminderState'),
+      value: labelReminderMode(notifications?.preference.mode ?? 'default'),
+    },
+    {
+      label: t('assignments.lastAcknowledged'),
+      value: formatDate(notifications?.preference.last_acknowledged_at),
+    },
   ]
 
   return (
@@ -144,6 +172,20 @@ export function AssignmentDetailPage() {
             <Link to={paths.assignments}>
               <Button variant="secondary">{t('assignments.backToList')}</Button>
             </Link>
+            {canCancel ? (
+              <Button
+                variant="secondary"
+                disabled={remindNow.isPending || remindersDisabled}
+                title={
+                  remindersDisabled ? t('assignments.remindNowDisabled') : undefined
+                }
+                onClick={() => void onRemindNow()}
+              >
+                {remindNow.isPending
+                  ? t('assignments.reminding')
+                  : t('assignments.remindNow')}
+              </Button>
+            ) : null}
             {canCancel ? (
               <Button
                 variant="danger"
@@ -160,6 +202,16 @@ export function AssignmentDetailPage() {
       />
 
       {actionError ? <ErrorAlert message={actionError} /> : null}
+      {remindOk ? (
+        <div className="mb-4 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {remindOk}
+        </div>
+      ) : null}
+      {remindersDisabled ? (
+        <div className="mb-4 rounded-md border border-[var(--color-border)] bg-slate-50 px-3 py-2 text-sm text-[var(--color-muted)]">
+          {t('assignments.remindNowDisabled')}
+        </div>
+      ) : null}
 
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm">
         <AssignmentStatusBadge status={assignment.status} />
@@ -279,6 +331,51 @@ export function AssignmentDetailPage() {
                     </tr>
                   )
                 })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-8">
+        <h2 className="mb-3 text-lg font-semibold">
+          {t('assignments.notificationsTitle')}
+        </h2>
+        {notificationsLoading ? (
+          <LoadingBlock label={t('assignments.loadingProgress')} />
+        ) : !notifications || notifications.items.length === 0 ? (
+          <EmptyState
+            title={t('assignments.notificationsEmpty')}
+            description={t('assignments.notificationsEmpty')}
+          />
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-[var(--color-muted)]">
+                <tr>
+                  <th className="px-4 py-3">{t('assignments.colWhen')}</th>
+                  <th className="px-4 py-3">{t('assignments.colKind')}</th>
+                  <th className="px-4 py-3">{t('assignments.colDelivery')}</th>
+                  <th className="px-4 py-3">{t('assignments.colPreview')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {notifications.items.map((item) => (
+                  <tr key={item.id}>
+                    <td className="px-4 py-3 text-[var(--color-muted)]">
+                      {formatDate(item.created_at)}
+                    </td>
+                    <td className="px-4 py-3">
+                      {labelNotificationKind(item.source_type)}
+                    </td>
+                    <td className="px-4 py-3">
+                      {labelOutboundStatus(item.status)}
+                    </td>
+                    <td className="max-w-sm truncate px-4 py-3 text-xs text-[var(--color-muted)]">
+                      {item.preview}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

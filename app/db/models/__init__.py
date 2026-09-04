@@ -1,10 +1,11 @@
 from app.db.models.ai_conversation import AIConversation
 from app.db.models.ai_message import AIMessage
 from app.db.models.assignment import Assignment
+from app.db.models.assignment_reminder_preference import AssignmentReminderPreference
 from app.db.models.company import Company
-from app.db.models.department import Department
 from app.db.models.company_audit_log import CompanyAuditLog
 from app.db.models.company_subscription import CompanySubscription
+from app.db.models.department import Department
 from app.db.models.employee import Employee
 from app.db.models.employee_invite import EmployeeInvite
 from app.db.models.idempotency_receipt import IdempotencyReceipt
@@ -21,15 +22,16 @@ from app.db.models.progress import Progress
 from app.db.models.question_topic import QuestionTopic
 from app.db.models.refresh_session import RefreshSession
 from app.db.models.step import Step
-from app.db.models.topic_responsibility import TopicResponsibility
 from app.db.models.subscription_history import SubscriptionHistoryEvent
 from app.db.models.super_admin import SuperAdmin
 from app.db.models.telegram_outbound_message import TelegramOutboundMessage
+from app.db.models.topic_responsibility import TopicResponsibility
 
 __all__ = [
     "AIConversation",
     "AIMessage",
     "Assignment",
+    "AssignmentReminderPreference",
     "Company",
     "CompanyAuditLog",
     "Department",

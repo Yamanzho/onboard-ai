@@ -21,6 +21,9 @@ from app.bot.keyboards.onboarding import (
     BLOCK_NEXT_PREFIX,
     BLOCK_READ_PREFIX,
     QUIZ_RETRY_PREFIX,
+    REMIND_ACK_PREFIX,
+    REMIND_DISABLE_PREFIX,
+    REMIND_REDUCE_PREFIX,
     assignment_open_keyboard,
     complete_step_keyboard,
     content_block_keyboard,
@@ -31,6 +34,9 @@ from app.bot.keyboards.onboarding import (
     parse_quiz_confirm_callback,
     parse_quiz_retry_callback,
     parse_quiz_select_callback,
+    parse_remind_ack_callback,
+    parse_remind_disable_callback,
+    parse_remind_reduce_callback,
     quiz_options_keyboard,
     quiz_retry_keyboard,
 )
@@ -609,6 +615,81 @@ async def open_assignment_callback(
         assignment_id=assignment_id,
         program_id=listing.program_id,
         edit=True,
+    )
+
+
+async def _reminder_preference_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    *,
+    assignment_id: UUID | None,
+    action,
+    success: str,
+) -> None:
+    if callback.message is None:
+        await callback.answer()
+        return
+    if assignment_id is None:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    if callback.from_user is None or not await api.ensure_session(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    try:
+        await action(assignment_id)
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_learning_error(exc), show_alert=True)
+        return
+    await callback.answer(success)
+
+
+@router.callback_query(F.data.startswith(REMIND_ACK_PREFIX))
+async def reminder_ack_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+) -> None:
+    assignment_id = parse_remind_ack_callback(callback.data or "")
+    await _reminder_preference_callback(
+        callback,
+        api,
+        assignment_id=assignment_id,
+        action=api.acknowledge_assignment_reminder,
+        success="Принято. Сегодня больше не напомним.",
+    )
+
+
+@router.callback_query(F.data.startswith(REMIND_REDUCE_PREFIX))
+async def reminder_reduce_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+) -> None:
+    assignment_id = parse_remind_reduce_callback(callback.data or "")
+    await _reminder_preference_callback(
+        callback,
+        api,
+        assignment_id=assignment_id,
+        action=api.reduce_assignment_reminders,
+        success="Будем напоминать реже.",
+    )
+
+
+@router.callback_query(F.data.startswith(REMIND_DISABLE_PREFIX))
+async def reminder_disable_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+) -> None:
+    assignment_id = parse_remind_disable_callback(callback.data or "")
+    await _reminder_preference_callback(
+        callback,
+        api,
+        assignment_id=assignment_id,
+        action=api.disable_assignment_reminders,
+        success="Автоматические напоминания отключены.",
     )
 
 

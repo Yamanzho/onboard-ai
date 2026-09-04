@@ -176,7 +176,13 @@ class BotUpdateFinishResponse(BaseModel):
 class BotOutboundClaimRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    source_type: Literal["ai_chat", "quiz_result"]
+    source_type: Literal[
+        "ai_chat",
+        "quiz_result",
+        "assignment_initial",
+        "assignment_reminder",
+        "assignment_manual_reminder",
+    ]
     source_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9:_-]+$")
 
 
@@ -200,7 +206,13 @@ class BotOutboundDeliveryResponse(BaseModel):
     message_id: UUID | None = None
     owner_token: UUID | None = None
     chat_id: int | None = None
-    source_type: Literal["ai_chat", "quiz_result"] | None = None
+    source_type: Literal[
+        "ai_chat",
+        "quiz_result",
+        "assignment_initial",
+        "assignment_reminder",
+        "assignment_manual_reminder",
+    ] | None = None
     source_key: str | None = None
     body: str | None = None
     parse_mode: Literal["HTML"] | None = None
@@ -234,6 +246,19 @@ class BotOutboundFailedRequest(BaseModel):
         pattern=r"^[a-z0-9_]+$",
     )
     retry_after_seconds: int | None = Field(default=None, ge=0, le=3600)
+
+
+class BotOutboundAllowRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    source_type: Literal[
+        "ai_chat",
+        "quiz_result",
+        "assignment_initial",
+        "assignment_reminder",
+        "assignment_manual_reminder",
+    ]
+    source_key: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9:_-]+$")
 
 
 class PasswordChangeRequest(BaseModel):

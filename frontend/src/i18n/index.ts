@@ -69,6 +69,18 @@ export function labelProgressStatus(status: string): string {
   return labelEnum('progressStatus', status)
 }
 
+export function labelReminderMode(mode: string): string {
+  return labelEnum('reminderMode', mode)
+}
+
+export function labelOutboundStatus(status: string): string {
+  return labelEnum('outboundStatus', status)
+}
+
+export function labelNotificationKind(kind: string): string {
+  return labelEnum('notificationKind', kind)
+}
+
 export function labelSubscriptionTier(tier: string): string {
   return labelEnum('subscriptionTier', tier)
 }

@@ -237,6 +237,22 @@ export const ru = {
       published: 'Опубликовано',
       archived: 'Архив',
     },
+    reminderMode: {
+      default: 'По умолчанию',
+      reduced: 'Реже',
+      disabled: 'Отключены',
+    },
+    outboundStatus: {
+      pending: 'Ожидает',
+      sending: 'Отправляется',
+      sent: 'Отправлено',
+      failed: 'Ошибка',
+    },
+    notificationKind: {
+      assignment_initial: 'Первое уведомление',
+      assignment_reminder: 'Автонапоминание',
+      assignment_manual_reminder: 'Напомнить сейчас',
+    },
     programStatus: {
       published: 'Опубликовано',
       draft: 'Черновик',
@@ -389,10 +405,16 @@ export const ru = {
 
   companySettings: {
     title: 'Настройки компании',
-    description: 'Профиль компании (только администратор).',
+    description: 'Профиль компании и окно Telegram-напоминаний (только администратор).',
     saved: 'Настройки компании сохранены.',
     saveFailed: 'Не удалось сохранить настройки компании',
     loadFailed: 'Не удалось загрузить компанию',
+    notificationsTitle: 'Напоминания в Telegram',
+    windowStart: 'Начало окна',
+    windowEnd: 'Конец окна',
+    quietStart: 'Тихие часы с',
+    quietEnd: 'Тихие часы до',
+    quietHint: 'Необязательно. В тихие часы автоматические напоминания не отправляются.',
   },
 
   employeePortal: {
@@ -793,6 +815,19 @@ export const ru = {
     quizLastAttempt: 'Последняя попытка',
     quizPassed: 'Тест пройден',
     quizFailed: 'Тест не пройден',
+    remindNow: 'Напомнить сейчас',
+    reminding: 'Отправка…',
+    remindNowFailed: 'Не удалось отправить напоминание',
+    remindNowOk: 'Напоминание поставлено в очередь.',
+    remindNowDisabled: 'Сотрудник отключил напоминания по этому назначению.',
+    notificationsTitle: 'История уведомлений',
+    notificationsEmpty: 'Пока нет Telegram-уведомлений по этому назначению.',
+    reminderState: 'Напоминания',
+    lastAcknowledged: 'Последнее «Понял»',
+    colWhen: 'Когда',
+    colKind: 'Тип',
+    colDelivery: 'Доставка',
+    colPreview: 'Текст',
     panel: {
       loading: 'Загрузка назначений…',
       emptyTitle: 'Нет назначений',

@@ -217,6 +217,31 @@ class TelegramOutboundRepository(BaseRepository[TelegramOutboundMessage]):
         result = await self._session.execute(statement)
         return int(result.rowcount or 0)
 
+    async def list_for_assignment(
+        self,
+        assignment_id: UUID,
+        *,
+        limit: int = 100,
+    ) -> list[TelegramOutboundMessage]:
+        self._ensure_rls_context()
+        prefix = f"assignment:{assignment_id}:"
+        statement = (
+            select(TelegramOutboundMessage)
+            .where(
+                TelegramOutboundMessage.source_type.in_(
+                    (
+                        "assignment_initial",
+                        "assignment_reminder",
+                        "assignment_manual_reminder",
+                    )
+                ),
+                TelegramOutboundMessage.source_key.startswith(prefix),
+            )
+            .order_by(TelegramOutboundMessage.created_at.desc())
+            .limit(max(1, min(limit, 1000)))
+        )
+        return list((await self._session.scalars(statement)).all())
+
     async def mark_sent(
         self,
         *,

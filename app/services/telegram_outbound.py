@@ -20,7 +20,22 @@ OUTBOUND_BATCH_SIZE = 20
 OUTBOUND_BASE_BACKOFF_SECONDS = 2
 OUTBOUND_MAX_BACKOFF_SECONDS = 300
 OUTBOUND_MAX_RETRY_AFTER_SECONDS = 3600
-OUTBOUND_SOURCE_TYPES = frozenset({"ai_chat", "quiz_result"})
+OUTBOUND_SOURCE_TYPES = frozenset(
+    {
+        "ai_chat",
+        "quiz_result",
+        "assignment_initial",
+        "assignment_reminder",
+        "assignment_manual_reminder",
+    }
+)
+ASSIGNMENT_OUTBOUND_SOURCE_TYPES = frozenset(
+    {
+        "assignment_initial",
+        "assignment_reminder",
+        "assignment_manual_reminder",
+    }
+)
 _SOURCE_KEY_RE = re.compile(r"^[A-Za-z0-9:_-]{1,128}$")
 _ERROR_CATEGORY_RE = re.compile(r"^[a-z0-9_]{1,32}$")
 

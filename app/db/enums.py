@@ -56,6 +56,12 @@ class AssignmentPriority(StrEnum):
     CRITICAL = "critical"
 
 
+class ReminderMode(StrEnum):
+    DEFAULT = "default"
+    REDUCED = "reduced"
+    DISABLED = "disabled"
+
+
 class ProgressStatus(StrEnum):
     NOT_STARTED = "not_started"
     IN_PROGRESS = "in_progress"
@@ -159,6 +165,8 @@ class CompanyAuditAction(StrEnum):
     PROGRAM_ARCHIVED = "program.archived"
     ASSIGNMENT_CREATED = "assignment.created"
     ASSIGNMENT_CHANGED = "assignment.changed"
+    ASSIGNMENT_REMINDED = "assignment.reminded"
+    COMPANY_SETTINGS_CHANGED = "company.settings.changed"
     ARTICLE_CREATED = "kb.article.created"
     ARTICLE_UPDATED = "kb.article.updated"
     ARTICLE_PUBLISHED = "kb.article.published"

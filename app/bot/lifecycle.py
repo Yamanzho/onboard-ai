@@ -67,15 +67,20 @@ async def shutdown_bot_runtime(
     api_client: object,
     bot: object,
     delete_webhook: bool,
+    reminder_stop: asyncio.Event | None = None,
+    reminder_task: asyncio.Task[Any] | None = None,
 ) -> None:
     """Stop loops, then close clients. Redis/Telegram close failures do not hang."""
     if outbound_stop is not None:
         outbound_stop.set()
     if heartbeat_stop is not None:
         heartbeat_stop.set()
+    if reminder_stop is not None:
+        reminder_stop.set()
     timeout = max(5.0, get_settings().shutdown_grace_seconds - 5.0)
     await await_background_task(outbound_task, timeout=timeout)
     await await_background_task(heartbeat_task, timeout=5.0)
+    await await_background_task(reminder_task, timeout=5.0)
     if dispatcher is not None:
         await close_dispatcher_storage(dispatcher)
     await close_conversation_store()

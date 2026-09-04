@@ -100,6 +100,13 @@ async def test_two_workers_have_one_delivery_claim_winner(employee_a) -> None:
 @pytest.mark.asyncio
 async def test_two_skip_locked_batch_workers_claim_row_once(employee_a) -> None:
     row = await _enqueue(employee_a)
+    async with UnitOfWork() as uow:
+        await uow.enter_platform()
+        await uow.telegram_outbound.update(
+            row.id,
+            next_attempt_at=datetime(2000, 1, 1, tzinfo=UTC),
+        )
+        await uow.commit()
     first, second = await asyncio.gather(
         TelegramOutboundService().claim_due_batch(limit=1),
         TelegramOutboundService().claim_due_batch(limit=1),

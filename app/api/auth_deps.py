@@ -138,6 +138,15 @@ def assert_can_complete_assignment_progress(user: Employee, assignment: Assignme
         )
 
 
+def assert_can_mutate_own_assignment_reminders(user: Employee, assignment: Assignment) -> None:
+    """Only the assigned employee may change reminder preference."""
+    if user.id != assignment.employee_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+
+
 require_admin = require_roles(EmployeeRole.ADMIN.value)
 require_hr = require_roles(EmployeeRole.ADMIN.value, EmployeeRole.HR.value)
 require_employee = require_roles(

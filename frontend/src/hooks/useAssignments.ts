@@ -54,10 +54,19 @@ export function useAssignmentProgress(assignmentId: string | undefined) {
   })
 }
 
+export function useAssignmentNotifications(assignmentId: string | undefined) {
+  return useQuery({
+    queryKey: ['assignment-notifications', assignmentId],
+    queryFn: () => assignmentsApi.getAssignmentNotifications(assignmentId!),
+    enabled: Boolean(assignmentId),
+  })
+}
+
 function invalidateAssignmentCaches(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ['assignments'] })
   void qc.invalidateQueries({ queryKey: ['assignment'] })
   void qc.invalidateQueries({ queryKey: ['assignment-progress'] })
+  void qc.invalidateQueries({ queryKey: ['assignment-notifications'] })
   void qc.invalidateQueries({ queryKey: ['employee-assignments'] })
 }
 
@@ -122,5 +131,10 @@ export function useAssignmentMutations() {
     onSettled: () => invalidateAssignmentCaches(qc),
   })
 
-  return { create, cancel }
+  const remindNow = useMutation({
+    mutationFn: (id: string) => assignmentsApi.remindNow(id),
+    onSuccess: invalidateAssignmentCaches.bind(null, qc),
+  })
+
+  return { create, cancel, remindNow }
 }

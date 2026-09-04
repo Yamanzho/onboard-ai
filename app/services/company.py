@@ -5,8 +5,11 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 
 from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
+from app.db.enums import CompanyAuditAction
 from app.db.models.company import Company
 from app.db.uow import UnitOfWork
+from app.services.company_audit import record_company_audit
+from app.services.notification_settings import merge_company_settings
 from app.services.tenancy import ensure_same_company
 
 _PLATFORM_LIFECYCLE_DETAIL = (
@@ -79,6 +82,7 @@ class CompanyService:
         company_id: UUID,
         *,
         actor_company_id: UUID,
+        actor_employee_id: UUID | None = None,
         **values: Any,
     ) -> Company:
         forbidden = _PLATFORM_ONLY_UPDATE_FIELDS.intersection(values)
@@ -101,10 +105,31 @@ class CompanyService:
                 actor_company_id=actor_company_id,
                 not_found_message=f"Company {company_id} not found",
             )
+            if "settings" in values and isinstance(values["settings"], dict):
+                values["settings"] = merge_company_settings(
+                    company.settings,
+                    values["settings"],
+                )
             try:
                 updated = await uow.companies.update(company_id, **values)
                 if updated is None:
                     raise NotFoundError(f"Company {company_id} not found")
+                if "settings" in values or "timezone" in values:
+                    await record_company_audit(
+                        uow,
+                        company_id=company_id,
+                        actor_employee_id=actor_employee_id,
+                        action=CompanyAuditAction.COMPANY_SETTINGS_CHANGED.value,
+                        resource_type="company",
+                        resource_id=company_id,
+                        summary="Updated company notification settings",
+                        details={
+                            "timezone": updated.timezone,
+                            "notifications": (updated.settings or {}).get(
+                                "notifications"
+                            ),
+                        },
+                    )
                 await uow.commit()
             except IntegrityError as exc:
                 await uow.rollback()

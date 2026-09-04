@@ -1,3 +1,4 @@
+from collections.abc import Callable, Coroutine
 from typing import Annotated
 from uuid import UUID
 
@@ -7,9 +8,10 @@ from app.api.auth_deps import (
     EmployeeUser,
     HRUser,
     assert_can_list_employee_assignments,
+    assert_can_mutate_own_assignment_reminders,
     assert_can_view_assignment_progress,
 )
-from app.api.deps import get_assignment_service, get_progress_service
+from app.api.deps import get_assignment_service, get_progress_service, get_reminder_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.db.enums import EmployeeRole
 from app.schemas.assignment import (
@@ -22,16 +24,24 @@ from app.schemas.progress import (
     ProgressResponse,
     ProgressStepInfo,
 )
+from app.schemas.reminder import (
+    AssignmentNotificationItem,
+    AssignmentNotificationsResponse,
+    ReminderPreferenceResponse,
+    RemindNowResponse,
+)
 from app.services.assessment import public_progress_payload
 from app.services.assignment import AssignmentService
 from app.services.course_snapshot import order_records_by_snapshot, resolve_progress_step_fields
 from app.services.progress import ProgressService
+from app.services.reminder import ReminderService
 from app.services.step_content import public_step_content
 
 router = APIRouter(tags=["Assignments"])
 
 AssignmentServiceDep = Annotated[AssignmentService, Depends(get_assignment_service)]
 ProgressServiceDep = Annotated[ProgressService, Depends(get_progress_service)]
+ReminderServiceDep = Annotated[ReminderService, Depends(get_reminder_service)]
 
 _HR_AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"},
@@ -361,4 +371,155 @@ async def get_assignment_progress(
         items=responses,
         program_id=assignment.program_id,
         assignment_status=assignment.status,
+    )
+
+
+def _preference_response(preference) -> ReminderPreferenceResponse:
+    if preference is None:
+        return ReminderPreferenceResponse(mode="default")
+    return ReminderPreferenceResponse.model_validate(preference)
+
+
+def _notifications_response(payload: dict) -> AssignmentNotificationsResponse:
+    items = [
+        AssignmentNotificationItem(
+            id=row.id,
+            source_type=row.source_type,
+            created_at=row.created_at,
+            sent_at=row.sent_at,
+            status=row.status,
+            preview=(row.body or "")[:180],
+            last_error_category=row.last_error_category,
+        )
+        for row in payload["items"]
+    ]
+    return AssignmentNotificationsResponse(
+        assignment_id=payload["assignment_id"],
+        program_title=payload["program_title"],
+        preference=_preference_response(payload["preference"]),
+        items=items,
+    )
+
+
+@router.get(
+    "/assignments/{assignment_id}/notifications",
+    response_model=AssignmentNotificationsResponse,
+    summary="List assignment notification history",
+    responses={
+        **_PROGRESS_AUTH_RESPONSES,
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        ],
+    },
+)
+async def get_assignment_notifications(
+    assignment_id: UUID,
+    current_user: EmployeeUser,
+    assignments: AssignmentServiceDep,
+    reminders: ReminderServiceDep,
+) -> AssignmentNotificationsResponse:
+    assignment = await assignments.get_assignment(
+        assignment_id,
+        company_id=current_user.company_id,
+    )
+    assert_can_view_assignment_progress(current_user, assignment)
+    payload = await reminders.get_assignment_notifications(
+        assignment_id,
+        company_id=current_user.company_id,
+    )
+    return _notifications_response(payload)
+
+
+@router.post(
+    "/assignments/{assignment_id}/remind-now",
+    response_model=RemindNowResponse,
+    summary="Enqueue a standard manual Telegram reminder",
+    responses={
+        **_HR_AUTH_RESPONSES,
+        status.HTTP_400_BAD_REQUEST: ERROR_RESPONSES[status.HTTP_400_BAD_REQUEST],
+        status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
+        status.HTTP_409_CONFLICT: ERROR_RESPONSES[status.HTTP_409_CONFLICT],
+        status.HTTP_500_INTERNAL_SERVER_ERROR: ERROR_RESPONSES[
+            status.HTTP_500_INTERNAL_SERVER_ERROR
+        ],
+    },
+)
+async def remind_now(
+    assignment_id: UUID,
+    current_user: HRUser,
+    reminders: ReminderServiceDep,
+) -> RemindNowResponse:
+    result = await reminders.remind_now(
+        assignment_id,
+        company_id=current_user.company_id,
+        actor_employee_id=current_user.id,
+    )
+    return RemindNowResponse.model_validate(result)
+
+
+async def _employee_preference_action(
+    assignment_id: UUID,
+    current_user: EmployeeUser,
+    assignments: AssignmentServiceDep,
+    action: Callable[..., Coroutine[object, object, object]],
+) -> ReminderPreferenceResponse:
+    assignment = await assignments.get_assignment(
+        assignment_id,
+        company_id=current_user.company_id,
+    )
+    assert_can_mutate_own_assignment_reminders(current_user, assignment)
+    preference = await action(
+        assignment_id,
+        company_id=current_user.company_id,
+        employee_id=current_user.id,
+    )
+    return _preference_response(preference)
+
+
+@router.post(
+    "/assignments/{assignment_id}/reminders/acknowledge",
+    response_model=ReminderPreferenceResponse,
+    summary="Acknowledge a reminder for the rest of the local day",
+)
+async def acknowledge_reminder(
+    assignment_id: UUID,
+    current_user: EmployeeUser,
+    assignments: AssignmentServiceDep,
+    reminders: ReminderServiceDep,
+) -> ReminderPreferenceResponse:
+    return await _employee_preference_action(
+        assignment_id, current_user, assignments, reminders.acknowledge
+    )
+
+
+@router.post(
+    "/assignments/{assignment_id}/reminders/reduce",
+    response_model=ReminderPreferenceResponse,
+    summary="Reduce automated reminder frequency for this assignment",
+)
+async def reduce_reminders(
+    assignment_id: UUID,
+    current_user: EmployeeUser,
+    assignments: AssignmentServiceDep,
+    reminders: ReminderServiceDep,
+) -> ReminderPreferenceResponse:
+    return await _employee_preference_action(
+        assignment_id, current_user, assignments, reminders.reduce
+    )
+
+
+@router.post(
+    "/assignments/{assignment_id}/reminders/disable",
+    response_model=ReminderPreferenceResponse,
+    summary="Disable automated reminders for this assignment",
+)
+async def disable_reminders(
+    assignment_id: UUID,
+    current_user: EmployeeUser,
+    assignments: AssignmentServiceDep,
+    reminders: ReminderServiceDep,
+) -> ReminderPreferenceResponse:
+    return await _employee_preference_action(
+        assignment_id, current_user, assignments, reminders.disable
     )

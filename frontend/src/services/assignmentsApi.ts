@@ -3,6 +3,7 @@ import type {
   AssignmentBulkCreateResult,
   AssignmentCreate,
   AssignmentListParams,
+  AssignmentNotifications,
   AssignmentProgress,
   ProgressItem,
 } from '../types/assignment'
@@ -70,6 +71,20 @@ export async function getAssignmentProgress(
   return apiRequest<AssignmentProgress>(
     `/api/v1/assignments/${assignmentId}/progress`,
   )
+}
+
+export async function getAssignmentNotifications(
+  assignmentId: string,
+): Promise<AssignmentNotifications> {
+  return apiRequest<AssignmentNotifications>(
+    `/api/v1/assignments/${assignmentId}/notifications`,
+  )
+}
+
+export async function remindNow(assignmentId: string): Promise<void> {
+  await apiRequest(`/api/v1/assignments/${assignmentId}/remind-now`, {
+    method: 'POST',
+  })
 }
 
 export async function completeProgress(

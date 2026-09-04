@@ -21,6 +21,7 @@ from app.bot.factory import create_api_client, create_bot, create_dispatcher
 from app.bot.lifecycle import health_response, shutdown_bot_runtime
 from app.bot.services.heartbeat import run_bot_heartbeat
 from app.bot.services.outbound_delivery import TelegramOutboundExecutor
+from app.bot.services.reminder_scan import run_reminder_scan
 from app.core.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -37,10 +38,14 @@ async def on_startup(app: web.Application) -> None:
     )
     heartbeat_stop = asyncio.Event()
     heartbeat_task = asyncio.create_task(run_bot_heartbeat(heartbeat_stop))
+    reminder_stop = asyncio.Event()
+    reminder_task = asyncio.create_task(run_reminder_scan(api_client, reminder_stop))
     app["outbound_stop"] = outbound_stop
     app["outbound_task"] = outbound_task
     app["heartbeat_stop"] = heartbeat_stop
     app["heartbeat_task"] = heartbeat_task
+    app["reminder_stop"] = reminder_stop
+    app["reminder_task"] = reminder_task
 
     if settings.bot_webhook_url:
         await bot.set_webhook(  # type: ignore[attr-defined]
@@ -62,6 +67,8 @@ async def on_shutdown(app: web.Application) -> None:
         heartbeat_stop=app.get("heartbeat_stop"),
         outbound_task=app.get("outbound_task"),
         heartbeat_task=app.get("heartbeat_task"),
+        reminder_stop=app.get("reminder_stop"),
+        reminder_task=app.get("reminder_task"),
         dispatcher=app.get("dispatcher"),
         api_client=app["api_client"],
         bot=app["bot"],
@@ -115,6 +122,8 @@ async def run_polling() -> None:
     )
     heartbeat_stop = asyncio.Event()
     heartbeat_task = asyncio.create_task(run_bot_heartbeat(heartbeat_stop))
+    reminder_stop = asyncio.Event()
+    reminder_task = asyncio.create_task(run_reminder_scan(api_client, reminder_stop))
     health_app = web.Application()
     health_app.router.add_get("/health", health_response)
     health_runner = web.AppRunner(health_app)
@@ -132,6 +141,8 @@ async def run_polling() -> None:
             heartbeat_stop=heartbeat_stop,
             outbound_task=outbound_task,
             heartbeat_task=heartbeat_task,
+            reminder_stop=reminder_stop,
+            reminder_task=reminder_task,
             dispatcher=dispatcher,
             api_client=api_client,
             bot=bot,

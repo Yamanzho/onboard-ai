@@ -23,6 +23,11 @@ from app.bot.api.client import (
     OnboardApiClient,
     TelegramOutboundDelivery,
 )
+from app.bot.keyboards.onboarding import (
+    assignment_notice_keyboard,
+    reminder_keyboard,
+)
+from app.services.reminder_policy import parse_assignment_id_from_source_key
 
 logger = logging.getLogger("app.bot.outbound")
 
@@ -75,11 +80,33 @@ class TelegramOutboundExecutor:
             raise ValueError("A complete acquired Telegram outbound is required")
 
         started = time.perf_counter()
+        if delivery.source_type in {
+            "assignment_initial",
+            "assignment_reminder",
+            "assignment_manual_reminder",
+        }:
+            allowed = await self._api.allow_assignment_outbound(
+                source_type=delivery.source_type,
+                source_key=delivery.source_key or "",
+            )
+            if not allowed:
+                await self._api.mark_telegram_outbound_failed(
+                    message_id=delivery.message_id,
+                    owner_token=delivery.owner_token,
+                    retryable=False,
+                    error_category="assignment_closed",
+                    retry_after_seconds=None,
+                )
+                return
         try:
             sent = await self._bot.send_message(
                 chat_id=delivery.chat_id,
                 text=delivery.body,
                 parse_mode=delivery.parse_mode,
+                **_outbound_markup_kwargs(
+                    delivery.source_type,
+                    delivery.source_key,
+                ),
             )
         except asyncio.CancelledError:
             raise
@@ -148,6 +175,20 @@ class TelegramOutboundExecutor:
                 )
             except TimeoutError:
                 continue
+
+
+def _outbound_markup_kwargs(
+    source_type: str | None,
+    source_key: str | None,
+) -> dict:
+    assignment_id = parse_assignment_id_from_source_key(source_key or "")
+    if assignment_id is None:
+        return {}
+    if source_type == "assignment_initial":
+        return {"reply_markup": assignment_notice_keyboard(assignment_id)}
+    if source_type in {"assignment_reminder", "assignment_manual_reminder"}:
+        return {"reply_markup": reminder_keyboard(assignment_id)}
+    return {}
 
 
 def classify_telegram_failure(exc: BaseException) -> TelegramFailure:

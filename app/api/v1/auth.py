@@ -12,6 +12,7 @@ from app.api.auth_deps import CurrentUser, EmployeeServiceDep
 from app.api.deps import (
     get_idempotency_service,
     get_platform_service,
+    get_reminder_service,
     get_telegram_outbound_service,
 )
 from app.api.v1.responses import ERROR_RESPONSES
@@ -44,6 +45,7 @@ from app.db.models.employee import Employee
 from app.db.uow import UnitOfWork
 from app.schemas.auth import (
     BotInviteAcceptRequest,
+    BotOutboundAllowRequest,
     BotOutboundBatchRequest,
     BotOutboundBatchResponse,
     BotOutboundClaimRequest,
@@ -66,6 +68,7 @@ from app.schemas.auth import (
     RefreshRequest,
     TokenResponse,
 )
+from app.schemas.reminder import AssignmentOutboundAllowResponse, ReminderScanResponse
 from app.schemas.super_admin import (
     InviteAcceptRequest,
     InvitePreviewRequest,
@@ -75,6 +78,7 @@ from app.services.employee import EmployeeService
 from app.services.idempotency import IdempotencyService
 from app.services.platform import PlatformService
 from app.services.refresh_session import SUBJECT_EMPLOYEE, RefreshSessionService
+from app.services.reminder import ReminderService
 from app.services.telegram_outbound import OutboundDelivery, TelegramOutboundService
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
@@ -89,6 +93,7 @@ TelegramOutboundServiceDep = Annotated[
     TelegramOutboundService,
     Depends(get_telegram_outbound_service),
 ]
+ReminderServiceDep = Annotated[ReminderService, Depends(get_reminder_service)]
 _refresh_sessions = RefreshSessionService()
 _BOT_AUTH_UNAUTHORIZED_DETAIL = "Could not validate credentials"
 
@@ -795,6 +800,52 @@ async def mark_bot_outbound_failed(
         retry_after_seconds=payload.retry_after_seconds,
     )
     return BotUpdateFinishResponse(updated=updated)
+
+
+@router.post(
+    "/bot/outbound/allow",
+    response_model=AssignmentOutboundAllowResponse,
+    summary="Re-check assignment outbound before send",
+)
+async def allow_bot_outbound(
+    payload: BotOutboundAllowRequest,
+    reminders: ReminderServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> AssignmentOutboundAllowResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    allowed = await reminders.assignment_still_deliverable(
+        source_type=payload.source_type,
+        source_key=payload.source_key,
+    )
+    return AssignmentOutboundAllowResponse(allowed=allowed)
+
+
+@router.post(
+    "/bot/reminders/scan",
+    response_model=ReminderScanResponse,
+    summary="Scan and enqueue due assignment reminders",
+)
+async def scan_bot_reminders(
+    reminders: ReminderServiceDep,
+    x_bot_service_token: Annotated[
+        str | None,
+        Header(alias="X-Bot-Service-Token"),
+    ] = None,
+) -> ReminderScanResponse:
+    if not verify_bot_service_token(x_bot_service_token or ""):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=_BOT_AUTH_UNAUTHORIZED_DETAIL,
+        )
+    result = await reminders.scan_due()
+    return ReminderScanResponse.model_validate(result)
 
 
 @router.post(

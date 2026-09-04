@@ -93,3 +93,36 @@ export const ASSIGNMENT_PRIORITIES: AssignmentPriority[] = [
   'important',
   'normal',
 ]
+
+export type ReminderMode = 'default' | 'reduced' | 'disabled'
+export type AssignmentOutboundKind =
+  | 'assignment_initial'
+  | 'assignment_reminder'
+  | 'assignment_manual_reminder'
+
+export interface ReminderPreference {
+  mode: ReminderMode
+  acknowledged_until_date: string | null
+  last_acknowledged_at: string | null
+  last_automated_reminder_at: string | null
+  last_manual_reminder_at: string | null
+  updated_by_employee_at: string | null
+  updated_at: string | null
+}
+
+export interface AssignmentNotificationItem {
+  id: string
+  source_type: AssignmentOutboundKind | string
+  created_at: string
+  sent_at: string | null
+  status: string
+  preview: string
+  last_error_category: string | null
+}
+
+export interface AssignmentNotifications {
+  assignment_id: string
+  program_title: string
+  preference: ReminderPreference
+  items: AssignmentNotificationItem[]
+}

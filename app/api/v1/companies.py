@@ -127,6 +127,7 @@ async def update_company(
     company = await service.update_company(
         company_id,
         actor_company_id=current_user.company_id,
+        actor_employee_id=current_user.id,
         **values,
     )
     return CompanyResponse.model_validate(company)
