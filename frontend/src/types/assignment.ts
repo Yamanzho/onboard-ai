@@ -77,6 +77,8 @@ export interface ProgressItem {
 export interface AssignmentProgress {
   percentage: number
   items: ProgressItem[]
+  program_id?: string | null
+  assignment_status?: string | null
 }
 
 export const ASSIGNMENT_STATUSES: AssignmentStatus[] = [

@@ -6,8 +6,8 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.bot.api.client import OnboardApiClient, OnboardApiError
-from app.bot.api.schemas import ProgressItemDTO
-from app.bot.handlers.step_content import format_step_message
+from app.bot.api.schemas import ProgressItemDTO, ProgressStepDTO
+from app.bot.handlers.step_content import format_block_message, format_step_message
 from app.bot.keyboards.menu import (
     MENU_ACTIVE,
     MENU_CALENDAR,
@@ -17,11 +17,22 @@ from app.bot.keyboards.menu import (
     MENU_PROFILE,
 )
 from app.bot.keyboards.onboarding import (
+    ASSIGN_OPEN_PREFIX,
+    BLOCK_NEXT_PREFIX,
+    BLOCK_READ_PREFIX,
+    QUIZ_RETRY_PREFIX,
+    assignment_open_keyboard,
     complete_step_keyboard,
+    content_block_keyboard,
+    parse_assign_open_callback,
+    parse_block_next_callback,
+    parse_block_read_callback,
     parse_complete_callback,
     parse_quiz_confirm_callback,
+    parse_quiz_retry_callback,
     parse_quiz_select_callback,
     quiz_options_keyboard,
+    quiz_retry_keyboard,
 )
 from app.bot.services.outbound_delivery import TelegramOutboundExecutor
 from app.bot.states.onboarding import OnboardingStates
@@ -30,7 +41,12 @@ from app.services.assessment import (
     is_structured_quiz,
     public_structured_questions,
 )
-from app.services.step_content import parse_questions
+from app.services.learning_progress import (
+    content_block_count,
+    current_block_index,
+    is_final_block,
+)
+from app.services.step_content import normalize_step_content, parse_questions
 
 router = Router(name="onboarding")
 
@@ -68,6 +84,41 @@ def _format_step_message(
     )
 
 
+def _friendly_learning_error(exc: OnboardApiError) -> str:
+    detail = str(exc.detail or exc).lower()
+    if exc.status_code == 409:
+        return "Этот шаг уже выполнен."
+    if exc.status_code == 404:
+        return "Задание не найдено."
+    if "cancelled" in detail:
+        return "Это назначение отменено."
+    if "already completed" in detail:
+        return "Курс уже завершён."
+    return "Не удалось обновить прогресс. Откройте «Мой онбординг» снова."
+
+
+def _content_blocks(item: ProgressItemDTO) -> list[str]:
+    step = item.step
+    if step is None:
+        return []
+    if step.content_blocks:
+        return [str(block.get("text") or "") for block in step.content_blocks]
+    return [block.text for block in normalize_step_content(step.content)]
+
+
+async def _deliver(
+    *,
+    message: Message,
+    text: str,
+    markup: InlineKeyboardMarkup | None,
+    edit: bool,
+) -> None:
+    if edit:
+        await message.edit_text(text, reply_markup=markup)
+        return
+    await message.answer(text, reply_markup=markup)
+
+
 async def _show_current_step(
     *,
     message: Message,
@@ -79,8 +130,22 @@ async def _show_current_step(
 ) -> None:
     program = await api.get_program(program_id)
     progress = await api.get_progress(assignment_id)
-    current = api.first_incomplete_step(progress)
+    if progress.assignment_status == "completed":
+        await state.clear()
+        text = f"Курс «{escape(program.title)}» уже завершён."
+        await _deliver(message=message, text=text, markup=None, edit=edit)
+        return
+    if progress.assignment_status == "cancelled":
+        await state.clear()
+        await _deliver(
+            message=message,
+            text="Это назначение отменено.",
+            markup=None,
+            edit=edit,
+        )
+        return
 
+    current = api.first_incomplete_step(progress)
     if current is None:
         await state.clear()
         text = (
@@ -88,14 +153,27 @@ async def _show_current_step(
             f"Вы завершили программу «{escape(program.title)}».\n"
             f"Прогресс: {progress.percentage:.0f}%."
         )
-        if edit:
-            await message.edit_text(text)
-        else:
-            await message.answer(text)
+        await _deliver(message=message, text=text, markup=None, edit=edit)
         return
 
     step_number, item = current
     step_type = item.step.step_type if item.step is not None else "content"
+    if step_type == "content":
+        await api.start_progress(item.id)
+        progress = await api.get_progress(assignment_id)
+        current = api.first_incomplete_step(progress)
+        if current is None:
+            await state.clear()
+            text = (
+                f"🎉 <b>Поздравляем!</b>\n\n"
+                f"Вы завершили программу «{escape(program.title)}».\n"
+                f"Прогресс: {progress.percentage:.0f}%."
+            )
+            await _deliver(message=message, text=text, markup=None, edit=edit)
+            return
+        step_number, item = current
+        step_type = item.step.step_type if item.step is not None else "content"
+
     existing = await state.get_data()
     await state.set_state(OnboardingStates.viewing_step)
     await state.update_data(
@@ -115,6 +193,34 @@ async def _show_current_step(
         if step_type == "quiz" and is_structured_quiz(quiz_content)
         else []
     )
+
+    if step_type == "content":
+        blocks = _content_blocks(item)
+        block_index = current_block_index(item.payload)
+        block_count = len(blocks) if blocks else content_block_count(quiz_content)
+        if blocks:
+            safe_index = min(max(block_index, 0), len(blocks) - 1)
+            block_text = blocks[safe_index]
+        else:
+            safe_index = 0
+            block_text = ""
+        text = format_block_message(
+            program_title=program.title,
+            step_number=step_number,
+            total_steps=len(progress.items),
+            step_title=item.step.title if item.step is not None else None,
+            block_text=block_text,
+            block_index=safe_index,
+            block_count=block_count,
+        )
+        markup = content_block_keyboard(
+            item.id,
+            block_index=safe_index,
+            is_final=is_final_block(safe_index, block_count),
+        )
+        await _deliver(message=message, text=text, markup=markup, edit=edit)
+        return
+
     footer = None
     if structured_questions:
         footer = "Ответьте на вопросы с помощью кнопок."
@@ -134,7 +240,30 @@ async def _show_current_step(
             quiz_answers={},
             quiz_toggles=[],
         )
-        text, markup = _structured_question_view(text, structured_questions, 0, set())
+        intro = _format_step_message(
+            program_title=program.title,
+            percentage=progress.percentage,
+            step_number=step_number,
+            total_steps=len(progress.items),
+            item=ProgressItemDTO(
+                id=item.id,
+                assignment_id=item.assignment_id,
+                step_id=item.step_id,
+                status=item.status,
+                payload=item.payload,
+                step=ProgressStepDTO(
+                    title=item.step.title if item.step is not None else "",
+                    description=None,
+                    step_type="quiz",
+                    content={},
+                    position=item.step.position if item.step is not None else 0,
+                )
+                if item.step is not None
+                else None,
+            ),
+            footer=footer,
+        )
+        text, markup = _structured_question_view(intro, structured_questions, 0, set())
     elif step_type == "quiz":
         questions = parse_questions(quiz_content)
         await state.set_state(OnboardingStates.answering_quiz)
@@ -145,12 +274,8 @@ async def _show_current_step(
     elif step_type == "ack":
         markup = complete_step_keyboard(item.id, label="✅ Подтверждаю")
     else:
-        label = "✅ Прочитано" if step_type == "content" else "✅ Выполнено"
-        markup = complete_step_keyboard(item.id, label=label)
-    if edit:
-        await message.edit_text(text, reply_markup=markup)
-    else:
-        await message.answer(text, reply_markup=markup)
+        markup = complete_step_keyboard(item.id, label="✅ Выполнено")
+    await _deliver(message=message, text=text, markup=markup, edit=edit)
 
 
 def _structured_question_view(
@@ -212,12 +337,12 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
     await state.update_data(telegram_user_id=message.from_user.id)
 
     try:
-        assignment = await api.get_active_assignment(employee.id)
+        assignments = await api.list_active_assignments(employee.id)
     except OnboardApiError:
         await message.answer("Не удалось загрузить назначения. Попробуйте позже.")
         return
 
-    if assignment is None:
+    if not assignments:
         await state.clear()
         await message.answer(
             "Telegram подключён, но онбординг ещё не назначен.\n"
@@ -225,6 +350,22 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
         )
         return
 
+    if len(assignments) > 1:
+        buttons: list[tuple[UUID, str]] = []
+        for assignment in assignments:
+            try:
+                program = await api.get_program(assignment.program_id)
+                title = program.title
+            except OnboardApiError:
+                title = "Курс"
+            buttons.append((assignment.id, title))
+        await message.answer(
+            "У вас несколько активных курсов. Выберите, какой открыть:",
+            reply_markup=assignment_open_keyboard(buttons),
+        )
+        return
+
+    assignment = assignments[0]
     try:
         program = await api.get_program(assignment.program_id)
         progress = await api.get_progress(assignment.id)
@@ -276,12 +417,6 @@ async def complete_step_callback(
     assignment_id_raw = data.get("assignment_id")
     program_id_raw = data.get("program_id")
     telegram_user_id = data.get("telegram_user_id")
-    if assignment_id_raw is None or program_id_raw is None:
-        await callback.answer(
-            "Сессия устарела. Откройте «Мой онбординг» снова.",
-            show_alert=True,
-        )
-        return
 
     user_id = telegram_user_id or (
         callback.from_user.id if callback.from_user is not None else None
@@ -296,29 +431,232 @@ async def complete_step_callback(
     try:
         step_type = str(data.get("step_type") or "content")
         payload = {"ack": True} if step_type == "ack" else None
-        await api.complete_progress(progress_id, payload=payload)
+        updated = await api.complete_progress(progress_id, payload=payload)
     except OnboardApiError as exc:
         if exc.status_code == 409:
             await callback.answer("Шаг уже выполнен", show_alert=True)
         else:
-            await callback.answer("Не удалось отметить шаг", show_alert=True)
+            await callback.answer(_friendly_learning_error(exc), show_alert=True)
             return
     else:
         await callback.answer("Отлично!")
+        assignment_id_raw = assignment_id_raw or str(updated.assignment_id)
+
+    if assignment_id_raw is None:
+        return
 
     try:
+        assignment_id = UUID(str(assignment_id_raw))
+        if program_id_raw is None:
+            listing = await api.get_progress(assignment_id)
+            if listing.program_id is None:
+                await callback.message.edit_text(
+                    "Не удалось обновить прогресс. Откройте «Мой онбординг» снова."
+                )
+                return
+            program_id_raw = str(listing.program_id)
         await _show_current_step(
             message=callback.message,
             api=api,
             state=state,
-            assignment_id=UUID(assignment_id_raw),
+            assignment_id=assignment_id,
             program_id=UUID(program_id_raw),
             edit=True,
         )
-    except OnboardApiError:
+    except OnboardApiError as exc:
+        await callback.message.edit_text(_friendly_learning_error(exc))
+
+
+async def _reload_assignment_view(
+    *,
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    state: FSMContext,
+    assignment_id: UUID,
+) -> None:
+    if callback.message is None:
+        return
+    listing = await api.get_progress(assignment_id)
+    if listing.program_id is None:
         await callback.message.edit_text(
             "Не удалось обновить прогресс. Откройте «Мой онбординг» снова."
         )
+        return
+    await _show_current_step(
+        message=callback.message,
+        api=api,
+        state=state,
+        assignment_id=assignment_id,
+        program_id=listing.program_id,
+        edit=True,
+    )
+
+
+@router.callback_query(F.data.startswith(BLOCK_NEXT_PREFIX))
+async def content_block_next(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    state: FSMContext,
+) -> None:
+    if callback.message is None or callback.data is None:
+        await callback.answer()
+        return
+    parsed = parse_block_next_callback(callback.data)
+    if parsed is None:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    progress_id, expected = parsed
+    user_id = callback.from_user.id if callback.from_user is not None else None
+    if user_id is None or not await api.ensure_session(int(user_id)):
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    try:
+        updated = await api.advance_progress(
+            progress_id, expected_block_index=expected
+        )
+        await callback.answer()
+        await _reload_assignment_view(
+            callback=callback,
+            api=api,
+            state=state,
+            assignment_id=updated.assignment_id,
+        )
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_learning_error(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith(BLOCK_READ_PREFIX))
+async def content_block_read(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    state: FSMContext,
+) -> None:
+    if callback.message is None or callback.data is None:
+        await callback.answer()
+        return
+    parsed = parse_block_read_callback(callback.data)
+    if parsed is None:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    progress_id, expected = parsed
+    user_id = callback.from_user.id if callback.from_user is not None else None
+    if user_id is None or not await api.ensure_session(int(user_id)):
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    try:
+        updated = await api.read_progress(
+            progress_id, expected_block_index=expected
+        )
+        await callback.answer()
+        await _reload_assignment_view(
+            callback=callback,
+            api=api,
+            state=state,
+            assignment_id=updated.assignment_id,
+        )
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_learning_error(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith(ASSIGN_OPEN_PREFIX))
+async def open_assignment_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    state: FSMContext,
+) -> None:
+    if callback.message is None or callback.data is None:
+        await callback.answer()
+        return
+    assignment_id = parse_assign_open_callback(callback.data)
+    if assignment_id is None:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    if callback.from_user is None or not await api.ensure_session(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    try:
+        listing = await api.get_progress(assignment_id)
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_learning_error(exc), show_alert=True)
+        return
+    if listing.assignment_status == "completed":
+        await callback.answer()
+        await callback.message.edit_text("Курс уже завершён.")
+        return
+    if listing.assignment_status == "cancelled":
+        await callback.answer()
+        await callback.message.edit_text("Это назначение отменено.")
+        return
+    if listing.program_id is None:
+        await callback.answer("Не удалось открыть курс", show_alert=True)
+        return
+    await callback.answer()
+    await _show_current_step(
+        message=callback.message,
+        api=api,
+        state=state,
+        assignment_id=assignment_id,
+        program_id=listing.program_id,
+        edit=True,
+    )
+
+
+@router.callback_query(F.data.startswith(QUIZ_RETRY_PREFIX))
+async def quiz_retry_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    state: FSMContext,
+) -> None:
+    if callback.message is None or callback.data is None:
+        await callback.answer()
+        return
+    progress_id = parse_quiz_retry_callback(callback.data)
+    if progress_id is None:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    if callback.from_user is None or not await api.ensure_session(
+        callback.from_user.id
+    ):
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    data = await state.get_data()
+    assignment_id_raw = data.get("assignment_id")
+    program_id_raw = data.get("program_id")
+    try:
+        if assignment_id_raw is None or program_id_raw is None:
+            # Fall back through progress listing after a restart.
+            dummy = await api.start_progress(progress_id)
+            listing = await api.get_progress(dummy.assignment_id)
+            if listing.program_id is None:
+                await callback.answer("Не удалось открыть тест", show_alert=True)
+                return
+            assignment_id_raw = str(dummy.assignment_id)
+            program_id_raw = str(listing.program_id)
+        await callback.answer()
+        await _show_current_step(
+            message=callback.message,
+            api=api,
+            state=state,
+            assignment_id=UUID(str(assignment_id_raw)),
+            program_id=UUID(str(program_id_raw)),
+            edit=True,
+        )
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_learning_error(exc), show_alert=True)
 
 
 _MENU_TEXTS = frozenset(
@@ -641,6 +979,17 @@ async def _advance_structured_quiz(
     assignment_id_raw = data.get("assignment_id")
     program_id_raw = data.get("program_id")
     await _announce_structured_result(callback, api, completed, item)
+    passed = bool(
+        (completed.payload or {}).get("passed")
+        if isinstance(completed.payload, dict)
+        else False
+    )
+    if not passed:
+        await callback.message.answer(
+            "Нажмите кнопку, чтобы попробовать снова.",
+            reply_markup=quiz_retry_keyboard(item.id),
+        )
+        return
     if assignment_id_raw is None or program_id_raw is None:
         return
     try:

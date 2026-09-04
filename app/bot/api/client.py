@@ -15,8 +15,8 @@ from app.bot.api.schemas import (
 )
 from app.bot.identity_debug import log_identity
 from app.db.assignment_rules import assignment_sort_key
+from app.services.learning_progress import resolve_resume_item
 
-_DONE_STATUSES = frozenset({"completed", "skipped"})
 _access_token_var: ContextVar[str | None] = ContextVar(
     "onboard_api_access_token",
     default=None,
@@ -421,11 +421,13 @@ class OnboardApiClient:
         return [AssignmentDTO.model_validate(item) for item in payload]
 
     async def get_active_assignment(self, employee_id: UUID) -> AssignmentDTO | None:
+        items = await self.list_active_assignments(employee_id)
+        return items[0] if items else None
+
+    async def list_active_assignments(self, employee_id: UUID) -> list[AssignmentDTO]:
         in_progress = await self.list_assignments(employee_id, status="in_progress")
         pending = await self.list_assignments(employee_id, status="pending")
         items = [*in_progress, *pending]
-        if not items:
-            return None
         return sorted(
             items,
             key=lambda a: assignment_sort_key(
@@ -434,7 +436,7 @@ class OnboardApiClient:
                 status=a.status,
                 assigned_at=a.assigned_at,
             ),
-        )[0]
+        )
 
     async def get_program(self, program_id: UUID) -> ProgramDTO:
         payload = await self._get(f"/api/v1/programs/{program_id}")
@@ -494,14 +496,46 @@ class OnboardApiClient:
         )
         return ProgressItemDTO.model_validate(response)
 
+    async def start_progress(self, progress_id: UUID) -> ProgressItemDTO:
+        response = await self._post(f"/api/v1/progress/{progress_id}/start")
+        return ProgressItemDTO.model_validate(response)
+
+    async def advance_progress(
+        self,
+        progress_id: UUID,
+        *,
+        expected_block_index: int,
+    ) -> ProgressItemDTO:
+        response = await self._post(
+            f"/api/v1/progress/{progress_id}/advance",
+            json={"expected_block_index": expected_block_index},
+        )
+        return ProgressItemDTO.model_validate(response)
+
+    async def read_progress(
+        self,
+        progress_id: UUID,
+        *,
+        expected_block_index: int,
+    ) -> ProgressItemDTO:
+        response = await self._post(
+            f"/api/v1/progress/{progress_id}/read",
+            json={"expected_block_index": expected_block_index},
+            headers={
+                "X-Telegram-Delivery": "durable",
+                "X-Bot-Service-Token": self._service_token,
+            },
+        )
+        return ProgressItemDTO.model_validate(response)
+
     @staticmethod
     def first_incomplete_step(
         progress: AssignmentProgressDTO,
     ) -> tuple[int, ProgressItemDTO] | None:
-        for index, item in enumerate(progress.items, start=1):
-            if item.status not in _DONE_STATUSES:
-                return index, item
-        return None
+        item = resolve_resume_item(progress.items)
+        if item is None:
+            return None
+        return progress.items.index(item) + 1, item
 
     def bind_telegram_token(self, telegram_user_id: int) -> bool:
         """Restore a cached token pair into the current request context."""

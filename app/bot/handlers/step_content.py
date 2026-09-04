@@ -113,3 +113,28 @@ def format_step_message(
         lines.extend(["", hint])
     text = "\n".join(lines)
     return truncate_telegram_html(text)
+
+
+def format_block_message(
+    *,
+    program_title: str,
+    step_number: int,
+    total_steps: int,
+    step_title: str | None,
+    block_text: str,
+    block_index: int,
+    block_count: int,
+) -> str:
+    """One content block per Telegram message — no full-step dump."""
+    title = step_title.strip() if step_title and step_title.strip() else "Обучение"
+    count = max(block_count, 1)
+    display_index = min(block_index + 1, count) if block_count else 0
+    lines = [
+        f"Курс: {escape(program_title)}",
+        f"Обучение {step_number}/{total_steps}: {escape(title)}",
+        "",
+        escape(block_text) if block_text else "Нет текста в этом блоке.",
+        "",
+        f"Прогресс: {display_index}/{block_count}",
+    ]
+    return truncate_telegram_html("\n".join(lines))

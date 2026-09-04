@@ -13,6 +13,7 @@ from app.services.idempotency import IdempotencyService
 from app.services.knowledge.article_service import ArticleService
 from app.services.knowledge.category_service import CategoryService
 from app.services.knowledge.tag_service import TagService
+from app.services.learning_progress import LearningProgressService
 from app.services.onboarding_program import OnboardingProgramService
 from app.services.platform import PlatformService, SuperAdminAuthService
 from app.services.progress import ProgressService
@@ -76,6 +77,11 @@ def get_assignment_service() -> AssignmentService:
 @lru_cache
 def get_progress_service() -> ProgressService:
     return ProgressService()
+
+
+@lru_cache
+def get_learning_progress_service() -> LearningProgressService:
+    return LearningProgressService()
 
 
 @lru_cache

@@ -11,6 +11,12 @@ from app.schemas.limits import (
 from app.services.step_content import content_blocks_as_dicts, payload_block_index
 
 
+class ProgressAdvanceRequest(BaseModel):
+    """Idempotent content-block navigation."""
+
+    expected_block_index: int = Field(ge=0)
+
+
 class ProgressCompleteRequest(BaseModel):
     """Optional payload stored when completing a progress row."""
 
@@ -91,3 +97,5 @@ class AssignmentProgressResponse(BaseModel):
 
     percentage: float = Field(description="Completion percentage (0-100).")
     items: list[ProgressResponse] = Field(description="Per-step progress rows.")
+    program_id: UUID | None = None
+    assignment_status: str | None = None

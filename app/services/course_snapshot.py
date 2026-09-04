@@ -88,3 +88,19 @@ def resolve_progress_step_fields(
         "content": dict(live_step.content) if isinstance(live_step.content, dict) else {},
         "position": live_step.position,
     }
+
+
+def order_records_by_snapshot(records: list[Any], snapshot: dict[str, Any] | None) -> list[Any]:
+    """Sort progress rows by assignment snapshot position when a snapshot exists."""
+    mapped = snapshot_step_map(snapshot)
+    if not mapped:
+        return list(records)
+
+    def _key(record: Any) -> tuple[int, int, str]:
+        step_id = getattr(record, "step_id", None)
+        snapped = mapped.get(step_id) if step_id is not None else None
+        if snapped is None:
+            return (1, 0, str(step_id or ""))
+        return (0, int(snapped.get("position") or 0), str(step_id))
+
+    return sorted(records, key=_key)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 from html import escape
+from uuid import UUID
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -18,6 +19,7 @@ from app.bot.keyboards.menu import (
     MENU_HISTORY,
     MENU_PROFILE,
 )
+from app.bot.keyboards.onboarding import assignment_open_keyboard
 from app.db.assignment_rules import assignment_sort_key
 
 router = Router(name="cabinet")
@@ -92,6 +94,7 @@ async def active_assignments(
         return
 
     lines = ["🔥 <b>Активные</b>\n"]
+    buttons: list[tuple[UUID, str]] = []
     for assignment in items:
         try:
             program = await api.get_program(assignment.program_id)
@@ -109,6 +112,7 @@ async def active_assignments(
             pct = "—"
             step_title = "—"
 
+        buttons.append((assignment.id, title))
         block = (
             f"<b>{escape(title)}</b>\n"
             f"Прогресс: {pct}\n"
@@ -119,7 +123,10 @@ async def active_assignments(
             block += f"\nСрок: {_fmt_date(assignment.due_at)}"
         lines.append(block)
 
-    await message.answer("\n\n".join(lines))
+    await message.answer(
+        "\n\n".join(lines),
+        reply_markup=assignment_open_keyboard(buttons) if buttons else None,
+    )
 
 
 @router.message(F.text == MENU_HISTORY)

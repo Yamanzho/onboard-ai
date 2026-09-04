@@ -57,6 +57,8 @@ class ProgressStepDTO(BaseModel):
     step_type: str = "content"
     content: dict[str, Any] = Field(default_factory=dict)
     position: int = 0
+    content_blocks: list[dict[str, str]] = Field(default_factory=list)
+    block_count: int = 0
 
 
 class ProgressItemDTO(BaseModel):
@@ -67,6 +69,7 @@ class ProgressItemDTO(BaseModel):
     step_id: UUID
     status: str
     payload: dict[str, Any] = Field(default_factory=dict)
+    block_index: int | None = None
     step: ProgressStepDTO | None = None
 
 
@@ -75,3 +78,5 @@ class AssignmentProgressDTO(BaseModel):
 
     percentage: float
     items: list[ProgressItemDTO]
+    program_id: UUID | None = None
+    assignment_status: str | None = None

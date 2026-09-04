@@ -24,7 +24,7 @@ from app.schemas.progress import (
 )
 from app.services.assessment import public_progress_payload
 from app.services.assignment import AssignmentService
-from app.services.course_snapshot import resolve_progress_step_fields
+from app.services.course_snapshot import order_records_by_snapshot, resolve_progress_step_fields
 from app.services.progress import ProgressService
 from app.services.step_content import public_step_content
 
@@ -316,6 +316,7 @@ async def get_assignment_progress(
     )
     responses: list[ProgressResponse] = []
     snapshot = assignment.structure_snapshot
+    items = order_records_by_snapshot(items, snapshot)
     for item in items:
         live_step = step_by_id.get(item.step_id)
         fields = resolve_progress_step_fields(
@@ -358,4 +359,6 @@ async def get_assignment_progress(
     return AssignmentProgressResponse(
         percentage=percentage,
         items=responses,
+        program_id=assignment.program_id,
+        assignment_status=assignment.status,
     )
