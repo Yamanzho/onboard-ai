@@ -7,7 +7,8 @@ import {
 } from '../../components/employees/EmployeeForm'
 import { Button } from '../../components/ui/Button'
 import { useAuth } from '../../hooks/useAuth'
-import { useEmployeeMutations } from '../../hooks/useEmployees'
+import { useDepartments } from '../../hooks/useDepartments'
+import { useEmployeeMutations, useEmployees } from '../../hooks/useEmployees'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
@@ -23,6 +24,8 @@ export function EmployeeCreatePage() {
   const { user } = useAuth()
   const isAdmin = user?.role === 'admin'
   const { create } = useEmployeeMutations()
+  const { data: departments = [] } = useDepartments()
+  const { data: employees = [] } = useEmployees()
   const [created, setCreated] = useState<Employee | null>(null)
   const [copyHint, setCopyHint] = useState<string | null>(null)
 
@@ -36,6 +39,9 @@ export function EmployeeCreatePage() {
         // HR may only create employees; ADMIN may choose employee|hr in the form.
         role: isAdmin ? values.role : 'employee',
         status: values.status,
+        job_title: values.job_title.trim() || null,
+        department_id: values.department_id || null,
+        manager_id: values.manager_id || null,
       })
       setCreated(result)
     } catch (err) {
@@ -155,11 +161,16 @@ export function EmployeeCreatePage() {
               telegram_user_id: '',
               role: 'employee',
               status: 'invited',
+              job_title: '',
+              department_id: '',
+              manager_id: '',
             }}
             submitLabel={t('employees.create')}
             pending={create.isPending}
             roleEditable={isAdmin}
             allowedRoles={isAdmin ? ['employee', 'hr'] : ['employee']}
+            departments={departments}
+            managerCandidates={employees}
             onSubmit={onSubmit}
           />
         </div>

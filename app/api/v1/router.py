@@ -7,6 +7,7 @@ from app.api.v1.assignments import router as assignments_router
 from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.companies import router as companies_router
+from app.api.v1.departments import router as departments_router
 from app.api.v1.employees import router as employees_router
 from app.api.v1.knowledge.articles import router as knowledge_articles_router
 from app.api.v1.knowledge.categories import router as knowledge_categories_router
@@ -15,12 +16,15 @@ from app.api.v1.programs import router as programs_router
 from app.api.v1.progress import router as progress_router
 from app.api.v1.steps import router as steps_router
 from app.api.v1.super_admin import router as super_admin_router
+from app.api.v1.topics import router as topics_router
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth_router)
 router.include_router(super_admin_router)
 router.include_router(companies_router)
 router.include_router(employees_router)
+router.include_router(departments_router)
+router.include_router(topics_router)
 router.include_router(programs_router)
 router.include_router(steps_router)
 router.include_router(assignments_router)

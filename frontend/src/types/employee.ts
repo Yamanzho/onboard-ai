@@ -1,3 +1,6 @@
+import type { DepartmentSummary } from './department'
+import type { ManagerSummary } from './topic'
+
 export type EmployeeRole = 'admin' | 'hr' | 'employee'
 export type EmployeeStatus = 'invited' | 'active' | 'archived'
 
@@ -12,6 +15,11 @@ export interface Employee {
   role: EmployeeRole | string
   status: EmployeeStatus | string
   hired_at: string | null
+  department_id?: string | null
+  manager_id?: string | null
+  job_title?: string | null
+  department?: DepartmentSummary | null
+  manager?: ManagerSummary | null
   created_at: string
   updated_at: string
   invite_email_sent?: boolean | null
@@ -31,6 +39,9 @@ export interface EmployeeCreate {
   role?: EmployeeRole
   status?: EmployeeStatus
   hired_at?: string | null
+  department_id?: string | null
+  manager_id?: string | null
+  job_title?: string | null
 }
 
 export interface EmployeeUpdate {
@@ -42,11 +53,15 @@ export interface EmployeeUpdate {
   role?: EmployeeRole
   status?: EmployeeStatus
   hired_at?: string | null
+  department_id?: string | null
+  manager_id?: string | null
+  job_title?: string | null
 }
 
 export interface EmployeeListParams {
   company_id: string
   status?: EmployeeStatus | string
+  department_id?: string
   offset?: number
   limit?: number
 }

@@ -67,6 +67,9 @@ class CurrentUserResponse(BaseModel):
     company_name: str | None = None
     company_description: str | None = None
     hired_at: date | None = None
+    department_id: UUID | None = None
+    manager_id: UUID | None = None
+    job_title: str | None = None
     created_at: datetime
     updated_at: datetime
 

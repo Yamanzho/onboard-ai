@@ -6,9 +6,11 @@ import {
   labelEmployeeStatus,
   t,
 } from '../../i18n'
+import type { Department } from '../../types/department'
 import {
   EMPLOYEE_ROLES,
   EMPLOYEE_STATUSES,
+  type Employee,
   type EmployeeRole,
   type EmployeeStatus,
 } from '../../types/employee'
@@ -19,6 +21,9 @@ export interface EmployeeFormValues {
   telegram_user_id: string
   role: EmployeeRole
   status: EmployeeStatus
+  job_title: string
+  department_id: string
+  manager_id: string
 }
 
 interface EmployeeFormProps {
@@ -31,7 +36,28 @@ interface EmployeeFormProps {
   statusEditable?: boolean
   /** When roleEditable, limit selectable roles (defaults to all EMPLOYEE_ROLES). */
   allowedRoles?: EmployeeRole[]
+  departments?: readonly Department[]
+  managerCandidates?: readonly Employee[]
+  currentEmployeeId?: string
   onSubmit: (values: EmployeeFormValues) => Promise<void>
+}
+
+function wouldCreateManagerCycle(
+  employeeId: string | undefined,
+  candidateId: string,
+  employees: readonly Employee[],
+): boolean {
+  if (!employeeId) return false
+  if (candidateId === employeeId) return true
+  const byId = new Map(employees.map((item) => [item.id, item]))
+  const seen = new Set<string>([employeeId])
+  let current: string | null | undefined = candidateId
+  for (let i = 0; i < 128 && current; i += 1) {
+    if (seen.has(current)) return true
+    seen.add(current)
+    current = byId.get(current)?.manager_id ?? null
+  }
+  return false
 }
 
 function validate(values: EmployeeFormValues, allowedRoles: EmployeeRole[]): string | null {
@@ -78,11 +104,22 @@ export function EmployeeForm({
   roleEditable = true,
   statusEditable = true,
   allowedRoles: allowedRolesProp,
+  departments = [],
+  managerCandidates = [],
+  currentEmployeeId,
   onSubmit,
 }: EmployeeFormProps) {
   const [values, setValues] = useState(initial)
   const [error, setError] = useState<string | null>(null)
   const roleOptions = allowedRolesProp ?? EMPLOYEE_ROLES
+  const managerOptions = managerCandidates.filter((candidate) => {
+    if (candidate.id === values.manager_id) return true
+    return (
+      candidate.status === 'active' &&
+      candidate.id !== currentEmployeeId &&
+      !wouldCreateManagerCycle(currentEmployeeId, candidate.id, managerCandidates)
+    )
+  })
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -186,6 +223,57 @@ export function EmployeeForm({
             {EMPLOYEE_STATUSES.map((status) => (
               <option key={status} value={status}>
                 {labelEmployeeStatus(status)}
+              </option>
+            ))}
+          </Select>
+        </div>
+      </div>
+
+      <div>
+        <Label htmlFor="job_title">{t('employees.jobTitle')}</Label>
+        <Input
+          id="job_title"
+          value={values.job_title}
+          onChange={(e) => setValues({ ...values, job_title: e.target.value })}
+          maxLength={255}
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <div>
+          <Label htmlFor="department_id">{t('employees.department')}</Label>
+          <Select
+            id="department_id"
+            value={values.department_id}
+            onChange={(e) =>
+              setValues({ ...values, department_id: e.target.value })
+            }
+          >
+            <option value="">{t('org.none')}</option>
+            {departments
+              .filter(
+                (item) => item.is_active || item.id === values.department_id,
+              )
+              .map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
+                </option>
+              ))}
+          </Select>
+        </div>
+        <div>
+          <Label htmlFor="manager_id">{t('employees.manager')}</Label>
+          <Select
+            id="manager_id"
+            value={values.manager_id}
+            onChange={(e) =>
+              setValues({ ...values, manager_id: e.target.value })
+            }
+          >
+            <option value="">{t('org.none')}</option>
+            {managerOptions.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.full_name}
               </option>
             ))}
           </Select>

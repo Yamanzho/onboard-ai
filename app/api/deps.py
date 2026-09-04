@@ -7,6 +7,7 @@ from app.services.analytics import AnalyticsService
 from app.services.assignment import AssignmentService
 from app.services.company import CompanyService
 from app.services.company_audit import CompanyAuditService
+from app.services.department import DepartmentService
 from app.services.employee import EmployeeService
 from app.services.idempotency import IdempotencyService
 from app.services.knowledge.article_service import ArticleService
@@ -15,6 +16,8 @@ from app.services.knowledge.tag_service import TagService
 from app.services.onboarding_program import OnboardingProgramService
 from app.services.platform import PlatformService, SuperAdminAuthService
 from app.services.progress import ProgressService
+from app.services.question_topic import QuestionTopicService
+from app.services.responsibility import ResponsibilityLookupService
 from app.services.step import StepService
 from app.services.telegram_outbound import TelegramOutboundService
 
@@ -38,6 +41,21 @@ def get_analytics_service() -> AnalyticsService:
 @lru_cache
 def get_employee_service() -> EmployeeService:
     return EmployeeService()
+
+
+@lru_cache
+def get_department_service() -> DepartmentService:
+    return DepartmentService()
+
+
+@lru_cache
+def get_question_topic_service() -> QuestionTopicService:
+    return QuestionTopicService()
+
+
+@lru_cache
+def get_responsibility_lookup_service() -> ResponsibilityLookupService:
+    return ResponsibilityLookupService()
 
 
 @lru_cache

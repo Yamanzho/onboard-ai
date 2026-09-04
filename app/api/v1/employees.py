@@ -12,6 +12,7 @@ from app.schemas.employee import (
     EmployeeInviteHistoryResponse,
     EmployeeResponse,
     EmployeeUpdate,
+    employee_to_response,
 )
 from app.services.employee import EmployeeService
 
@@ -67,9 +68,12 @@ async def create_employee(
         role=payload.role,
         status=payload.status,
         hired_at=payload.hired_at,
+        department_id=payload.department_id,
+        manager_id=payload.manager_id,
+        job_title=payload.job_title,
         actor_employee_id=current_user.id,
     )
-    response = EmployeeResponse.model_validate(employee)
+    response = employee_to_response(employee)
     if delivery is not None:
         response = response.model_copy(
             update={
@@ -110,6 +114,10 @@ async def list_employees(
         str | None,
         Query(alias="status", description="Filter: invited, active, archived"),
     ] = None,
+    department_id: Annotated[
+        UUID | None,
+        Query(description="Optional department filter"),
+    ] = None,
 ) -> list[EmployeeResponse]:
     employees = await service.list_employees(
         company_id,
@@ -117,8 +125,9 @@ async def list_employees(
         offset=offset,
         limit=limit,
         status=status_filter,
+        department_id=department_id,
     )
-    return [EmployeeResponse.model_validate(employee) for employee in employees]
+    return [employee_to_response(employee) for employee in employees]
 
 
 @router.get(
@@ -145,7 +154,7 @@ async def get_employee(
         employee_id,
         company_id=current_user.company_id,
     )
-    return EmployeeResponse.model_validate(employee)
+    return employee_to_response(employee)
 
 
 @router.get(
@@ -208,7 +217,7 @@ async def update_employee(
         actor_employee_id=current_user.id,
         **payload.model_dump(exclude_unset=True),
     )
-    return EmployeeResponse.model_validate(employee)
+    return employee_to_response(employee)
 
 
 @router.post(
@@ -277,7 +286,7 @@ async def resend_employee_invite(
         employee_id,
         company_id=current_user.company_id,
     )
-    response = EmployeeResponse.model_validate(employee)
+    response = employee_to_response(employee)
     return response.model_copy(
         update={
             "invite_email_sent": delivery.email_sent,

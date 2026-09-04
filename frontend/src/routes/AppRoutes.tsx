@@ -22,6 +22,8 @@ import { EmployeeListPage } from '../pages/employees/EmployeeListPage'
 import { ArticleCreatePage } from '../pages/knowledge/ArticleCreatePage'
 import { ArticleEditPage } from '../pages/knowledge/ArticleEditPage'
 import { ArticleListPage } from '../pages/knowledge/ArticleListPage'
+import { DepartmentListPage } from '../pages/org/DepartmentListPage'
+import { TopicListPage } from '../pages/org/TopicListPage'
 import { CategoriesPage } from '../pages/knowledge/CategoriesPage'
 import { TagsPage } from '../pages/knowledge/TagsPage'
 import { ProgramCreatePage } from '../pages/onboarding/ProgramCreatePage'
@@ -78,6 +80,9 @@ function managementRoutes(opts: {
       <Route path="employees/new" element={<EmployeeCreatePage />} />
       <Route path="employees/:employeeId" element={<EmployeeDetailPage />} />
       <Route path="employees/:employeeId/edit" element={<EmployeeEditPage />} />
+
+      <Route path="departments" element={<DepartmentListPage />} />
+      <Route path="topics" element={<TopicListPage />} />
 
       {opts.includeHrMgmt ? (
         <>

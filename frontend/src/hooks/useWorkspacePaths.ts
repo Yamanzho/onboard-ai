@@ -25,6 +25,8 @@ export function useWorkspacePaths() {
     path,
     dashboard: path(),
     employees: path('/employees'),
+    departments: path('/departments'),
+    topics: path('/topics'),
     employee: (id: string) => path(`/employees/${id}`),
     employeeNew: path('/employees/new'),
     employeeEdit: (id: string) => path(`/employees/${id}/edit`),

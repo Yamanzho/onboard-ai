@@ -22,6 +22,7 @@ export function useEmployees(
       employeesApi.listEmployees({
         company_id: companyId!,
         status: filters.status,
+        department_id: filters.department_id,
         offset: 0,
         limit: LIST_LIMIT,
       }),

@@ -190,6 +190,15 @@ export function EmployeeDetailPage() {
 
   const rows: { label: string; value: string }[] = [
     { label: t('employees.fullName'), value: employee.full_name },
+    { label: t('employees.jobTitle'), value: employee.job_title ?? t('common.emDash') },
+    {
+      label: t('employees.department'),
+      value: employee.department?.name ?? t('common.emDash'),
+    },
+    {
+      label: t('employees.manager'),
+      value: employee.manager?.full_name ?? t('common.emDash'),
+    },
     { label: t('common.email'), value: employee.email ?? t('common.emDash') },
     { label: t('common.role'), value: employee.role },
     { label: t('common.status'), value: employee.status },

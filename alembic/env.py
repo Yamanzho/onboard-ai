@@ -15,6 +15,7 @@ from app.db.models import (  # noqa: F401 — register models on Base.metadata
     Company,
     CompanyAuditLog,
     CompanySubscription,
+    Department,
     Employee,
     EmployeeInvite,
     KnowledgeArticle,
@@ -27,8 +28,10 @@ from app.db.models import (  # noqa: F401 — register models on Base.metadata
     OnboardingProgram,
     PlatformAuditLog,
     Progress,
+    QuestionTopic,
     RefreshSession,
     Step,
+    TopicResponsibility,
     SubscriptionHistoryEvent,
     SuperAdmin,
 )

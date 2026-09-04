@@ -17,6 +17,7 @@ from app.repositories.assignment import AssignmentRepository
 from app.repositories.company import CompanyRepository
 from app.repositories.company_audit_log import CompanyAuditLogRepository
 from app.repositories.company_subscription import CompanySubscriptionRepository
+from app.repositories.department import DepartmentRepository
 from app.repositories.employee import EmployeeRepository
 from app.repositories.employee_invite import EmployeeInviteRepository
 from app.repositories.idempotency_receipt import IdempotencyReceiptRepository
@@ -29,11 +30,13 @@ from app.repositories.knowledge_tag import KnowledgeTagRepository
 from app.repositories.onboarding_program import OnboardingProgramRepository
 from app.repositories.platform_audit_log import PlatformAuditLogRepository
 from app.repositories.progress import ProgressRepository
+from app.repositories.question_topic import QuestionTopicRepository
 from app.repositories.refresh_session import RefreshSessionRepository
 from app.repositories.step import StepRepository
 from app.repositories.subscription_history import SubscriptionHistoryRepository
 from app.repositories.super_admin import SuperAdminRepository
 from app.repositories.telegram_outbound import TelegramOutboundRepository
+from app.repositories.topic_responsibility import TopicResponsibilityRepository
 
 
 class RlsMode(str, Enum):
@@ -62,6 +65,9 @@ class UnitOfWork:
     companies: CompanyRepository
     company_audit_logs: CompanyAuditLogRepository
     employees: EmployeeRepository
+    departments: DepartmentRepository
+    question_topics: QuestionTopicRepository
+    topic_responsibilities: TopicResponsibilityRepository
     onboarding_programs: OnboardingProgramRepository
     steps: StepRepository
     assignments: AssignmentRepository
@@ -105,6 +111,9 @@ class UnitOfWork:
         self.companies = CompanyRepository(self._session)
         self.company_audit_logs = CompanyAuditLogRepository(self._session)
         self.employees = EmployeeRepository(self._session)
+        self.departments = DepartmentRepository(self._session)
+        self.question_topics = QuestionTopicRepository(self._session)
+        self.topic_responsibilities = TopicResponsibilityRepository(self._session)
         self.onboarding_programs = OnboardingProgramRepository(self._session)
         self.steps = StepRepository(self._session)
         self.assignments = AssignmentRepository(self._session)

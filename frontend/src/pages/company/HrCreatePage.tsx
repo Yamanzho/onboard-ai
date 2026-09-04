@@ -6,7 +6,8 @@ import {
   type EmployeeFormValues,
 } from '../../components/employees/EmployeeForm'
 import { Button } from '../../components/ui/Button'
-import { useEmployeeMutations } from '../../hooks/useEmployees'
+import { useDepartments } from '../../hooks/useDepartments'
+import { useEmployeeMutations, useEmployees } from '../../hooks/useEmployees'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
@@ -21,6 +22,8 @@ export function HrCreatePage() {
   const navigate = useNavigate()
   const paths = useWorkspacePaths()
   const { create } = useEmployeeMutations()
+  const { data: departments = [] } = useDepartments()
+  const { data: employees = [] } = useEmployees()
   const [created, setCreated] = useState<Employee | null>(null)
   const [copyHint, setCopyHint] = useState<string | null>(null)
 
@@ -33,6 +36,9 @@ export function HrCreatePage() {
         telegram_user_id: telegramRaw ? Number(telegramRaw) : undefined,
         role: 'hr',
         status: values.status,
+        job_title: values.job_title.trim() || null,
+        department_id: values.department_id || null,
+        manager_id: values.manager_id || null,
       })
       setCreated(result)
     } catch (err) {
@@ -110,11 +116,16 @@ export function HrCreatePage() {
               telegram_user_id: '',
               role: 'hr',
               status: 'invited',
+              job_title: '',
+              department_id: '',
+              manager_id: '',
             }}
             submitLabel={t('hrManagement.new')}
             pending={create.isPending}
             roleEditable={false}
             allowedRoles={['hr']}
+            departments={departments}
+            managerCandidates={employees}
             onSubmit={onSubmit}
           />
         </div>

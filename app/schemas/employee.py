@@ -3,6 +3,11 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from sqlalchemy import inspect as sa_inspect
+
+from app.db.models.employee import Employee
+from app.schemas.department import DepartmentSummary
+from app.schemas.question_topic import ManagerSummary
 
 EmployeeRoleLiteral = Literal["employee", "hr", "admin"]
 EmployeeStatusLiteral = Literal["invited", "active", "archived"]
@@ -44,6 +49,19 @@ class EmployeeCreate(BaseModel):
     role: EmployeeRoleLiteral = Field(default="employee")
     status: EmployeeStatusLiteral = Field(default="invited")
     hired_at: date | None = Field(default=None, description="Optional hire date.")
+    department_id: UUID | None = Field(
+        default=None,
+        description="Optional department in the same company.",
+    )
+    manager_id: UUID | None = Field(
+        default=None,
+        description="Optional manager in the same company.",
+    )
+    job_title: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Optional job title. Not a role/permission.",
+    )
 
     @model_validator(mode="after")
     def require_email_when_invited(self) -> "EmployeeCreate":
@@ -70,6 +88,9 @@ class EmployeeUpdate(BaseModel):
     role: EmployeeRoleLiteral | None = None
     status: EmployeeStatusLiteral | None = None
     hired_at: date | None = None
+    department_id: UUID | None = None
+    manager_id: UUID | None = None
+    job_title: str | None = Field(default=None, max_length=255)
 
     @model_validator(mode="after")
     def require_at_least_one_field(self) -> "EmployeeUpdate":
@@ -93,6 +114,11 @@ class EmployeeResponse(BaseModel):
     role: str
     status: str
     hired_at: date | None
+    department_id: UUID | None = None
+    manager_id: UUID | None = None
+    job_title: str | None = None
+    department: DepartmentSummary | None = None
+    manager: ManagerSummary | None = None
     created_at: datetime
     updated_at: datetime
     # Invite delivery (set on create when status=invited).
@@ -121,3 +147,41 @@ class EmployeeInviteHistoryItem(BaseModel):
 
 class EmployeeInviteHistoryResponse(BaseModel):
     items: list[EmployeeInviteHistoryItem]
+
+
+def employee_to_response(employee: Employee) -> EmployeeResponse:
+    """Build an employee payload without triggering unloaded relationship IO.
+
+    Nested department/manager summaries are included only when those
+    relationships were eager-loaded in the current session.
+    """
+    state = sa_inspect(employee)
+    department = (
+        employee.department if "department" not in state.unloaded else None
+    )
+    manager = employee.manager if "manager" not in state.unloaded else None
+    return EmployeeResponse(
+        id=employee.id,
+        company_id=employee.company_id,
+        telegram_user_id=employee.telegram_user_id,
+        telegram_chat_id=employee.telegram_chat_id,
+        telegram_username=employee.telegram_username,
+        full_name=employee.full_name,
+        email=employee.email,
+        role=employee.role,
+        status=employee.status,
+        hired_at=employee.hired_at,
+        department_id=employee.department_id,
+        manager_id=employee.manager_id,
+        job_title=employee.job_title,
+        department=(
+            DepartmentSummary.model_validate(department)
+            if department is not None
+            else None
+        ),
+        manager=(
+            ManagerSummary.model_validate(manager) if manager is not None else None
+        ),
+        created_at=employee.created_at,
+        updated_at=employee.updated_at,
+    )

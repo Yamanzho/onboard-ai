@@ -157,3 +157,8 @@ class CompanyAuditAction(StrEnum):
     ARTICLE_UPDATED = "kb.article.updated"
     ARTICLE_PUBLISHED = "kb.article.published"
     ARTICLE_ARCHIVED = "kb.article.archived"
+    DEPARTMENT_CREATED = "department.created"
+    DEPARTMENT_UPDATED = "department.updated"
+    TOPIC_CREATED = "topic.created"
+    TOPIC_UPDATED = "topic.updated"
+    TOPIC_RESPONSIBILITY_CHANGED = "topic.responsibility.changed"

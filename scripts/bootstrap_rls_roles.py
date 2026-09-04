@@ -47,6 +47,9 @@ _APP_TABLES = (
     "super_admins",
     "platform_audit_logs",
     "company_audit_logs",
+    "departments",
+    "question_topics",
+    "topic_responsibilities",
 )
 
 

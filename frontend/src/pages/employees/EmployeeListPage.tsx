@@ -12,6 +12,7 @@ import {
 } from '../../components/employees/EmployeeBadges'
 import { Button } from '../../components/ui/Button'
 import { Input, Select } from '../../components/ui/Field'
+import { useDepartments } from '../../hooks/useDepartments'
 import {
   useEmployeeMutations,
   useEmployees,
@@ -54,6 +55,8 @@ function matchesSearch(employee: Employee, query: string): boolean {
   return (
     employee.full_name.toLowerCase().includes(q) ||
     (employee.email?.toLowerCase().includes(q) ?? false) ||
+    (employee.job_title?.toLowerCase().includes(q) ?? false) ||
+    (employee.department?.name.toLowerCase().includes(q) ?? false) ||
     (employee.telegram_username?.toLowerCase().includes(q) ?? false) ||
     String(employee.telegram_user_id).includes(q) ||
     employee.id.toLowerCase().includes(q)
@@ -84,6 +87,7 @@ export function EmployeeListPage({
   const [search, setSearch] = useState('')
   const [role, setRole] = useState(isHrList ? 'hr' : '')
   const [status, setStatus] = useState('')
+  const [departmentId, setDepartmentId] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('created_at')
   const [sortDir, setSortDir] = useState<SortDir>('desc')
   const [page, setPage] = useState(1)
@@ -98,6 +102,7 @@ export function EmployeeListPage({
   )
 
   const { data, isLoading, error } = useEmployees(listFilters)
+  const { data: departments = [] } = useDepartments()
   const { remove } = useEmployeeMutations()
 
   const filtered = useMemo(() => {
@@ -107,8 +112,9 @@ export function EmployeeListPage({
       .filter((e) => (includeRoles ? includeRoles.includes(e.role) : true))
       .filter((e) => (excludeRoles ? !excludeRoles.includes(e.role) : true))
       .filter((e) => (role ? e.role === role : true))
+      .filter((e) => (departmentId ? e.department_id === departmentId : true))
       .sort((a, b) => compareEmployees(a, b, sortKey, sortDir))
-  }, [data, search, role, sortKey, sortDir, includeRoles, excludeRoles])
+  }, [data, search, role, departmentId, sortKey, sortDir, includeRoles, excludeRoles])
 
   const newPath = createPath ?? (isHrList ? paths.hrNew : paths.employeeNew)
   const detailPath = (id: string) =>
@@ -168,7 +174,7 @@ export function EmployeeListPage({
       {actionError ? <ErrorAlert message={actionError} /> : null}
       {error ? <ErrorAlert message={(error as Error).message} /> : null}
 
-      <div className="mb-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-3">
+      <div className="mb-4 grid gap-3 rounded-lg border border-[var(--color-border)] bg-white p-4 md:grid-cols-4">
         <Input
           value={search}
           onChange={(e) => {
@@ -212,6 +218,21 @@ export function EmployeeListPage({
             </option>
           ))}
         </Select>
+        <Select
+          value={departmentId}
+          onChange={(e) => {
+            setDepartmentId(e.target.value)
+            setPage(1)
+          }}
+          aria-label={t('employees.filterDepartment')}
+        >
+          <option value="">{t('employees.allDepartments')}</option>
+          {departments.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </Select>
       </div>
 
       {isLoading ? (
@@ -251,6 +272,8 @@ export function EmployeeListPage({
                       {sortLabel('email', t('employees.colEmail'))}
                     </button>
                   </th>
+                  <th className="px-4 py-3">{t('employees.colJobTitle')}</th>
+                  <th className="px-4 py-3">{t('employees.colDepartment')}</th>
                   <th className="px-4 py-3">{t('employees.colTelegram')}</th>
                   <th className="px-4 py-3">
                     <button
@@ -286,6 +309,12 @@ export function EmployeeListPage({
                     </td>
                     <td className="px-4 py-3 text-[var(--color-muted)]">
                       {employee.email ?? t('common.emDash')}
+                    </td>
+                    <td className="px-4 py-3 text-[var(--color-muted)]">
+                      {employee.job_title ?? t('common.emDash')}
+                    </td>
+                    <td className="px-4 py-3 text-[var(--color-muted)]">
+                      {employee.department?.name ?? t('common.emDash')}
                     </td>
                     <td className="px-4 py-3 text-[var(--color-muted)]">
                       {employee.telegram_user_id}

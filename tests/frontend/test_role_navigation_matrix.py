@@ -22,6 +22,8 @@ WORKSPACE_BASE = {
 COMPANY_NAV = [
     "/company",
     "/company/employees",
+    "/company/departments",
+    "/company/topics",
     "/company/hr",
     "/company/onboarding",
     "/company/assignments",
@@ -35,6 +37,8 @@ COMPANY_NAV = [
 HR_NAV = [
     "/hr",
     "/hr/employees",
+    "/hr/departments",
+    "/hr/topics",
     "/hr/onboarding",
     "/hr/assignments",
     "/hr/knowledge",
@@ -109,6 +113,8 @@ def test_admin_company_allowed() -> None:
     paths = nav_for("admin")
     assert "/company" in paths
     assert "/company/hr" in paths
+    assert "/company/departments" in paths
+    assert "/company/topics" in paths
     assert "/company/settings" in paths
     assert "/hr" not in paths
     assert "/employee" not in paths
@@ -124,6 +130,8 @@ def test_hr_workspace_allowed() -> None:
     paths = nav_for("hr")
     assert "/hr" in paths
     assert "/hr/employees" in paths
+    assert "/hr/departments" in paths
+    assert "/hr/topics" in paths
     assert "/company" not in paths
     assert "/company/hr" not in paths
     assert "/company/settings" not in paths

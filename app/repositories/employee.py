@@ -2,9 +2,15 @@ from uuid import UUID
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.db.models.employee import Employee
 from app.repositories.base import BaseRepository, _MAX_LIST_LIMIT
+
+_ORG_LOAD = (
+    selectinload(Employee.department),
+    selectinload(Employee.manager),
+)
 
 
 class EmployeeRepository(BaseRepository[Employee]):
@@ -50,6 +56,13 @@ class EmployeeRepository(BaseRepository[Employee]):
         result = await self._session.scalar(stmt)
         return int(result or 0)
 
+    async def get_with_org(self, employee_id: UUID) -> Employee | None:
+        """Load an employee with department and manager summaries."""
+        self._ensure_rls_context()
+        stmt = select(Employee).options(*_ORG_LOAD).where(Employee.id == employee_id)
+        result = await self._session.scalars(stmt)
+        return result.first()
+
     async def list_by_company_id(
         self,
         company_id: UUID,
@@ -57,6 +70,8 @@ class EmployeeRepository(BaseRepository[Employee]):
         offset: int = 0,
         limit: int = 100,
         status: str | None = None,
+        department_id: UUID | None = None,
+        with_org: bool = False,
     ) -> list[Employee]:
         self._ensure_rls_context()
         stmt = self._company_list_statement(
@@ -64,6 +79,8 @@ class EmployeeRepository(BaseRepository[Employee]):
             offset=offset,
             limit=limit,
             status=status,
+            department_id=department_id,
+            with_org=with_org,
         )
         result = await self._session.scalars(stmt)
         return list(result.all())
@@ -75,6 +92,8 @@ class EmployeeRepository(BaseRepository[Employee]):
         offset: int,
         limit: int,
         status: str | None,
+        department_id: UUID | None = None,
+        with_org: bool = False,
     ) -> Select[tuple[Employee]]:
         if offset < 0:
             raise ValueError("offset must be >= 0")
@@ -84,6 +103,10 @@ class EmployeeRepository(BaseRepository[Employee]):
         stmt: Select[tuple[Employee]] = select(Employee).where(
             Employee.company_id == company_id,
         )
+        if with_org:
+            stmt = stmt.options(*_ORG_LOAD)
         if status is not None:
             stmt = stmt.where(Employee.status == status)
+        if department_id is not None:
+            stmt = stmt.where(Employee.department_id == department_id)
         return stmt.order_by(Employee.created_at.desc()).offset(offset).limit(limit)

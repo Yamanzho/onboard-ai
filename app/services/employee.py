@@ -21,6 +21,11 @@ from app.db.uow import UnitOfWork
 from app.schemas.employee import EmployeeInviteHistoryItem
 from app.services.company_audit import record_company_audit
 from app.services.email import InviteEmailResult
+from app.services.org_validation import (
+    manager_assignment_would_cycle,
+    resolve_department_for_assignment,
+    resolve_employee_for_assignment,
+)
 from app.services.platform_management import InviteService
 from app.services.refresh_session import SUBJECT_EMPLOYEE
 from app.services.subscription_guard import (
@@ -33,6 +38,13 @@ _ALLOWED_ROLES = {item.value for item in EmployeeRole}
 _ALLOWED_STATUSES = {item.value for item in EmployeeStatus}
 _PRIVILEGED_ROLES = frozenset({EmployeeRole.ADMIN.value, EmployeeRole.HR.value})
 _logger = logging.getLogger("app.employee")
+
+
+def _normalize_job_title(value: str | None) -> str | None:
+    if value is None:
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 class EmployeeService:
@@ -60,6 +72,9 @@ class EmployeeService:
         role: str = EmployeeRole.EMPLOYEE.value,
         status: str = EmployeeStatus.INVITED.value,
         hired_at: date | None = None,
+        department_id: UUID | None = None,
+        manager_id: UUID | None = None,
+        job_title: str | None = None,
         actor_employee_id: UUID | None = None,
     ) -> tuple[Employee, InviteEmailResult | None]:
         self._validate_role(role)
@@ -95,6 +110,13 @@ class EmployeeService:
                 raise NotFoundError(f"Company {company_id} not found")
             company_name = company.name
             await ensure_employee_limit(uow, company_id)
+            await self._validate_org_fields(
+                uow,
+                company_id=company_id,
+                department_id=department_id,
+                manager_id=manager_id,
+                job_title=job_title,
+            )
 
             try:
                 employee = await uow.employees.create(
@@ -108,6 +130,9 @@ class EmployeeService:
                         role=role,
                         status=status,
                         hired_at=hired_at,
+                        department_id=department_id,
+                        manager_id=manager_id,
+                        job_title=_normalize_job_title(job_title),
                     ),
                 )
                 await record_company_audit(
@@ -150,7 +175,8 @@ class EmployeeService:
                     details={"role": role, "delivery": delivery.delivery},
                 )
                 await uow.commit()
-        return employee, delivery
+        loaded = await self.get_employee(employee.id, company_id=company_id)
+        return loaded, delivery
 
     async def get_employee(
         self,
@@ -169,7 +195,11 @@ class EmployeeService:
                 await uow.enter_auth_bootstrap(employee_id=employee_id)
             else:
                 await uow.enter_tenant(company_id)
-            employee = await uow.employees.get_by_id(employee_id)
+            employee = (
+                await uow.employees.get_with_org(employee_id)
+                if company_id is not None
+                else await uow.employees.get_by_id(employee_id)
+            )
             if employee is None:
                 raise NotFoundError(f"Employee {employee_id} not found")
             if company_id is not None:
@@ -245,6 +275,7 @@ class EmployeeService:
         offset: int = 0,
         limit: int = 100,
         status: str | None = None,
+        department_id: UUID | None = None,
     ) -> list[Employee]:
         if status is not None:
             self._validate_status(status)
@@ -264,6 +295,8 @@ class EmployeeService:
                 offset=offset,
                 limit=limit,
                 status=status,
+                department_id=department_id,
+                with_org=True,
             )
 
     async def get_by_telegram_user_id(
@@ -449,6 +482,8 @@ class EmployeeService:
             self._validate_status(values["status"])
         if "telegram_user_id" in values and values["telegram_user_id"] <= 0:
             raise ValidationError("telegram_user_id must be a positive integer")
+        if "job_title" in values:
+            values["job_title"] = _normalize_job_title(values["job_title"])
 
         async with self._uow_factory() as uow:
             await uow.enter_tenant(company_id)
@@ -463,6 +498,22 @@ class EmployeeService:
             self._assert_can_manage_target(
                 actor_role=actor_role,
                 target_role=employee.role,
+            )
+            await self._validate_org_fields(
+                uow,
+                company_id=company_id,
+                employee_id=employee_id,
+                department_id=values.get("department_id", employee.department_id)
+                if "department_id" in values
+                else None,
+                manager_id=values.get("manager_id", employee.manager_id)
+                if "manager_id" in values
+                else None,
+                job_title=values.get("job_title") if "job_title" in values else None,
+                current_department_id=employee.department_id,
+                current_manager_id=employee.manager_id,
+                validate_department="department_id" in values,
+                validate_manager="manager_id" in values,
             )
             if values.get("status") == EmployeeStatus.ACTIVE.value:
                 # Activation must go through invite accept (sets password_hash).
@@ -515,7 +566,7 @@ class EmployeeService:
                 raise ConflictError(
                     "Employee with this telegram_user_id or email already exists"
                 ) from exc
-            return updated
+            return await self.get_employee(employee_id, company_id=company_id)
 
     async def get_by_email(self, email: str) -> Employee | None:
         """Platform lookup for email login — returns None when not found."""
@@ -781,6 +832,44 @@ class EmployeeService:
             raise ValidationError(
                 f"Invalid status {status!r}; expected one of {sorted(_ALLOWED_STATUSES)}"
             )
+
+    @staticmethod
+    async def _validate_org_fields(
+        uow: UnitOfWork,
+        *,
+        company_id: UUID,
+        department_id: UUID | None = None,
+        manager_id: UUID | None = None,
+        job_title: str | None = None,
+        employee_id: UUID | None = None,
+        current_department_id: UUID | None = None,
+        current_manager_id: UUID | None = None,
+        validate_department: bool = True,
+        validate_manager: bool = True,
+    ) -> None:
+        del job_title
+        if validate_department and department_id is not None:
+            await resolve_department_for_assignment(
+                uow,
+                department_id=department_id,
+                company_id=company_id,
+                current_department_id=current_department_id,
+            )
+        if validate_manager and manager_id is not None:
+            if employee_id is not None and manager_id == employee_id:
+                raise ValidationError("Employee cannot be their own manager")
+            await resolve_employee_for_assignment(
+                uow,
+                employee_id=manager_id,
+                company_id=company_id,
+                current_employee_id=current_manager_id,
+            )
+            if employee_id is not None and await manager_assignment_would_cycle(
+                uow,
+                employee_id=employee_id,
+                manager_id=manager_id,
+            ):
+                raise ValidationError("Manager assignment would create a reporting cycle")
 
     @staticmethod
     def _assert_can_assign_role(*, actor_role: str, target_role: str) -> None:

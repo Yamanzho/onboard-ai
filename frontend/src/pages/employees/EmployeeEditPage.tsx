@@ -14,7 +14,8 @@ import {
 } from '../../components/employees/EmployeeBadges'
 import { Button } from '../../components/ui/Button'
 import { useAuth } from '../../hooks/useAuth'
-import { useEmployee, useEmployeeMutations } from '../../hooks/useEmployees'
+import { useDepartments } from '../../hooks/useDepartments'
+import { useEmployee, useEmployeeMutations, useEmployees } from '../../hooks/useEmployees'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
@@ -27,6 +28,8 @@ export function EmployeeEditPage() {
   const paths = useWorkspacePaths()
   const { user } = useAuth()
   const { data: employee, isLoading, error } = useEmployee(employeeId)
+  const { data: departments = [] } = useDepartments()
+  const { data: employees = [] } = useEmployees()
   const { update } = useEmployeeMutations()
   const isAdmin = user?.role === 'admin'
   const inHrMgmt = /\/hr(\/|$)/.test(pathname) && !pathname.includes('/employees')
@@ -39,6 +42,9 @@ export function EmployeeEditPage() {
       const payload: EmployeeUpdate = {
         full_name: values.full_name,
         email: values.email || null,
+        job_title: values.job_title.trim() || null,
+        department_id: values.department_id || null,
+        manager_id: values.manager_id || null,
       }
       if (values.telegram_user_id) {
         payload.telegram_user_id = Number(values.telegram_user_id)
@@ -108,12 +114,18 @@ export function EmployeeEditPage() {
                 : '',
             role: employee.role as EmployeeRole,
             status: employee.status as EmployeeStatus,
+            job_title: employee.job_title ?? '',
+            department_id: employee.department_id ?? '',
+            manager_id: employee.manager_id ?? '',
           }}
           submitLabel={t('employees.saveChanges')}
           pending={update.isPending}
           roleEditable={isAdmin && !inHrMgmt}
           statusEditable={isAdmin}
           allowedRoles={roleOptions}
+          departments={departments}
+          managerCandidates={employees}
+          currentEmployeeId={employee.id}
           onSubmit={onSubmit}
         />
       </div>

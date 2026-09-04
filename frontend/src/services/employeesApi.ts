@@ -13,6 +13,7 @@ export async function listEmployees(
   const search = new URLSearchParams()
   search.set('company_id', params.company_id)
   if (params.status) search.set('status', params.status)
+  if (params.department_id) search.set('department_id', params.department_id)
   if (params.offset !== undefined) search.set('offset', String(params.offset))
   if (params.limit !== undefined) search.set('limit', String(params.limit))
   return apiRequest<Employee[]>(`/api/v1/employees?${search}`)
@@ -41,6 +42,15 @@ export async function createEmployee(payload: EmployeeCreate): Promise<Employee>
   }
   if (payload.hired_at !== undefined) {
     body.hired_at = payload.hired_at
+  }
+  if (payload.department_id !== undefined) {
+    body.department_id = payload.department_id
+  }
+  if (payload.manager_id !== undefined) {
+    body.manager_id = payload.manager_id
+  }
+  if (payload.job_title !== undefined) {
+    body.job_title = payload.job_title
   }
   return apiRequest<Employee>('/api/v1/employees', {
     method: 'POST',

@@ -14,7 +14,10 @@ if TYPE_CHECKING:
     from app.db.models.ai_conversation import AIConversation
     from app.db.models.assignment import Assignment
     from app.db.models.company_subscription import CompanySubscription
+    from app.db.models.department import Department
     from app.db.models.employee import Employee
+    from app.db.models.question_topic import QuestionTopic
+    from app.db.models.topic_responsibility import TopicResponsibility
     from app.db.models.knowledge_article import KnowledgeArticle
     from app.db.models.knowledge_article_link import KnowledgeArticleLink
     from app.db.models.knowledge_category import KnowledgeCategory
@@ -43,6 +46,18 @@ class Company(Base, TimestampMixin):
     contact_person: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     employees: Mapped[list[Employee]] = relationship(
+        back_populates="company",
+        cascade="all, delete-orphan",
+    )
+    departments: Mapped[list[Department]] = relationship(
+        back_populates="company",
+        cascade="all, delete-orphan",
+    )
+    question_topics: Mapped[list[QuestionTopic]] = relationship(
+        back_populates="company",
+        cascade="all, delete-orphan",
+    )
+    topic_responsibilities: Mapped[list[TopicResponsibility]] = relationship(
         back_populates="company",
         cascade="all, delete-orphan",
     )
