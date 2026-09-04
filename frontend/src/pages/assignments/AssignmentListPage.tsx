@@ -21,7 +21,7 @@ import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { labelAssignmentStatus, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as assignmentsApi from '../../services/assignmentsApi'
-import { compareAssignmentsByPriorityDeadline, isAssignmentOverdue } from '../../lib/progressUtils'
+import { assignmentTitle, compareAssignmentsByPriorityDeadline, isAssignmentOverdue } from '../../lib/progressUtils'
 import {
   ASSIGNMENT_STATUSES,
   type Assignment,
@@ -79,7 +79,8 @@ export function AssignmentListPage() {
 
   const programTitle = useMemo(() => {
     const map = new Map(programs.map((p) => [p.id, p.title]))
-    return (id: string) => map.get(id) ?? id.slice(0, 8)
+    return (id: string | null) =>
+      id ? (map.get(id) ?? id.slice(0, 8)) : t('assignments.acknowledgementLabel')
   }, [programs])
 
   const filteredSorted = useMemo(() => {
@@ -89,7 +90,7 @@ export function AssignmentListPage() {
       if (!q) return true
       return (
         employeeName(a.employee_id).toLowerCase().includes(q) ||
-        programTitle(a.program_id).toLowerCase().includes(q) ||
+        assignmentTitle(a, programTitle).toLowerCase().includes(q) ||
         a.status.toLowerCase().includes(q) ||
         a.id.toLowerCase().includes(q)
       )
@@ -104,7 +105,7 @@ export function AssignmentListPage() {
         case 'employee':
           return cmp(employeeName(a.employee_id), employeeName(b.employee_id))
         case 'program':
-          return cmp(programTitle(a.program_id), programTitle(b.program_id))
+          return cmp(assignmentTitle(a, programTitle), assignmentTitle(b, programTitle))
         case 'status':
           return cmp(a.status, b.status)
         case 'priority': {
@@ -136,6 +137,7 @@ export function AssignmentListPage() {
     queries: pageItems.map((assignment) => ({
       queryKey: ['assignment-progress', assignment.id],
       queryFn: () => assignmentsApi.getAssignmentProgress(assignment.id),
+      enabled: assignment.assignment_type !== 'acknowledgement',
     })),
   })
 
@@ -274,7 +276,10 @@ export function AssignmentListPage() {
               <tbody className="divide-y divide-[var(--color-border)]">
                 {pageItems.map((assignment, index) => {
                   const progress = progressQueries[index]
-                  const pct = progress?.data?.percentage
+                  const pct =
+                    assignment.assignment_type === 'acknowledgement'
+                      ? assignment.acknowledgement?.percentage
+                      : progress?.data?.percentage
                   const canCancel =
                     assignment.status === 'pending' ||
                     assignment.status === 'in_progress'
@@ -290,12 +295,16 @@ export function AssignmentListPage() {
                         </Link>
                       </td>
                       <td className="px-4 py-3">
-                        <Link
-                          to={paths.program(assignment.program_id)}
-                          className="hover:text-[var(--color-accent)]"
-                        >
-                          {programTitle(assignment.program_id)}
-                        </Link>
+                        {assignment.program_id ? (
+                          <Link
+                            to={paths.program(assignment.program_id)}
+                            className="hover:text-[var(--color-accent)]"
+                          >
+                            {assignmentTitle(assignment, programTitle)}
+                          </Link>
+                        ) : (
+                          assignmentTitle(assignment, programTitle)
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <AssignmentStatusBadge status={assignment.status} />

@@ -12,7 +12,7 @@ import { usePrograms } from '../../hooks/usePrograms'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { useQueries } from '@tanstack/react-query'
 import { t } from '../../i18n'
-import { isAssignmentOverdue } from '../../lib/progressUtils'
+import { assignmentTitle, isAssignmentOverdue } from '../../lib/progressUtils'
 import * as assignmentsApi from '../../services/assignmentsApi'
 
 function formatDate(value: string | null | undefined) {
@@ -41,6 +41,7 @@ export function EmployeeAssignmentsPanel({
     queries: assignments.map((a) => ({
       queryKey: ['assignment-progress', a.id],
       queryFn: () => assignmentsApi.getAssignmentProgress(a.id),
+      enabled: a.assignment_type !== 'acknowledgement',
     })),
   })
 
@@ -75,12 +76,15 @@ export function EmployeeAssignmentsPanel({
         </thead>
         <tbody className="divide-y divide-[var(--color-border)]">
           {assignments.map((assignment, index) => {
-            const pct = progressQueries[index]?.data?.percentage
+            const pct =
+              assignment.assignment_type === 'acknowledgement'
+                ? assignment.acknowledgement?.percentage
+                : progressQueries[index]?.data?.percentage
             const overdue = isAssignmentOverdue(assignment)
             return (
               <tr key={assignment.id} className={overdue ? 'bg-red-50/40' : undefined}>
                 <td className="px-4 py-3 font-medium">
-                  {programTitle(assignment.program_id)}
+                  {assignmentTitle(assignment, programTitle)}
                 </td>
                 <td className="px-4 py-3">
                   <AssignmentStatusBadge status={assignment.status} />

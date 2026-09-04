@@ -141,6 +141,7 @@ class ReminderService:
                 due_at=assignment.due_at,
                 timezone_name=company.timezone,
                 overdue=assignment.overdue,
+                assignment_type=assignment.assignment_type,
             )
             existing = await uow.telegram_outbound.get_by_source(
                 source_type="assignment_manual_reminder",
@@ -267,6 +268,7 @@ class ReminderService:
             due_at=assignment.due_at,
             timezone_name=company.timezone,
             overdue=assignment.overdue,
+            assignment_type=assignment.assignment_type,
         )
         await self._outbound.enqueue_in_uow(
             uow,
@@ -291,8 +293,7 @@ class ReminderService:
         company = await uow.companies.get_by_id(refreshed.company_id)
         if employee is None or company is None or employee.telegram_chat_id is None:
             return False
-        program = await uow.onboarding_programs.get_by_id(refreshed.program_id)
-        program_title = program.title if program is not None else "курс"
+        program_title = await self._display_title(uow, refreshed)
         preference = await self._ensure_preference(uow, refreshed)
         try:
             settings = parse_notification_settings(company.settings)
@@ -336,6 +337,7 @@ class ReminderService:
             due_at=refreshed.due_at,
             timezone_name=company.timezone,
             overdue=refreshed.overdue,
+            assignment_type=refreshed.assignment_type,
         )
         await self._outbound.enqueue_in_uow(
             uow,
@@ -437,6 +439,16 @@ class ReminderService:
         company = await uow.companies.get_by_id(assignment.company_id)
         if employee is None or company is None:
             raise NotFoundError(f"Assignment {assignment_id} not found")
-        program = await uow.onboarding_programs.get_by_id(assignment.program_id)
-        title = program.title if program is not None else "курс"
+        title = await self._display_title(uow, assignment)
         return assignment, employee, company, title
+
+    async def _display_title(self, uow: UnitOfWork, assignment: Assignment) -> str:
+        if assignment.program_id is not None:
+            program = await uow.onboarding_programs.get_by_id(assignment.program_id)
+            return program.title if program is not None else "курс"
+        items = await uow.assignment_acknowledgement_items.list_by_assignment_id(
+            assignment.id
+        )
+        if items and items[0].article_version is not None:
+            return items[0].article_version.title
+        return "документы"

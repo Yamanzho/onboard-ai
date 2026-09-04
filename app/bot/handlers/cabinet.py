@@ -12,6 +12,7 @@ from aiogram.types import Message
 
 from app.bot.api.client import OnboardApiClient, OnboardApiError
 from app.bot.api.schemas import EmployeeDTO
+from app.bot.handlers.acknowledgement import assignment_label
 from app.bot.keyboards.menu import (
     MENU_ACTIVE,
     MENU_CALENDAR,
@@ -96,21 +97,42 @@ async def active_assignments(
     lines = ["🔥 <b>Активные</b>\n"]
     buttons: list[tuple[UUID, str]] = []
     for assignment in items:
-        try:
-            program = await api.get_program(assignment.program_id)
-            progress = await api.get_progress(assignment.id)
-            title = program.title
-            pct = f"{progress.percentage:.0f}%"
-            current = api.first_incomplete_step(progress)
-            step_title = (
-                current[1].step.title
-                if current and current[1].step is not None
-                else "—"
-            )
-        except OnboardApiError:
-            title = str(assignment.program_id)
-            pct = "—"
-            step_title = "—"
+        if assignment.assignment_type == "acknowledgement":
+            try:
+                listing = await api.list_acknowledgements(assignment.id)
+                title = listing.acknowledgement.title or assignment_label(assignment)
+                pct = f"{listing.acknowledgement.percentage:.0f}%"
+                current = next(
+                    (
+                        item
+                        for item in listing.items
+                        if item.is_required and item.acknowledged_at is None
+                    ),
+                    None,
+                )
+                step_title = current.title if current is not None else "—"
+            except OnboardApiError:
+                title = assignment_label(assignment)
+                pct = "—"
+                step_title = "—"
+        else:
+            try:
+                if assignment.program_id is None:
+                    raise OnboardApiError("missing program", status_code=404)
+                program = await api.get_program(assignment.program_id)
+                progress = await api.get_progress(assignment.id)
+                title = program.title
+                pct = f"{progress.percentage:.0f}%"
+                current = api.first_incomplete_step(progress)
+                step_title = (
+                    current[1].step.title
+                    if current and current[1].step is not None
+                    else "—"
+                )
+            except OnboardApiError:
+                title = str(assignment.program_id or assignment.id)
+                pct = "—"
+                step_title = "—"
 
         buttons.append((assignment.id, title))
         block = (
@@ -156,20 +178,34 @@ async def history_assignments(
         key=lambda a: a.completed_at or a.assigned_at,
         reverse=True,
     ):
-        try:
-            program = await api.get_program(assignment.program_id)
-            progress = await api.get_progress(assignment.id)
-            title = program.title
-            done = sum(
-                1
-                for i in progress.items
-                if i.status in {"completed", "skipped"}
-            )
-            total = len(progress.items)
-            steps = f"{done}/{total} шагов"
-        except OnboardApiError:
-            title = str(assignment.program_id)
-            steps = "—"
+        if assignment.assignment_type == "acknowledgement":
+            try:
+                listing = await api.list_acknowledgements(assignment.id)
+                title = listing.acknowledgement.title or assignment_label(assignment)
+                steps = (
+                    f"{listing.acknowledgement.acknowledged_required_count}/"
+                    f"{listing.acknowledgement.required_documents} документов"
+                )
+            except OnboardApiError:
+                title = assignment_label(assignment)
+                steps = "—"
+        else:
+            try:
+                if assignment.program_id is None:
+                    raise OnboardApiError("missing program", status_code=404)
+                program = await api.get_program(assignment.program_id)
+                progress = await api.get_progress(assignment.id)
+                title = program.title
+                done = sum(
+                    1
+                    for i in progress.items
+                    if i.status in {"completed", "skipped"}
+                )
+                total = len(progress.items)
+                steps = f"{done}/{total} шагов"
+            except OnboardApiError:
+                title = str(assignment.program_id or assignment.id)
+                steps = "—"
 
         lines.append(
             f"<b>{escape(title)}</b>\n"
@@ -217,11 +253,16 @@ async def calendar_view(
     }
 
     for assignment in assignments:
-        try:
-            program = await api.get_program(assignment.program_id)
-            title = program.title
-        except OnboardApiError:
+        if assignment.assignment_type == "acknowledgement":
+            title = assignment_label(assignment)
+        elif assignment.program_id is None:
             title = "Программа"
+        else:
+            try:
+                program = await api.get_program(assignment.program_id)
+                title = program.title
+            except OnboardApiError:
+                title = "Программа"
 
         events: list[tuple[datetime, str]] = []
         if assignment.assigned_at:

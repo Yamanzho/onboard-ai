@@ -7,6 +7,9 @@ from uuid import UUID
 import httpx
 
 from app.bot.api.schemas import (
+    AcknowledgementActionDTO,
+    AcknowledgementDocumentDTO,
+    AcknowledgementListDTO,
     AssignmentDTO,
     AssignmentProgressDTO,
     EmployeeDTO,
@@ -476,6 +479,36 @@ class OnboardApiClient:
     async def get_progress(self, assignment_id: UUID) -> AssignmentProgressDTO:
         payload = await self._get(f"/api/v1/assignments/{assignment_id}/progress")
         return AssignmentProgressDTO.model_validate(payload)
+
+    async def get_assignment(self, assignment_id: UUID) -> AssignmentDTO:
+        payload = await self._get(f"/api/v1/assignments/{assignment_id}")
+        return AssignmentDTO.model_validate(payload)
+
+    async def list_acknowledgements(self, assignment_id: UUID) -> AcknowledgementListDTO:
+        payload = await self._get(
+            f"/api/v1/assignments/{assignment_id}/acknowledgements"
+        )
+        return AcknowledgementListDTO.model_validate(payload)
+
+    async def get_acknowledgement_document(
+        self,
+        assignment_id: UUID,
+        item_id: UUID,
+    ) -> AcknowledgementDocumentDTO:
+        payload = await self._get(
+            f"/api/v1/assignments/{assignment_id}/acknowledgements/{item_id}"
+        )
+        return AcknowledgementDocumentDTO.model_validate(payload)
+
+    async def acknowledge_document(
+        self,
+        assignment_id: UUID,
+        item_id: UUID,
+    ) -> AcknowledgementActionDTO:
+        payload = await self._post(
+            f"/api/v1/assignments/{assignment_id}/acknowledgements/{item_id}/acknowledge"
+        )
+        return AcknowledgementActionDTO.model_validate(payload)
 
     async def post_ai_chat(
         self,

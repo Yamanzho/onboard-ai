@@ -13,6 +13,8 @@ import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
 import { labelStepType, t } from '../../i18n'
 import { compareAssignmentsByPriorityDeadline, isActiveAssignment } from '../../lib/progressUtils'
+import { isAcknowledgementAssignment } from '../../types/assignment'
+import { AcknowledgementPanel } from './AcknowledgementPanel'
 import {
   isStructuredQuizContent,
   parseEmployeeQuizQuestions,
@@ -70,14 +72,15 @@ export function MyOnboardingPage() {
     [assignments],
   )
 
+  const isAck = active ? isAcknowledgementAssignment(active) : false
   const progressQuery = useQuery({
     queryKey: ['assignment-progress', active?.id],
     queryFn: () => assignmentsApi.getAssignmentProgress(active!.id),
-    enabled: Boolean(active?.id),
+    enabled: Boolean(active?.id) && !isAck,
   })
   const programQuery = useQuery({
     queryKey: ['program', active?.program_id],
-    queryFn: () => programsApi.getProgram(active!.program_id),
+    queryFn: () => programsApi.getProgram(active!.program_id!),
     enabled: Boolean(active?.program_id),
   })
 
@@ -102,7 +105,9 @@ export function MyOnboardingPage() {
 
   const progress = progressQuery.data
   const program = programQuery.data
-  const detailLoading = progressQuery.isLoading || programQuery.isLoading
+  const detailLoading = isAck
+    ? false
+    : progressQuery.isLoading || programQuery.isLoading
 
   if (isLoading || (active && detailLoading)) return <LoadingBlock />
   if (error) {
@@ -113,7 +118,7 @@ export function MyOnboardingPage() {
       />
     )
   }
-  if (progressQuery.error || programQuery.error) {
+  if (!isAck && (progressQuery.error || programQuery.error)) {
     return (
       <ErrorAlert
         message={t('common.actionFailed')}
@@ -122,6 +127,20 @@ export function MyOnboardingPage() {
           void programQuery.refetch()
         }}
       />
+    )
+  }
+
+  if (active && isAck) {
+    return (
+      <div>
+        <PageHeader
+          title={t('employeePortal.myOnboardingTitle')}
+          description={t('employeePortal.myOnboardingDescription')}
+        />
+        <div className="max-w-2xl rounded-lg border border-[var(--color-border)] bg-white p-5">
+          <AcknowledgementPanel assignment={active} />
+        </div>
+      </div>
     )
   }
 

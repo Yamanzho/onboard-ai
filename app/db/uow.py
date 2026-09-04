@@ -14,6 +14,9 @@ from app.db.session import async_session_factory
 from app.repositories.ai_conversation import AIConversationRepository
 from app.repositories.ai_message import AIMessageRepository
 from app.repositories.assignment import AssignmentRepository
+from app.repositories.assignment_acknowledgement import (
+    AssignmentAcknowledgementItemRepository,
+)
 from app.repositories.assignment_reminder import AssignmentReminderPreferenceRepository
 from app.repositories.company import CompanyRepository
 from app.repositories.company_audit_log import CompanyAuditLogRepository
@@ -72,6 +75,7 @@ class UnitOfWork:
     onboarding_programs: OnboardingProgramRepository
     steps: StepRepository
     assignments: AssignmentRepository
+    assignment_acknowledgement_items: AssignmentAcknowledgementItemRepository
     assignment_reminders: AssignmentReminderPreferenceRepository
     progress: ProgressRepository
     knowledge_categories: KnowledgeCategoryRepository
@@ -119,6 +123,9 @@ class UnitOfWork:
         self.onboarding_programs = OnboardingProgramRepository(self._session)
         self.steps = StepRepository(self._session)
         self.assignments = AssignmentRepository(self._session)
+        self.assignment_acknowledgement_items = AssignmentAcknowledgementItemRepository(
+            self._session
+        )
         self.assignment_reminders = AssignmentReminderPreferenceRepository(self._session)
         self.progress = ProgressRepository(self._session)
         self.knowledge_categories = KnowledgeCategoryRepository(self._session)

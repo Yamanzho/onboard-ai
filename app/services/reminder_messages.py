@@ -43,8 +43,14 @@ def format_initial_assignment_message(
     due_at: datetime | None,
     timezone_name: str,
     overdue: bool = False,
+    assignment_type: str = "program",
 ) -> str:
-    lines = [f"Вам назначен курс «{escape(program_title)}»."]
+    if assignment_type == "acknowledgement":
+        lines = ["Вам необходимо ознакомиться с документами."]
+        if program_title:
+            lines.append(f"«{escape(program_title)}»")
+    else:
+        lines = [f"Вам назначен курс «{escape(program_title)}»."]
     label = _PRIORITY_LABEL.get(priority)
     if label:
         lines.append(f"Приоритет: {label}.")
@@ -63,9 +69,17 @@ def format_reminder_message(
     due_at: datetime | None,
     timezone_name: str,
     overdue: bool,
+    assignment_type: str = "program",
 ) -> str:
     title = escape(program_title)
-    if priority == AssignmentPriority.CRITICAL.value:
+    if assignment_type == "acknowledgement":
+        if priority == AssignmentPriority.CRITICAL.value:
+            lead = f"Критично: необходимо ознакомиться с документами «{title}»."
+        elif priority == AssignmentPriority.IMPORTANT.value:
+            lead = f"Важно: ознакомление с документами «{title}» ещё не завершено."
+        else:
+            lead = f"Напоминание: необходимо ознакомиться с документами «{title}»."
+    elif priority == AssignmentPriority.CRITICAL.value:
         lead = f"Критично: необходимо завершить «{title}»."
     elif priority == AssignmentPriority.IMPORTANT.value:
         lead = f"Важно: курс «{title}» ещё не завершён."

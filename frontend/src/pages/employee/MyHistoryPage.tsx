@@ -30,7 +30,8 @@ export function MyHistoryPage() {
   const programs = useQueries({
     queries: assignments.map((a) => ({
       queryKey: ['program', a.program_id],
-      queryFn: () => programsApi.getProgram(a.program_id),
+      queryFn: () => programsApi.getProgram(a.program_id!),
+      enabled: Boolean(a.program_id),
     })),
   })
 
@@ -62,7 +63,9 @@ export function MyHistoryPage() {
               className="rounded-lg border border-[var(--color-border)] bg-white p-4 text-sm"
             >
               <p className="font-semibold">
-                {programs[i]?.data?.title ?? a.program_id.slice(0, 8)}
+                {programs[i]?.data?.title ??
+                  a.acknowledgement?.title ??
+                  t('assignments.acknowledgementLabel')}
               </p>
               <p className="mt-1 text-[var(--color-muted)]">
                 {t('employeePortal.completedAt')}: {formatDate(a.completed_at)}

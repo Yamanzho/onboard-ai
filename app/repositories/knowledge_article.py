@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import Select, cast, exists, func, literal, or_, select
@@ -34,6 +35,18 @@ class KnowledgeArticleRepository(BaseRepository[KnowledgeArticle]):
         )
         result = await self._session.scalars(stmt)
         return result.first()
+
+    async def list_by_ids(self, article_ids: Sequence[UUID]) -> list[KnowledgeArticle]:
+        self._ensure_rls_context()
+        if not article_ids:
+            return []
+        stmt = (
+            select(KnowledgeArticle)
+            .where(KnowledgeArticle.id.in_(list(article_ids)))
+            .options(selectinload(KnowledgeArticle.current_version))
+        )
+        result = await self._session.scalars(stmt)
+        return list(result.unique().all())
 
     async def list_by_company_id(
         self,

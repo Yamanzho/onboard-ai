@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, Response, status
 from app.api.auth_deps import (
     EmployeeUser,
     HRUser,
+    assert_can_complete_assignment_progress,
     assert_can_list_employee_assignments,
     assert_can_mutate_own_assignment_reminders,
     assert_can_view_assignment_progress,
@@ -15,6 +16,9 @@ from app.api.deps import get_assignment_service, get_progress_service, get_remin
 from app.api.v1.responses import ERROR_RESPONSES
 from app.db.enums import EmployeeRole
 from app.schemas.assignment import (
+    AcknowledgementActionResponse,
+    AcknowledgementDocumentView,
+    AcknowledgementItemListResponse,
     AssignmentBulkCreateResponse,
     AssignmentCreate,
     AssignmentResponse,
@@ -29,6 +33,10 @@ from app.schemas.reminder import (
     AssignmentNotificationsResponse,
     ReminderPreferenceResponse,
     RemindNowResponse,
+)
+from app.services.acknowledgement import (
+    acknowledgement_item_response,
+    acknowledgement_summary,
 )
 from app.services.assessment import public_progress_payload
 from app.services.assignment import AssignmentService
@@ -57,6 +65,27 @@ _PROGRESS_AUTH_RESPONSES = {
         ),
     },
 }
+
+def _assignment_response(assignment, summary=None) -> AssignmentResponse:
+    payload = AssignmentResponse.model_validate(assignment)
+    if summary is not None:
+        return payload.model_copy(update={"acknowledgement": summary})
+    return payload
+
+
+async def _responses_with_summaries(
+    assignments: list,
+    service: AssignmentService,
+    company_id,
+) -> list[AssignmentResponse]:
+    summaries = await service.acknowledgement_summaries(
+        assignments, company_id=company_id
+    )
+    return [
+        _assignment_response(item, summaries.get(item.id))
+        for item in assignments
+    ]
+
 
 _ASSIGNMENT_LIST_AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"},
@@ -98,8 +127,14 @@ async def create_assignment(
     current_user: HRUser,
     service: AssignmentServiceDep,
 ) -> AssignmentResponse | AssignmentBulkCreateResponse:
-    if payload.is_legacy_single:
-        assert payload.employee_id is not None
+    employee_ids = list(payload.employee_ids)
+    if payload.employee_id is not None:
+        employee_ids.append(payload.employee_id)
+    if (
+        payload.is_legacy_single
+        and payload.assignment_type == "program"
+        and payload.program_id is not None
+    ):
         assignment = await service.assign_employee(
             employee_id=payload.employee_id,
             program_id=payload.program_id,
@@ -109,14 +144,16 @@ async def create_assignment(
             priority=payload.priority,
             actor_employee_id=current_user.id,
         )
-        return AssignmentResponse.model_validate(assignment)
+        summaries = await service.acknowledgement_summaries(
+            [assignment], company_id=current_user.company_id
+        )
+        return _assignment_response(assignment, summaries.get(assignment.id))
 
-    employee_ids = list(payload.employee_ids)
-    if payload.employee_id is not None:
-        employee_ids.append(payload.employee_id)
     created = await service.create_many(
         company_id=current_user.company_id,
         program_id=payload.program_id,
+        assignment_type=payload.assignment_type,
+        documents=payload.documents,
         employee_ids=employee_ids,
         department_ids=payload.department_ids,
         assigned_by_id=payload.assigned_by_id,
@@ -126,7 +163,11 @@ async def create_assignment(
         actor_employee_id=current_user.id,
         stamp_batch=True,
     )
-    items = [AssignmentResponse.model_validate(item) for item in created]
+    items = await _responses_with_summaries(
+        created, service, current_user.company_id
+    )
+    if payload.is_legacy_single:
+        return items[0]
     return AssignmentBulkCreateResponse(
         items=items,
         source_batch_id=created[0].source_batch_id if created else None,
@@ -177,16 +218,18 @@ async def list_assignments(
         status=status_filter,
         employee_id=employee_id,
     )
-    return [AssignmentResponse.model_validate(item) for item in assignments]
+    return await _responses_with_summaries(
+        assignments, service, current_user.company_id
+    )
 
 
 @router.get(
     "/assignments/{assignment_id}",
     response_model=AssignmentResponse,
     summary="Get assignment by ID",
-    description="Get an assignment within the caller's company.",
+    description="Get an assignment within the caller's company. Employees may view only their own.",
     responses={
-        **_HR_AUTH_RESPONSES,
+        **_ASSIGNMENT_LIST_AUTH_RESPONSES,
         status.HTTP_404_NOT_FOUND: ERROR_RESPONSES[status.HTTP_404_NOT_FOUND],
         status.HTTP_422_UNPROCESSABLE_CONTENT: ERROR_RESPONSES[
             status.HTTP_422_UNPROCESSABLE_CONTENT
@@ -198,14 +241,18 @@ async def list_assignments(
 )
 async def get_assignment(
     assignment_id: UUID,
-    current_user: HRUser,
+    current_user: EmployeeUser,
     service: AssignmentServiceDep,
 ) -> AssignmentResponse:
     assignment = await service.get_assignment(
         assignment_id,
         company_id=current_user.company_id,
     )
-    return AssignmentResponse.model_validate(assignment)
+    assert_can_view_assignment_progress(current_user, assignment)
+    summaries = await service.acknowledgement_summaries(
+        [assignment], company_id=current_user.company_id
+    )
+    return _assignment_response(assignment, summaries.get(assignment.id))
 
 
 @router.get(
@@ -251,7 +298,9 @@ async def list_employee_assignments(
         limit=limit,
         status=status_filter,
     )
-    return [AssignmentResponse.model_validate(item) for item in assignments]
+    return await _responses_with_summaries(
+        assignments, service, current_user.company_id
+    )
 
 
 @router.delete(
@@ -282,6 +331,97 @@ async def cancel_assignment(
         actor_employee_id=current_user.id,
     )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/assignments/{assignment_id}/acknowledgements",
+    response_model=AcknowledgementItemListResponse,
+    summary="List acknowledgement documents",
+    description=(
+        "Item metadata for an acknowledgement assignment. "
+        "Viewing marks pending as in_progress for the owner."
+    ),
+)
+async def list_acknowledgement_items(
+    assignment_id: UUID,
+    current_user: EmployeeUser,
+    service: AssignmentServiceDep,
+) -> AcknowledgementItemListResponse:
+    assignment, items = await service.list_acknowledgement_items(
+        assignment_id,
+        company_id=current_user.company_id,
+        actor_employee_id=current_user.id,
+        mark_opened=True,
+    )
+    assert_can_view_assignment_progress(current_user, assignment)
+    summary = acknowledgement_summary(items)
+    return AcknowledgementItemListResponse(
+        items=[acknowledgement_item_response(item) for item in items],
+        assignment_id=assignment.id,
+        assignment_status=assignment.status,
+        acknowledgement=summary,
+    )
+
+
+@router.get(
+    "/assignments/{assignment_id}/acknowledgements/{item_id}",
+    response_model=AcknowledgementDocumentView,
+    summary="View assigned document version",
+    description=(
+        "Returns the exact frozen KnowledgeArticleVersion for this item. "
+        "Opening does not acknowledge."
+    ),
+)
+async def get_acknowledgement_document(
+    assignment_id: UUID,
+    item_id: UUID,
+    current_user: EmployeeUser,
+    service: AssignmentServiceDep,
+) -> AcknowledgementDocumentView:
+    assignment, item, version = await service.get_acknowledgement_document(
+        assignment_id,
+        item_id,
+        company_id=current_user.company_id,
+        actor_employee_id=current_user.id,
+        mark_opened=True,
+    )
+    assert_can_view_assignment_progress(current_user, assignment)
+    item.article_version = version
+    return AcknowledgementDocumentView(
+        item=acknowledgement_item_response(item),
+        body=version.body,
+        assignment_status=assignment.status,
+    )
+
+
+@router.post(
+    "/assignments/{assignment_id}/acknowledgements/{item_id}/acknowledge",
+    response_model=AcknowledgementActionResponse,
+    summary="Acknowledge a document",
+    description="Employee explicitly confirms they have read the assigned version. Idempotent.",
+)
+async def acknowledge_document(
+    assignment_id: UUID,
+    item_id: UUID,
+    current_user: EmployeeUser,
+    service: AssignmentServiceDep,
+) -> AcknowledgementActionResponse:
+    assignment = await service.get_assignment(
+        assignment_id,
+        company_id=current_user.company_id,
+    )
+    assert_can_complete_assignment_progress(current_user, assignment)
+    assignment, item, items = await service.acknowledge_item(
+        assignment_id,
+        item_id,
+        company_id=current_user.company_id,
+        employee_id=current_user.id,
+    )
+    return AcknowledgementActionResponse(
+        item=acknowledgement_item_response(item),
+        assignment_status=assignment.status,
+        acknowledgement=acknowledgement_summary(items),
+    )
 
 
 @router.get(

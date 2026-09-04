@@ -12,6 +12,7 @@ import { Badge } from '../../components/ui/Badge'
 import { Button } from '../../components/ui/Button'
 import {
   useAssignment,
+  useAssignmentAcknowledgements,
   useAssignmentMutations,
   useAssignmentNotifications,
   useAssignmentProgress,
@@ -19,9 +20,10 @@ import {
 import { useEmployee } from '../../hooks/useEmployees'
 import { useProgram } from '../../hooks/usePrograms'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
-import { labelProgressStatus, labelReminderMode, labelNotificationKind, labelOutboundStatus, labelStepType, t } from '../../i18n'
+import { labelAssignmentType, labelProgressStatus, labelReminderMode, labelNotificationKind, labelOutboundStatus, labelStepType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
-import { isAssignmentOverdue } from '../../lib/progressUtils'
+import { assignmentTitle, isAssignmentOverdue } from '../../lib/progressUtils'
+import { isAcknowledgementAssignment } from '../../types/assignment'
 import { parseQuizAttemptSummary, quizScoreLabel } from '../../lib/quizUtils'
 
 function formatDate(value: string | null | undefined) {
@@ -44,12 +46,15 @@ export function AssignmentDetailPage() {
   const { assignmentId } = useParams<{ assignmentId: string }>()
   const paths = useWorkspacePaths()
   const { data: assignment, isLoading, error } = useAssignment(assignmentId)
+  const isAck = assignment ? isAcknowledgementAssignment(assignment) : false
   const { data: progress, isLoading: progressLoading } =
-    useAssignmentProgress(assignmentId)
+    useAssignmentProgress(isAck ? undefined : assignmentId)
+  const { data: acknowledgements, isLoading: acknowledgementsLoading } =
+    useAssignmentAcknowledgements(isAck ? assignmentId : undefined)
   const { data: notifications, isLoading: notificationsLoading } =
     useAssignmentNotifications(assignmentId)
   const { data: employee } = useEmployee(assignment?.employee_id)
-  const { data: program } = useProgram(assignment?.program_id)
+  const { data: program } = useProgram(assignment?.program_id ?? undefined)
   const { data: assigner } = useEmployee(assignment?.assigned_by_id ?? undefined)
   const { cancel, remindNow } = useAssignmentMutations()
   const [actionError, setActionError] = useState<string | null>(null)
@@ -114,25 +119,50 @@ export function AssignmentDetailPage() {
       ),
     },
     {
+      label: t('assignments.assignmentType'),
+      value: labelAssignmentType(assignment.assignment_type ?? 'program'),
+    },
+    {
       label: t('assignments.program'),
-      value: (
+      value: isAck ? (
+        assignment.acknowledgement?.title ?? t('assignments.acknowledgementLabel')
+      ) : assignment.program_id ? (
         <Link
           to={paths.program(assignment.program_id)}
           className="text-[var(--color-accent)] hover:underline"
         >
           {program?.title ?? assignment.program_id}
         </Link>
+      ) : (
+        t('common.emDash')
       ),
     },
-    {
-      label: t('assignments.programRevision'),
-      value: `v${assignment.program_revision ?? program?.revision ?? 1}`,
-    },
+    ...(isAck
+      ? []
+      : [
+          {
+            label: t('assignments.programRevision'),
+            value: `v${assignment.program_revision ?? program?.revision ?? 1}`,
+          },
+        ]),
     {
       label: t('assignments.progress'),
-      value: progressLoading
-        ? '…'
-        : `${progress?.percentage ?? 0}%`,
+      value: isAck
+        ? acknowledgementsLoading
+          ? '…'
+          : t('assignments.documentsSummary', {
+              acked:
+                acknowledgements?.acknowledgement.acknowledged_required_count ??
+                assignment.acknowledgement?.acknowledged_required_count ??
+                0,
+              required:
+                acknowledgements?.acknowledgement.required_documents ??
+                assignment.acknowledgement?.required_documents ??
+                0,
+            })
+        : progressLoading
+          ? '…'
+          : `${progress?.percentage ?? 0}%`,
     },
     {
       label: t('assignments.assignedBy'),
@@ -165,7 +195,10 @@ export function AssignmentDetailPage() {
   return (
     <div>
       <PageHeader
-        title={program?.title ?? t('assignments.title')}
+        title={
+          assignmentTitle(assignment, (id) => program?.title ?? id) ??
+          t('assignments.title')
+        }
         description={t('assignments.detailDescription')}
         action={
           <div className="flex flex-wrap gap-2">
@@ -240,6 +273,59 @@ export function AssignmentDetailPage() {
         </dl>
       </div>
 
+      {isAck ? (
+      <div>
+        <h2 className="mb-3 text-lg font-semibold">{t('assignments.documents')}</h2>
+        {acknowledgementsLoading ? (
+          <LoadingBlock label={t('assignments.loadingProgress')} />
+        ) : !acknowledgements || acknowledgements.items.length === 0 ? (
+          <EmptyState
+            title={t('assignments.emptyProgressTitle')}
+            description={t('assignments.emptyProgressDescription')}
+          />
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">
+            <table className="min-w-full text-left text-sm">
+              <thead className="bg-slate-50 text-xs uppercase text-[var(--color-muted)]">
+                <tr>
+                  <th className="px-4 py-3">{t('programs.steps.colNumber')}</th>
+                  <th className="px-4 py-3">{t('assignments.documents')}</th>
+                  <th className="px-4 py-3">{t('assignments.colVersion')}</th>
+                  <th className="px-4 py-3">{t('common.status')}</th>
+                  <th className="px-4 py-3">{t('assignments.colAcknowledged')}</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--color-border)]">
+                {acknowledgements.items.map((item) => (
+                  <tr key={item.id}>
+                    <td className="px-4 py-3 text-[var(--color-muted)]">{item.position}</td>
+                    <td className="px-4 py-3 font-medium">
+                      {item.title}
+                      <span className="ml-2 text-xs text-[var(--color-muted)]">
+                        {item.is_required
+                          ? t('assignments.documentRequired')
+                          : t('assignments.documentOptional')}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">v{item.version}</td>
+                    <td className="px-4 py-3">
+                      <Badge tone={item.acknowledged_at ? 'success' : 'neutral'}>
+                        {item.acknowledged_at
+                          ? t('assignments.acknowledgedYes')
+                          : t('assignments.acknowledgedNo')}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-[var(--color-muted)]">
+                      {formatDate(item.acknowledged_at)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      ) : (
       <div>
         <h2 className="mb-3 text-lg font-semibold">{t('assignments.steps')}</h2>
         {progressLoading ? (
@@ -336,6 +422,7 @@ export function AssignmentDetailPage() {
           </div>
         )}
       </div>
+      )}
 
       <div className="mt-8">
         <h2 className="mb-3 text-lg font-semibold">

@@ -7,6 +7,8 @@ COMPLETE_CALLBACK_PREFIX = "progress:complete:"
 BLOCK_NEXT_PREFIX = "pnext:"
 BLOCK_READ_PREFIX = "pread:"
 ASSIGN_OPEN_PREFIX = "aopen:"
+ACK_VIEW_PREFIX = "ackv:"
+ACK_CONFIRM_PREFIX = "acky:"
 REMIND_ACK_PREFIX = "rack:"
 REMIND_REDUCE_PREFIX = "rred:"
 REMIND_DISABLE_PREFIX = "rdis:"
@@ -170,6 +172,40 @@ def content_block_keyboard(
                 InlineKeyboardButton(
                     text="Далее",
                     callback_data=f"{BLOCK_NEXT_PREFIX}{progress_id}:{block_index}",
+                )
+            ]
+        ]
+    )
+
+
+def parse_ack_view_callback(data: str) -> UUID | None:
+    return _parse_uuid_prefix(data, ACK_VIEW_PREFIX)
+
+
+def parse_ack_confirm_callback(data: str) -> UUID | None:
+    return _parse_uuid_prefix(data, ACK_CONFIRM_PREFIX)
+
+
+def acknowledgement_open_keyboard(item_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Открыть документ",
+                    callback_data=f"{ACK_VIEW_PREFIX}{item_id}",
+                )
+            ]
+        ]
+    )
+
+
+def acknowledgement_confirm_keyboard(item_id: UUID) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Я ознакомился",
+                    callback_data=f"{ACK_CONFIRM_PREFIX}{item_id}",
                 )
             ]
         ]

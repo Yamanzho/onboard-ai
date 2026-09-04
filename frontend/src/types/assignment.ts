@@ -5,12 +5,29 @@ export type AssignmentStatus =
   | 'cancelled'
 
 export type AssignmentPriority = 'normal' | 'important' | 'critical'
+export type AssignmentType = 'program' | 'acknowledgement'
+
+export interface AcknowledgementSummary {
+  total_documents: number
+  required_documents: number
+  acknowledged_required_count: number
+  completed: boolean
+  title?: string | null
+  percentage?: number
+}
+
+export interface AcknowledgementDocumentInput {
+  article_id: string
+  position: number
+  is_required: boolean
+}
 
 export interface Assignment {
   id: string
   company_id: string
   employee_id: string
-  program_id: string
+  assignment_type?: AssignmentType | string
+  program_id: string | null
   assigned_by_id: string | null
   status: AssignmentStatus | string
   priority?: AssignmentPriority | string
@@ -25,17 +42,52 @@ export interface Assignment {
   completed_at: string | null
   created_at: string
   updated_at: string
+  acknowledgement?: AcknowledgementSummary | null
 }
 
 export interface AssignmentCreate {
+  assignment_type?: AssignmentType | string
   employee_id?: string
   employee_ids?: string[]
   department_ids?: string[]
-  program_id: string
+  program_id?: string | null
+  documents?: AcknowledgementDocumentInput[]
   assigned_by_id?: string | null
   due_at?: string | null
   priority?: AssignmentPriority | string
   deadline_overrides?: Record<string, string>
+}
+
+export interface AcknowledgementItem {
+  id: string
+  assignment_id: string
+  article_id: string
+  article_version_id: string
+  position: number
+  is_required: boolean
+  acknowledged_at: string | null
+  title: string
+  version: number
+  body_format: string
+}
+
+export interface AcknowledgementItemList {
+  items: AcknowledgementItem[]
+  assignment_id: string
+  assignment_status: string
+  acknowledgement: AcknowledgementSummary
+}
+
+export interface AcknowledgementDocumentView {
+  item: AcknowledgementItem
+  body: string
+  assignment_status: string
+}
+
+export interface AcknowledgementAction {
+  item: AcknowledgementItem
+  assignment_status: string
+  acknowledgement: AcknowledgementSummary
 }
 
 export interface AssignmentBulkCreateResult {
@@ -93,6 +145,12 @@ export const ASSIGNMENT_PRIORITIES: AssignmentPriority[] = [
   'important',
   'normal',
 ]
+
+export const ASSIGNMENT_TYPES: AssignmentType[] = ['program', 'acknowledgement']
+
+export function isAcknowledgementAssignment(assignment: Assignment): boolean {
+  return assignment.assignment_type === 'acknowledgement'
+}
 
 export type ReminderMode = 'default' | 'reduced' | 'disabled'
 export type AssignmentOutboundKind =

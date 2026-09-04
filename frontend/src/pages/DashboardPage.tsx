@@ -26,6 +26,7 @@ import {
   isActiveAssignment,
   isAssignmentOverdue,
   lastActivityAt,
+  assignmentTitle,
   compareAssignmentsByPriorityDeadline,
 } from '../lib/progressUtils'
 import { ApiError } from '../services/apiClient'
@@ -33,6 +34,7 @@ import * as assignmentsApi from '../services/assignmentsApi'
 import * as programsApi from '../services/programsApi'
 import {
   ASSIGNMENT_STATUSES,
+  isAcknowledgementAssignment,
   type Assignment,
 } from '../types/assignment'
 import type { Step } from '../types/step'
@@ -97,11 +99,13 @@ export function DashboardPage() {
     const map = new Map(programs.map((p) => [p.id, p.title]))
     return (id: string) => map.get(id) ?? id.slice(0, 8)
   }, [programs])
+  const titleOf = (assignment: Assignment) => assignmentTitle(assignment, programTitle)
 
   const progressQueries = useQueries({
     queries: assignments.map((assignment) => ({
       queryKey: ['assignment-progress', assignment.id],
       queryFn: () => assignmentsApi.getAssignmentProgress(assignment.id),
+      enabled: !isAcknowledgementAssignment(assignment),
     })),
   })
 
@@ -114,7 +118,7 @@ export function DashboardPage() {
   }, [assignments, progressQueries])
 
   const programIds = useMemo(
-    () => [...new Set(assignments.map((a) => a.program_id))],
+    () => [...new Set(assignments.map((a) => a.program_id).filter((id): id is string => Boolean(id)))],
     [assignments],
   )
 
@@ -141,7 +145,11 @@ export function DashboardPage() {
     const avg = averageProgress(
       assignments
         .filter((a) => a.status !== 'cancelled')
-        .map((a) => progressByAssignmentId.get(a.id)),
+        .map((a) =>
+          isAcknowledgementAssignment(a)
+            ? { percentage: a.acknowledgement?.percentage ?? 0, items: [] }
+            : progressByAssignmentId.get(a.id),
+        ),
     )
     return {
       employees: employees.length,
@@ -162,7 +170,7 @@ export function DashboardPage() {
       if (!q) return true
       return (
         employeeName(a.employee_id).toLowerCase().includes(q) ||
-        programTitle(a.program_id).toLowerCase().includes(q) ||
+        titleOf(a).toLowerCase().includes(q) ||
         a.status.toLowerCase().includes(q) ||
         a.id.toLowerCase().includes(q)
       )
@@ -178,7 +186,7 @@ export function DashboardPage() {
         case 'employee':
           return cmpStr(employeeName(a.employee_id), employeeName(b.employee_id))
         case 'program':
-          return cmpStr(programTitle(a.program_id), programTitle(b.program_id))
+          return cmpStr(titleOf(a), titleOf(b))
         case 'status':
           return cmpStr(a.status, b.status)
         case 'priority': {
@@ -456,7 +464,12 @@ export function DashboardPage() {
                   <tbody className="divide-y divide-[var(--color-border)]">
                     {pageItems.map((assignment) => {
                       const progress = progressByAssignmentId.get(assignment.id)
-                      const steps = stepsByProgramId.get(assignment.program_id) ?? []
+                      const steps = assignment.program_id
+                        ? stepsByProgramId.get(assignment.program_id) ?? []
+                        : []
+                      const progressPct = isAcknowledgementAssignment(assignment)
+                        ? assignment.acknowledgement?.percentage
+                        : progress?.percentage
                       const overdue = isAssignmentOverdue(assignment)
                       const canCancel = isActiveAssignment(assignment)
                       return (
@@ -474,19 +487,23 @@ export function DashboardPage() {
                           </td>
                           <td className="px-4 py-3">
                             <Link
-                              to={paths.program(assignment.program_id)}
+                              to={
+                                assignment.program_id
+                                  ? paths.program(assignment.program_id)
+                                  : paths.assignment(assignment.id)
+                              }
                               className="hover:text-[var(--color-accent)]"
                             >
-                              {programTitle(assignment.program_id)}
+                              {titleOf(assignment)}
                             </Link>
                           </td>
                           <td className="px-4 py-3 text-[var(--color-muted)]">
-                            {currentStepTitle(progress, steps)}
+                            {isAcknowledgementAssignment(assignment)
+                              ? t('assignments.acknowledgementLabel')
+                              : currentStepTitle(progress, steps)}
                           </td>
                           <td className="px-4 py-3 text-[var(--color-muted)]">
-                            {progress?.percentage != null
-                              ? `${progress.percentage}%`
-                              : '…'}
+                            {progressPct != null ? `${progressPct}%` : '…'}
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex flex-wrap items-center gap-2">

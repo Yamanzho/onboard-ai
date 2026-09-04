@@ -15,7 +15,7 @@ import { useEmployees } from '../../hooks/useEmployees'
 import { usePrograms } from '../../hooks/usePrograms'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
-import { isActiveAssignment } from '../../lib/progressUtils'
+import { assignmentTitle, isActiveAssignment } from '../../lib/progressUtils'
 
 function StatCard({ label, value }: { label: string; value: string }) {
   return (
@@ -100,6 +100,8 @@ export function HrDashboardPage() {
     const map = new Map(programs.map((p) => [p.id, p.title]))
     return (id: string) => map.get(id) ?? id.slice(0, 8)
   }, [programs])
+  const titleOf = (assignment: (typeof assignments)[number]) =>
+    assignmentTitle(assignment, programTitle)
 
   const loading =
     employeesLoading || programsLoading || assignmentsLoading || analyticsLoading
@@ -272,7 +274,7 @@ export function HrDashboardPage() {
                         to={paths.assignment(a.id)}
                         className="truncate hover:text-[var(--color-accent)]"
                       >
-                        {employeeName(a.employee_id)} · {programTitle(a.program_id)}
+                        {employeeName(a.employee_id)} · {titleOf(a)}
                       </Link>
                       <AssignmentStatusBadge status={a.status} />
                     </li>
@@ -303,7 +305,7 @@ export function HrDashboardPage() {
                         to={paths.assignment(a.id)}
                         className="truncate hover:text-[var(--color-accent)]"
                       >
-                        {employeeName(a.employee_id)} · {programTitle(a.program_id)}
+                        {employeeName(a.employee_id)} · {titleOf(a)}
                       </Link>
                       <AssignmentStatusBadge status={a.status} />
                     </li>

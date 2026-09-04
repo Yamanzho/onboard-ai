@@ -12,6 +12,7 @@ import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
 import { isActiveAssignment, isAssignmentOverdue } from '../../lib/progressUtils'
+import { isAcknowledgementAssignment } from '../../types/assignment'
 import * as assignmentsApi from '../../services/assignmentsApi'
 import * as programsApi from '../../services/programsApi'
 import type { AssignmentProgress } from '../../types/assignment'
@@ -41,12 +42,14 @@ export function MyActivePage() {
     queries: active.map((a) => ({
       queryKey: ['assignment-progress', a.id],
       queryFn: () => assignmentsApi.getAssignmentProgress(a.id),
+      enabled: !isAcknowledgementAssignment(a),
     })),
   })
   const programQueries = useQueries({
     queries: active.map((a) => ({
       queryKey: ['program', a.program_id],
-      queryFn: () => programsApi.getProgram(a.program_id),
+      queryFn: () => programsApi.getProgram(a.program_id!),
+      enabled: Boolean(a.program_id),
     })),
   })
 
@@ -89,7 +92,9 @@ export function MyActivePage() {
                 className="rounded-lg border border-[var(--color-border)] bg-white p-4 text-sm"
               >
                 <p className="font-semibold">
-                  {program?.title ?? a.program_id.slice(0, 8)}
+                  {program?.title ??
+                    a.acknowledgement?.title ??
+                    t('assignments.acknowledgementLabel')}
                 </p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <AssignmentPriorityBadge priority={a.priority} />
@@ -101,7 +106,11 @@ export function MyActivePage() {
                 </div>
                 <p className="mt-1 text-[var(--color-muted)]">
                   {t('employeePortal.progress')}:{' '}
-                  {progress?.percentage != null ? `${progress.percentage}%` : '…'}
+                  {isAcknowledgementAssignment(a)
+                    ? `${a.acknowledgement?.percentage ?? 0}%`
+                    : progress?.percentage != null
+                      ? `${progress.percentage}%`
+                      : '…'}
                 </p>
                 <p className="text-[var(--color-muted)]">
                   {t('employeePortal.started')}:{' '}

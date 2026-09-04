@@ -1,6 +1,7 @@
 from app.db.models.ai_conversation import AIConversation
 from app.db.models.ai_message import AIMessage
 from app.db.models.assignment import Assignment
+from app.db.models.assignment_acknowledgement_item import AssignmentAcknowledgementItem
 from app.db.models.assignment_reminder_preference import AssignmentReminderPreference
 from app.db.models.company import Company
 from app.db.models.company_audit_log import CompanyAuditLog
@@ -31,6 +32,7 @@ __all__ = [
     "AIConversation",
     "AIMessage",
     "Assignment",
+    "AssignmentAcknowledgementItem",
     "AssignmentReminderPreference",
     "Company",
     "CompanyAuditLog",

@@ -7,6 +7,11 @@ from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
 
 from app.bot.api.client import OnboardApiClient, OnboardApiError
 from app.bot.api.schemas import ProgressItemDTO, ProgressStepDTO
+from app.bot.handlers.acknowledgement import (
+    assignment_label,
+    show_acknowledgement_assignment,
+    show_acknowledgement_document,
+)
 from app.bot.handlers.step_content import format_block_message, format_step_message
 from app.bot.keyboards.menu import (
     MENU_ACTIVE,
@@ -17,6 +22,8 @@ from app.bot.keyboards.menu import (
     MENU_PROFILE,
 )
 from app.bot.keyboards.onboarding import (
+    ACK_CONFIRM_PREFIX,
+    ACK_VIEW_PREFIX,
     ASSIGN_OPEN_PREFIX,
     BLOCK_NEXT_PREFIX,
     BLOCK_READ_PREFIX,
@@ -27,6 +34,8 @@ from app.bot.keyboards.onboarding import (
     assignment_open_keyboard,
     complete_step_keyboard,
     content_block_keyboard,
+    parse_ack_confirm_callback,
+    parse_ack_view_callback,
     parse_assign_open_callback,
     parse_block_next_callback,
     parse_block_read_callback,
@@ -359,11 +368,13 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
     if len(assignments) > 1:
         buttons: list[tuple[UUID, str]] = []
         for assignment in assignments:
-            try:
-                program = await api.get_program(assignment.program_id)
-                title = program.title
-            except OnboardApiError:
-                title = "Курс"
+            title = assignment_label(assignment)
+            if assignment.assignment_type != "acknowledgement" and assignment.program_id:
+                try:
+                    program = await api.get_program(assignment.program_id)
+                    title = program.title
+                except OnboardApiError:
+                    title = "Курс"
             buttons.append((assignment.id, title))
         await message.answer(
             "У вас несколько активных курсов. Выберите, какой открыть:",
@@ -372,8 +383,25 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
         return
 
     assignment = assignments[0]
+    if assignment.assignment_type == "acknowledgement":
+        try:
+            await show_acknowledgement_assignment(
+                message=message,
+                api=api,
+                state=state,
+                assignment_id=assignment.id,
+            )
+        except OnboardApiError:
+            await message.answer("Не удалось загрузить документы. Попробуйте позже.")
+        return
+
+    program_id = assignment.program_id
+    if program_id is None:
+        await message.answer("Не удалось загрузить назначение. Попробуйте позже.")
+        return
+
     try:
-        program = await api.get_program(assignment.program_id)
+        program = await api.get_program(program_id)
         progress = await api.get_progress(assignment.id)
         done = sum(1 for i in progress.items if i.status in _DONE_STATUSES)
         total = len(progress.items)
@@ -398,7 +426,7 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
             api=api,
             state=state,
             assignment_id=assignment.id,
-            program_id=assignment.program_id,
+            program_id=program_id,
         )
     except OnboardApiError:
         await message.answer("Не удалось загрузить прогресс. Попробуйте позже.")
@@ -592,17 +620,39 @@ async def open_assignment_callback(
         )
         return
     try:
-        listing = await api.get_progress(assignment_id)
+        assignment = await api.get_assignment(assignment_id)
     except OnboardApiError as exc:
         await callback.answer(_friendly_learning_error(exc), show_alert=True)
         return
-    if listing.assignment_status == "completed":
+    if assignment.status == "completed":
         await callback.answer()
-        await callback.message.edit_text("Курс уже завершён.")
+        await callback.message.edit_text(
+            "Ознакомление завершено."
+            if assignment.assignment_type == "acknowledgement"
+            else "Курс уже завершён."
+        )
         return
-    if listing.assignment_status == "cancelled":
+    if assignment.status == "cancelled":
         await callback.answer()
         await callback.message.edit_text("Это назначение отменено.")
+        return
+    if assignment.assignment_type == "acknowledgement":
+        await callback.answer()
+        try:
+            await show_acknowledgement_assignment(
+                message=callback.message,
+                api=api,
+                state=state,
+                assignment_id=assignment_id,
+                edit=True,
+            )
+        except OnboardApiError as exc:
+            await callback.message.edit_text(_friendly_learning_error(exc))
+        return
+    try:
+        listing = await api.get_progress(assignment_id)
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_learning_error(exc), show_alert=True)
         return
     if listing.program_id is None:
         await callback.answer("Не удалось открыть курс", show_alert=True)
@@ -616,6 +666,113 @@ async def open_assignment_callback(
         program_id=listing.program_id,
         edit=True,
     )
+
+
+@router.callback_query(F.data.startswith(ACK_VIEW_PREFIX))
+async def acknowledgement_view_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    state: FSMContext,
+) -> None:
+    if callback.message is None or callback.data is None:
+        await callback.answer()
+        return
+    item_id = parse_ack_view_callback(callback.data)
+    if item_id is None:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    if callback.from_user is None or not await api.ensure_session(callback.from_user.id):
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    data = await state.get_data()
+    assignment_id_raw = data.get("assignment_id")
+    if assignment_id_raw is None:
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    try:
+        await show_acknowledgement_document(
+            message=callback.message,
+            api=api,
+            assignment_id=UUID(str(assignment_id_raw)),
+            item_id=item_id,
+            edit=True,
+        )
+        await callback.answer()
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_ack_error(exc), show_alert=True)
+
+
+@router.callback_query(F.data.startswith(ACK_CONFIRM_PREFIX))
+async def acknowledgement_confirm_callback(
+    callback: CallbackQuery,
+    api: OnboardApiClient,
+    state: FSMContext,
+) -> None:
+    if callback.message is None or callback.data is None:
+        await callback.answer()
+        return
+    item_id = parse_ack_confirm_callback(callback.data)
+    if item_id is None:
+        await callback.answer("Некорректная кнопка", show_alert=True)
+        return
+    if callback.from_user is None or not await api.ensure_session(callback.from_user.id):
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    data = await state.get_data()
+    assignment_id_raw = data.get("assignment_id")
+    if assignment_id_raw is None:
+        await callback.answer(
+            "Сессия устарела. Откройте «Мой онбординг» снова.",
+            show_alert=True,
+        )
+        return
+    assignment_id = UUID(str(assignment_id_raw))
+    try:
+        result = await api.acknowledge_document(assignment_id, item_id)
+    except OnboardApiError as exc:
+        await callback.answer(_friendly_ack_error(exc), show_alert=True)
+        return
+    if result.assignment_status in {"completed", "cancelled"}:
+        await callback.answer("Ознакомлен")
+        await show_acknowledgement_assignment(
+            message=callback.message,
+            api=api,
+            state=state,
+            assignment_id=assignment_id,
+            edit=True,
+        )
+        return
+    await callback.answer("Ознакомлен")
+    try:
+        await show_acknowledgement_assignment(
+            message=callback.message,
+            api=api,
+            state=state,
+            assignment_id=assignment_id,
+            edit=True,
+        )
+    except OnboardApiError as exc:
+        await callback.message.edit_text(_friendly_ack_error(exc))
+
+
+def _friendly_ack_error(exc: OnboardApiError) -> str:
+    detail = str(exc.detail or exc).lower()
+    if exc.status_code == 404:
+        return "Документ не найден."
+    if "cancelled" in detail:
+        return "Это назначение отменено."
+    if "completed" in detail:
+        return "Ознакомление уже завершено."
+    return "Не удалось обновить ознакомление. Откройте «Мой онбординг» снова."
 
 
 async def _reminder_preference_callback(

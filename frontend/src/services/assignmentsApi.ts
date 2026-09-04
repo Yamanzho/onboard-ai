@@ -1,4 +1,7 @@
 import type {
+  AcknowledgementAction,
+  AcknowledgementDocumentView,
+  AcknowledgementItemList,
   Assignment,
   AssignmentBulkCreateResult,
   AssignmentCreate,
@@ -85,6 +88,33 @@ export async function remindNow(assignmentId: string): Promise<void> {
   await apiRequest(`/api/v1/assignments/${assignmentId}/remind-now`, {
     method: 'POST',
   })
+}
+
+export async function listAcknowledgements(
+  assignmentId: string,
+): Promise<AcknowledgementItemList> {
+  return apiRequest<AcknowledgementItemList>(
+    `/api/v1/assignments/${assignmentId}/acknowledgements`,
+  )
+}
+
+export async function getAcknowledgementDocument(
+  assignmentId: string,
+  itemId: string,
+): Promise<AcknowledgementDocumentView> {
+  return apiRequest<AcknowledgementDocumentView>(
+    `/api/v1/assignments/${assignmentId}/acknowledgements/${itemId}`,
+  )
+}
+
+export async function acknowledgeDocument(
+  assignmentId: string,
+  itemId: string,
+): Promise<AcknowledgementAction> {
+  return apiRequest<AcknowledgementAction>(
+    `/api/v1/assignments/${assignmentId}/acknowledgements/${itemId}/acknowledge`,
+    { method: 'POST' },
+  )
 }
 
 export async function completeProgress(

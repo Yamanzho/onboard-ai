@@ -4,16 +4,28 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.assignment_rules import is_assignment_overdue
 from app.db.base import Base
-from app.db.enums import AssignmentPriority, AssignmentStatus
+from app.db.enums import AssignmentPriority, AssignmentStatus, AssignmentType
 from app.db.mixins import TimestampMixin
 
 if TYPE_CHECKING:
+    from app.db.models.assignment_acknowledgement_item import (
+        AssignmentAcknowledgementItem,
+    )
     from app.db.models.company import Company
     from app.db.models.employee import Employee
     from app.db.models.onboarding_program import OnboardingProgram
@@ -30,6 +42,15 @@ class Assignment(Base, TimestampMixin):
         CheckConstraint(
             "priority IN ('normal', 'important', 'critical')",
             name="ck_assignments_priority",
+        ),
+        CheckConstraint(
+            "assignment_type IN ('program', 'acknowledgement')",
+            name="ck_assignments_assignment_type",
+        ),
+        CheckConstraint(
+            "(assignment_type = 'program' AND program_id IS NOT NULL) OR "
+            "(assignment_type = 'acknowledgement' AND program_id IS NULL)",
+            name="ck_assignments_type_program_id",
         ),
         CheckConstraint(
             "program_revision >= 1",
@@ -51,12 +72,20 @@ class Assignment(Base, TimestampMixin):
         ),
         Index("ix_assignments_source_batch_id", "source_batch_id"),
         Index("ix_assignments_program_id_status", "program_id", "status"),
+        Index("ix_assignments_assignment_type", "assignment_type"),
+        UniqueConstraint(
+            "id",
+            "assignment_type",
+            name="uq_assignments_id_assignment_type",
+        ),
         Index(
             "uq_assignments_employee_program_active",
             "employee_id",
             "program_id",
             unique=True,
-            postgresql_where=text("status IN ('pending', 'in_progress')"),
+            postgresql_where=text(
+                "assignment_type = 'program' AND status IN ('pending', 'in_progress')"
+            ),
         ),
     )
 
@@ -77,10 +106,16 @@ class Assignment(Base, TimestampMixin):
         nullable=False,
         index=True,
     )
-    program_id: Mapped[uuid.UUID] = mapped_column(
+    assignment_type: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=AssignmentType.PROGRAM.value,
+        server_default=text("'program'"),
+    )
+    program_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("onboarding_programs.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     assigned_by_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -124,7 +159,13 @@ class Assignment(Base, TimestampMixin):
         back_populates="assignments",
         foreign_keys=[employee_id],
     )
-    program: Mapped[OnboardingProgram] = relationship(back_populates="assignments")
+    program: Mapped[OnboardingProgram | None] = relationship(back_populates="assignments")
+    acknowledgement_items: Mapped[list[AssignmentAcknowledgementItem]] = relationship(
+        back_populates="assignment",
+        cascade="all, delete-orphan",
+        order_by="AssignmentAcknowledgementItem.position",
+        foreign_keys="AssignmentAcknowledgementItem.assignment_id",
+    )
     assigned_by: Mapped[Employee | None] = relationship(
         back_populates="assigned_assignments",
         foreign_keys=[assigned_by_id],

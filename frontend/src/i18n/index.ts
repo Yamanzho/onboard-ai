@@ -51,6 +51,10 @@ export function labelAssignmentPriority(priority: string): string {
   return labelEnum('assignmentPriority', priority)
 }
 
+export function labelAssignmentType(type: string): string {
+  return labelEnum('assignmentType', type)
+}
+
 export function labelArticleStatus(status: string): string {
   return labelEnum('articleStatus', status)
 }

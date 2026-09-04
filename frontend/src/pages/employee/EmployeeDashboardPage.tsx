@@ -12,9 +12,10 @@ import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
-import { compareAssignmentsByPriorityDeadline, isActiveAssignment } from '../../lib/progressUtils'
+import { assignmentTitle, compareAssignmentsByPriorityDeadline, isActiveAssignment } from '../../lib/progressUtils'
 import * as assignmentsApi from '../../services/assignmentsApi'
 import * as programsApi from '../../services/programsApi'
+import { isAcknowledgementAssignment } from '../../types/assignment'
 
 export function EmployeeDashboardPage() {
   const { user } = useAuth()
@@ -34,18 +35,19 @@ export function EmployeeDashboardPage() {
     [assignments],
   )
 
+  const isAck = active ? isAcknowledgementAssignment(active) : false
   const progressQuery = useQuery({
     queryKey: ['assignment-progress', active?.id],
     queryFn: () => assignmentsApi.getAssignmentProgress(active!.id),
-    enabled: Boolean(active?.id),
+    enabled: Boolean(active?.id) && !isAck,
   })
   const programQuery = useQuery({
     queryKey: ['program', active?.program_id],
-    queryFn: () => programsApi.getProgram(active!.program_id),
+    queryFn: () => programsApi.getProgram(active!.program_id!),
     enabled: Boolean(active?.program_id),
   })
 
-  if (isLoading || (active && (progressQuery.isLoading || programQuery.isLoading))) {
+  if (isLoading || (active && !isAck && (progressQuery.isLoading || programQuery.isLoading))) {
     return <LoadingBlock />
   }
   if (error) {
@@ -74,7 +76,30 @@ export function EmployeeDashboardPage() {
         }
       />
 
-      {!active || !program ? (
+      {!active ? (
+        <EmptyState
+          title={t('employeePortal.noActiveTitle')}
+          description={t('employeePortal.noActiveDescription')}
+        />
+      ) : isAck ? (
+        <div className="mb-6 max-w-xl space-y-3 rounded-lg border border-[var(--color-border)] bg-white p-5">
+          <p className="text-sm text-[var(--color-muted)]">
+            {t('employeePortal.acknowledgementIntro')}
+          </p>
+          <h2 className="text-lg font-semibold">
+            {assignmentTitle(active, () => t('assignments.acknowledgementLabel'))}
+          </h2>
+          <p className="text-sm">
+            {t('assignments.documentsSummary', {
+              acked: active.acknowledgement?.acknowledged_required_count ?? 0,
+              required: active.acknowledgement?.required_documents ?? 0,
+            })}
+          </p>
+          <Link to={paths.path('/onboarding')}>
+            <Button>{t('employeeDashboard.continue')}</Button>
+          </Link>
+        </div>
+      ) : !program ? (
         <EmptyState
           title={t('employeePortal.noActiveTitle')}
           description={t('employeePortal.noActiveDescription')}

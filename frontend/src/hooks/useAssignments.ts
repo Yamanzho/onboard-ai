@@ -62,12 +62,21 @@ export function useAssignmentNotifications(assignmentId: string | undefined) {
   })
 }
 
+export function useAssignmentAcknowledgements(assignmentId: string | undefined) {
+  return useQuery({
+    queryKey: ['assignment-acknowledgements', assignmentId],
+    queryFn: () => assignmentsApi.listAcknowledgements(assignmentId!),
+    enabled: Boolean(assignmentId),
+  })
+}
+
 function invalidateAssignmentCaches(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ['assignments'] })
   void qc.invalidateQueries({ queryKey: ['assignment'] })
   void qc.invalidateQueries({ queryKey: ['assignment-progress'] })
   void qc.invalidateQueries({ queryKey: ['assignment-notifications'] })
   void qc.invalidateQueries({ queryKey: ['employee-assignments'] })
+  void qc.invalidateQueries({ queryKey: ['assignment-acknowledgements'] })
 }
 
 export function useAssignmentMutations() {
@@ -136,5 +145,16 @@ export function useAssignmentMutations() {
     onSuccess: invalidateAssignmentCaches.bind(null, qc),
   })
 
-  return { create, cancel, remindNow }
+  const acknowledge = useMutation({
+    mutationFn: ({
+      assignmentId,
+      itemId,
+    }: {
+      assignmentId: string
+      itemId: string
+    }) => assignmentsApi.acknowledgeDocument(assignmentId, itemId),
+    onSuccess: invalidateAssignmentCaches.bind(null, qc),
+  })
+
+  return { create, cancel, remindNow, acknowledge }
 }

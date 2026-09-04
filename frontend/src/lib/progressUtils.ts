@@ -1,4 +1,5 @@
 import type { Assignment, AssignmentProgress, ProgressItem } from '../types/assignment'
+import { isAcknowledgementAssignment } from '../types/assignment'
 import type { Step } from '../types/step'
 import { t } from '../i18n'
 
@@ -44,6 +45,19 @@ export function isAssignmentOverdue(assignment: Assignment, now = new Date()): b
 
 export function isActiveAssignment(assignment: Assignment): boolean {
   return assignment.status === 'pending' || assignment.status === 'in_progress'
+}
+
+export function assignmentTitle(
+  assignment: Assignment,
+  programTitle: (id: string) => string,
+): string {
+  if (isAcknowledgementAssignment(assignment)) {
+    return (
+      assignment.acknowledgement?.title ?? t('assignments.acknowledgementLabel')
+    )
+  }
+  if (!assignment.program_id) return t('assignments.acknowledgementLabel')
+  return programTitle(assignment.program_id)
 }
 
 export function currentStepTitle(

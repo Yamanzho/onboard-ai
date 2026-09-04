@@ -56,6 +56,11 @@ class AssignmentPriority(StrEnum):
     CRITICAL = "critical"
 
 
+class AssignmentType(StrEnum):
+    PROGRAM = "program"
+    ACKNOWLEDGEMENT = "acknowledgement"
+
+
 class ReminderMode(StrEnum):
     DEFAULT = "default"
     REDUCED = "reduced"

@@ -43,7 +43,8 @@ export function MyCalendarPage() {
   const programs = useQueries({
     queries: assignments.map((a) => ({
       queryKey: ['program', a.program_id],
-      queryFn: () => programsApi.getProgram(a.program_id),
+      queryFn: () => programsApi.getProgram(a.program_id!),
+      enabled: Boolean(a.program_id),
     })),
   })
 
@@ -51,7 +52,10 @@ export function MyCalendarPage() {
     const now = new Date()
     const list: CalEvent[] = []
     assignments.forEach((a, i) => {
-      const title = programs[i]?.data?.title ?? a.program_id.slice(0, 8)
+      const title =
+        programs[i]?.data?.title ??
+        a.acknowledgement?.title ??
+        t('assignments.acknowledgementLabel')
       if (a.assigned_at) {
         const when = new Date(a.assigned_at)
         list.push({
