@@ -1,8 +1,24 @@
 import type { StepType } from '../../types/step'
+import type { QuizQuestionType } from '../../types/quiz'
+import { isStructuredQuizContent } from '../../lib/quizUtils'
 
 export interface ContentBlockDraft {
   id: string
   text: string
+}
+
+export interface QuizOptionDraft {
+  id: string
+  text: string
+}
+
+export interface StructuredQuizQuestionDraft {
+  id: string
+  type: QuizQuestionType
+  text: string
+  options: QuizOptionDraft[]
+  correct_option_ids: string[]
+  explanation: string
 }
 
 export interface StepFormValues {
@@ -13,6 +29,9 @@ export interface StepFormValues {
   content_url: string
   content_questions: string
   content_blocks: ContentBlockDraft[]
+  quiz_questions: StructuredQuizQuestionDraft[]
+  quiz_is_legacy: boolean
+  quiz_convert: boolean
   is_required: boolean
   estimated_minutes: string
 }
@@ -21,6 +40,100 @@ export interface QuizQuestion {
   id: string
   text: string
   correct?: string
+}
+
+export function newQuizOption(index = 0): QuizOptionDraft {
+  const id = String.fromCharCode(97 + (index % 26))
+  return { id, text: '' }
+}
+
+export function nextQuizOptionId(options: QuizOptionDraft[]): string {
+  const used = new Set(options.map((option) => option.id))
+  for (let i = 0; i < 26; i += 1) {
+    const id = String.fromCharCode(97 + i)
+    if (!used.has(id)) return id
+  }
+  return `opt-${options.length + 1}`
+}
+
+export function newStructuredQuestion(
+  index = 0,
+): StructuredQuizQuestionDraft {
+  return {
+    id: `q${index + 1}`,
+    type: 'single_choice',
+    text: '',
+    options: [newQuizOption(0), newQuizOption(1)],
+    correct_option_ids: [],
+    explanation: '',
+  }
+}
+
+export function parseStructuredQuizDraft(
+  content: Record<string, unknown> | undefined,
+): StructuredQuizQuestionDraft[] {
+  if (!content || !Array.isArray(content.questions)) return []
+  const questions: StructuredQuizQuestionDraft[] = []
+  content.questions.forEach((item, index) => {
+    if (!item || typeof item !== 'object') return
+    const record = item as Record<string, unknown>
+    const textRaw = record.text
+    const text = typeof textRaw === 'string' ? textRaw : ''
+    const typeRaw = record.type
+    const type: QuizQuestionType =
+      typeRaw === 'multiple_choice' ? 'multiple_choice' : 'single_choice'
+    const id =
+      typeof record.id === 'string' && record.id.trim()
+        ? record.id.trim()
+        : `q${index + 1}`
+    const options: QuizOptionDraft[] = []
+    if (Array.isArray(record.options)) {
+      record.options.forEach((opt, optIndex) => {
+        if (!opt || typeof opt !== 'object') return
+        const option = opt as Record<string, unknown>
+        const optText = typeof option.text === 'string' ? option.text : ''
+        const optId =
+          typeof option.id === 'string' && option.id.trim()
+            ? option.id.trim()
+            : String.fromCharCode(97 + optIndex)
+        options.push({ id: optId, text: optText })
+      })
+    }
+    while (options.length < 2) options.push(newQuizOption(options.length))
+    const correctRaw = record.correct_option_ids
+    const correct_option_ids = Array.isArray(correctRaw)
+      ? correctRaw.filter((value): value is string => typeof value === 'string')
+      : []
+    const explanation =
+      typeof record.explanation === 'string' ? record.explanation : ''
+    questions.push({
+      id,
+      type,
+      text,
+      options,
+      correct_option_ids,
+      explanation,
+    })
+  })
+  return questions
+}
+
+export function serializeStructuredQuiz(
+  questions: StructuredQuizQuestionDraft[],
+): Record<string, unknown>[] {
+  return questions.map((question, index) => ({
+    id: question.id.trim() || `q${index + 1}`,
+    type: question.type,
+    text: question.text.trim(),
+    options: question.options.map((option, optIndex) => ({
+      id: option.id.trim() || String.fromCharCode(97 + optIndex),
+      text: option.text.trim(),
+    })),
+    correct_option_ids: [...new Set(question.correct_option_ids)],
+    ...(question.explanation.trim()
+      ? { explanation: question.explanation.trim() }
+      : {}),
+  }))
 }
 
 export function newContentBlock(
@@ -141,6 +254,9 @@ export function buildStepContent(
     | 'content_url'
     | 'content_questions'
     | 'content_blocks'
+    | 'quiz_questions'
+    | 'quiz_is_legacy'
+    | 'quiz_convert'
     | 'step_type'
   >,
   existing?: Record<string, unknown>,
@@ -187,11 +303,27 @@ export function buildStepContent(
   }
 
   if (values.step_type === 'quiz') {
-    const questions = questionsFromText(values.content_questions)
-    if (questions.length > 0) next.questions = questions
-    else delete next.questions
+    const keepLegacy =
+      values.quiz_is_legacy &&
+      !values.quiz_convert &&
+      !isStructuredQuizContent(existing)
+    if (keepLegacy) {
+      if (existing && Array.isArray(existing.questions)) {
+        next.questions = existing.questions
+      }
+    } else {
+      const questions = serializeStructuredQuiz(values.quiz_questions)
+      if (questions.length > 0) {
+        next.questions = questions
+        next.passing_score = 80
+      } else {
+        delete next.questions
+        delete next.passing_score
+      }
+    }
   } else {
     delete next.questions
+    delete next.passing_score
   }
   return next
 }

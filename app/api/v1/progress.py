@@ -8,6 +8,7 @@ from app.api.deps import get_assignment_service, get_progress_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.core.security import verify_bot_service_token
 from app.schemas.progress import ProgressCompleteRequest, ProgressResponse
+from app.services.assessment import public_progress_payload
 from app.services.assignment import AssignmentService
 from app.services.progress import ProgressService
 
@@ -98,7 +99,7 @@ async def complete_progress(
         assignment_id=updated.assignment_id,
         step_id=updated.step_id,
         status=updated.status,
-        payload=updated.payload or {},
+        payload=public_progress_payload(updated.payload or {}),
         started_at=updated.started_at,
         completed_at=updated.completed_at,
         created_at=updated.created_at,

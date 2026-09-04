@@ -7,6 +7,13 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.db.enums import AssignmentStatus, ProgressStatus, StepType
 from app.db.models.progress import Progress
 from app.db.uow import UnitOfWork
+from app.services.assessment import (
+    apply_quiz_attempt,
+    format_quiz_result_message,
+    is_structured_quiz,
+    score_structured_quiz,
+)
+from app.services.course_snapshot import resolve_progress_step_fields
 from app.services.step_content import score_quiz, validate_completion_payload
 from app.services.telegram_outbound import TelegramOutboundService
 from app.services.tenancy import ensure_same_company
@@ -49,15 +56,26 @@ class ProgressService:
             )
             if assignment.status == AssignmentStatus.CANCELLED.value:
                 raise ValidationError("Cannot complete steps on a cancelled assignment")
-            if assignment.status == AssignmentStatus.COMPLETED.value:
-                raise ValidationError("Assignment is already completed")
 
             step = await uow.steps.get_by_id(step_id)
             if step is None:
                 raise NotFoundError(f"Step {step_id} not found")
             if step.program_id != assignment.program_id:
                 raise ValidationError("Step does not belong to the assigned program")
-            validate_completion_payload(step.step_type, step.content, payload)
+            resolved = resolve_progress_step_fields(
+                step_id,
+                live_step=step,
+                snapshot=assignment.structure_snapshot,
+            )
+            step_content = (
+                resolved["content"]
+                if resolved is not None
+                else (dict(step.content) if isinstance(step.content, dict) else {})
+            )
+            step_type = (
+                str(resolved["step_type"]) if resolved is not None else step.step_type
+            )
+            validate_completion_payload(step_type, step_content, payload)
 
             progress = await uow.progress.get_by_assignment_and_step(assignment_id, step_id)
             if progress is None:
@@ -66,22 +84,48 @@ class ProgressService:
                 )
             if progress.status == ProgressStatus.COMPLETED.value:
                 raise ConflictError("Step is already completed")
+            if assignment.status == AssignmentStatus.COMPLETED.value:
+                raise ValidationError("Assignment is already completed")
 
             now = datetime.now(UTC)
-            values: dict[str, Any] = {
-                "status": ProgressStatus.COMPLETED.value,
-                "completed_at": now,
-            }
-            stored_payload: dict[str, Any] | None = (
-                dict(payload) if isinstance(payload, dict) else payload
+            structured_quiz = step_type == StepType.QUIZ.value and is_structured_quiz(
+                step_content
             )
-            if step.step_type == StepType.QUIZ.value:
-                stored_payload = dict(stored_payload) if stored_payload else {}
-                quiz_score = score_quiz(step.content, stored_payload.get("answers"))
-                if quiz_score is not None:
-                    stored_payload["quiz_score"] = quiz_score
-            if stored_payload is not None:
-                values["payload"] = stored_payload
+            stored_payload: dict[str, Any] | None
+            passed_quiz = True
+            if structured_quiz:
+                existing_payload = (
+                    dict(progress.payload) if isinstance(progress.payload, dict) else {}
+                )
+                incoming = dict(payload) if isinstance(payload, dict) else {}
+                result = score_structured_quiz(step_content, incoming.get("answers"))
+                summary = apply_quiz_attempt(existing_payload, result, now=now)
+                stored_payload = {
+                    key: value
+                    for key, value in existing_payload.items()
+                    if key != "answers"
+                }
+                stored_payload.update(summary)
+                passed_quiz = result.passed
+                values: dict[str, Any] = {"payload": stored_payload}
+                if passed_quiz:
+                    values["status"] = ProgressStatus.COMPLETED.value
+                    values["completed_at"] = now
+                else:
+                    values["status"] = ProgressStatus.IN_PROGRESS.value
+            else:
+                values = {
+                    "status": ProgressStatus.COMPLETED.value,
+                    "completed_at": now,
+                }
+                stored_payload = dict(payload) if isinstance(payload, dict) else payload
+                if step_type == StepType.QUIZ.value:
+                    stored_payload = dict(stored_payload) if stored_payload else {}
+                    quiz_score = score_quiz(step_content, stored_payload.get("answers"))
+                    if quiz_score is not None:
+                        stored_payload["quiz_score"] = quiz_score
+                if stored_payload is not None:
+                    values["payload"] = stored_payload
             if progress.started_at is None:
                 values["started_at"] = now
 
@@ -89,7 +133,7 @@ class ProgressService:
             assert updated is not None
             if (
                 telegram_outbound_employee_id is not None
-                and step.step_type == StepType.QUIZ.value
+                and step_type == StepType.QUIZ.value
                 and isinstance(stored_payload, dict)
                 and isinstance(stored_payload.get("quiz_score"), dict)
             ):
@@ -103,16 +147,27 @@ class ProgressService:
                 ):
                     raise ValidationError("Employee has no linked Telegram chat")
                 score = stored_payload["quiz_score"]
-                correct = int(score.get("correct_count", 0))
-                total = int(score.get("total", 0))
+                if structured_quiz:
+                    body = format_quiz_result_message(
+                        score=int(score.get("score", 0)),
+                        passed=bool(score.get("passed")),
+                        passing_score=int(score.get("passing_score", 80)),
+                    )
+                    attempt_count = int(stored_payload.get("attempt_count") or 1)
+                    source_key = f"{progress.id}:a{attempt_count}"
+                else:
+                    correct = int(score.get("correct_count", 0))
+                    total = int(score.get("total", 0))
+                    body = f"Результат теста: {correct} из {total}."
+                    source_key = str(progress.id)
                 await self._outbound.enqueue_in_uow(
                     uow,
                     company_id=company_id,
                     employee_id=employee.id,
                     chat_id=employee.telegram_chat_id,
                     source_type="quiz_result",
-                    source_key=str(progress.id),
-                    body=f"Результат теста: {correct} из {total}.",
+                    source_key=source_key,
+                    body=body,
                 )
 
             if assignment.status == AssignmentStatus.PENDING.value:

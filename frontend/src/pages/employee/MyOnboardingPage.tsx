@@ -13,6 +13,12 @@ import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
 import { labelStepType, t } from '../../i18n'
 import { compareAssignmentsByPriorityDeadline, isActiveAssignment } from '../../lib/progressUtils'
+import {
+  isStructuredQuizContent,
+  parseEmployeeQuizQuestions,
+  parseQuizAttemptSummary,
+  quizScoreLabel,
+} from '../../lib/quizUtils'
 import { ApiError } from '../../services/apiClient'
 import * as assignmentsApi from '../../services/assignmentsApi'
 import * as programsApi from '../../services/programsApi'
@@ -44,16 +50,6 @@ function stepUrl(item: ProgressItem): string | null {
   if (!content) return null
   const url = content.url ?? content.link
   return typeof url === 'string' && url.trim() ? url.trim() : null
-}
-
-function quizScoreLabel(payload: Record<string, unknown> | undefined): string | null {
-  const score = payload?.quiz_score
-  if (!score || typeof score !== 'object') return null
-  const rec = score as Record<string, unknown>
-  if (typeof rec.correct_count === 'number' && typeof rec.total === 'number') {
-    return `${rec.correct_count}/${rec.total}`
-  }
-  return null
 }
 
 export function MyOnboardingPage() {
@@ -101,6 +97,7 @@ export function MyOnboardingPage() {
 
   const [ack, setAck] = useState(false)
   const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [optionAnswers, setOptionAnswers] = useState<Record<string, string[]>>({})
   const [actionError, setActionError] = useState<string | null>(null)
 
   const progress = progressQuery.data
@@ -154,7 +151,21 @@ export function MyOnboardingPage() {
   const current = ordered.find((i) => !DONE.has(i.status)) ?? null
   const completeProgram = current === null
   const stepType = current?.step?.step_type ?? 'content'
-  const questions = current ? parseQuizQuestions(current.step?.content) : []
+  const currentContent = current?.step?.content
+  const structuredQuiz = Boolean(
+    current &&
+      stepType === 'quiz' &&
+      isStructuredQuizContent(currentContent),
+  )
+  const questions = current && !structuredQuiz
+    ? parseQuizQuestions(current.step?.content)
+    : []
+  const structuredQuestions = current && structuredQuiz
+    ? parseEmployeeQuizQuestions(currentContent)
+    : []
+  const currentSummary = current
+    ? parseQuizAttemptSummary(current.payload)
+    : null
 
   async function onComplete() {
     if (!current) return
@@ -167,7 +178,22 @@ export function MyOnboardingPage() {
       }
       payload = { ...payload, ack: true }
     }
-    if (stepType === 'quiz') {
+    if (stepType === 'quiz' && structuredQuiz) {
+      const missing = structuredQuestions.filter(
+        (q) => (optionAnswers[q.id] ?? []).length === 0,
+      )
+      if (missing.length > 0) {
+        setActionError(t('employeePortal.quizRequired'))
+        return
+      }
+      payload = {
+        ...payload,
+        answers: structuredQuestions.map((q) => ({
+          question_id: q.id,
+          selected_option_ids: optionAnswers[q.id] ?? [],
+        })),
+      }
+    } else if (stepType === 'quiz') {
       const missing = questions.filter((q) => !answers[q.id]?.trim())
       if (missing.length > 0) {
         setActionError(t('employeePortal.quizRequired'))
@@ -184,6 +210,7 @@ export function MyOnboardingPage() {
       await complete.mutateAsync({ progressId: current.id, payload })
       setAck(false)
       setAnswers({})
+      setOptionAnswers({})
     } catch (err) {
       setActionError(
         err instanceof ApiError ? err.message : t('employeePortal.completeFailed'),
@@ -229,11 +256,19 @@ export function MyOnboardingPage() {
                 {index + 1}. {item.step?.title ?? t('dashboard.stepFallback')}
               </span>
               <span className="shrink-0 text-[var(--color-muted)]">
-                {DONE.has(item.status)
-                  ? quizScoreLabel(item.payload)
-                    ? `${t('employeePortal.stepDone')} · ${quizScoreLabel(item.payload)}`
-                    : t('employeePortal.stepDone')
-                  : t('employeePortal.stepOpen')}
+                {(() => {
+                  const label = quizScoreLabel(item.payload)
+                  const summary = parseQuizAttemptSummary(item.payload)
+                  if (DONE.has(item.status)) {
+                    return label
+                      ? `${t('employeePortal.stepDone')} · ${label}`
+                      : t('employeePortal.stepDone')
+                  }
+                  if (summary.attempt_count) {
+                    return `${t('employeePortal.stepOpen')} · ${t('employeePortal.quizAttempts')}: ${summary.attempt_count}`
+                  }
+                  return t('employeePortal.stepOpen')
+                })()}
               </span>
             </li>
           ))}
@@ -277,7 +312,69 @@ export function MyOnboardingPage() {
               </label>
             ) : null}
 
-            {stepType === 'quiz' ? (
+            {stepType === 'quiz' && currentSummary?.attempt_count ? (
+              <div className="rounded-md bg-slate-50 px-3 py-2 text-sm">
+                <p>
+                  {t('employeePortal.quizAttempts')}: {currentSummary.attempt_count}
+                  {currentSummary.last_score != null
+                    ? ` · ${t('employeePortal.quizLastScore')}: ${currentSummary.last_score}%`
+                    : ''}
+                  {currentSummary.best_score != null
+                    ? ` · ${t('employeePortal.quizBestScore')}: ${currentSummary.best_score}%`
+                    : ''}
+                </p>
+                {currentSummary.passed ? (
+                  <p>{t('employeePortal.quizPassedHint')}</p>
+                ) : (
+                  <p>{t('employeePortal.quizFailedHint')}</p>
+                )}
+              </div>
+            ) : null}
+
+            {stepType === 'quiz' && structuredQuiz ? (
+              <div className="space-y-3">
+                {structuredQuestions.map((question, index) => {
+                  const multiple = question.type === 'multiple_choice'
+                  const selected = optionAnswers[question.id] ?? []
+                  return (
+                    <div key={question.id}>
+                      <p className="mb-2 text-sm font-medium">
+                        {index + 1}. {question.text}
+                      </p>
+                      <div className="space-y-2">
+                        {(question.options ?? []).map((option) => (
+                          <label
+                            key={option.id}
+                            className="flex items-center gap-2 text-sm"
+                          >
+                            <input
+                              type={multiple ? 'checkbox' : 'radio'}
+                              name={`q-${question.id}`}
+                              checked={selected.includes(option.id)}
+                              onChange={() => {
+                                setOptionAnswers((prev) => {
+                                  const currentIds = prev[question.id] ?? []
+                                  if (!multiple) {
+                                    return { ...prev, [question.id]: [option.id] }
+                                  }
+                                  const next = currentIds.includes(option.id)
+                                    ? currentIds.filter((id) => id !== option.id)
+                                    : [...currentIds, option.id]
+                                  return { ...prev, [question.id]: next }
+                                })
+                              }}
+                            />
+                            {option.text}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : null}
+
+            {stepType === 'quiz' && !structuredQuiz ? (
               <div className="space-y-3">
                 {questions.map((question, index) => (
                   <div key={question.id}>

@@ -7,6 +7,12 @@ from typing import Any
 
 from app.core.exceptions import ValidationError
 from app.db.enums import StepType
+from app.services.assessment import (
+    is_structured_quiz,
+    parse_structured_quiz,
+    public_quiz_content,
+    validate_quiz_answers,
+)
 
 _QUESTION_ID_MAX = 64
 _QUESTION_TEXT_MAX = 500
@@ -113,22 +119,7 @@ def score_quiz(
 
 def public_step_content(content: dict[str, Any] | None) -> dict[str, Any]:
     """Strip answer keys so employees cannot read the scoring key from the API."""
-    if not isinstance(content, dict):
-        return {}
-    out = dict(content)
-    raw = out.get("questions")
-    if not isinstance(raw, list):
-        return out
-    cleaned: list[Any] = []
-    for item in raw:
-        if isinstance(item, dict):
-            cleaned.append(
-                {k: v for k, v in item.items() if k not in {"correct", "answer"}}
-            )
-        else:
-            cleaned.append(item)
-    out["questions"] = cleaned
-    return out
+    return public_quiz_content(content)
 
 
 def parse_url(content: dict[str, Any] | None) -> str | None:
@@ -256,7 +247,9 @@ def validate_step_content(step_type: str, content: dict[str, Any] | None) -> Non
     payload = content if isinstance(content, dict) else {}
     _validate_content_blocks(payload)
     if step_type == StepType.QUIZ.value:
-        if not parse_questions(payload):
+        if is_structured_quiz(payload):
+            parse_structured_quiz(payload)
+        elif not parse_questions(payload):
             raise ValidationError(
                 "quiz steps require at least one question in content.questions"
             )
@@ -278,6 +271,10 @@ def validate_completion_payload(
             raise ValidationError("Acknowledgement steps require payload.ack=true")
         return
     if step_type == StepType.QUIZ.value:
+        if is_structured_quiz(content):
+            quiz = parse_structured_quiz(content)
+            validate_quiz_answers(quiz, body.get("answers"))
+            return
         questions = parse_questions(content)
         if not questions:
             raise ValidationError("quiz steps require questions before completion")

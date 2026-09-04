@@ -5,8 +5,11 @@ import { Input, Label, Select, Textarea } from '../ui/Field'
 import { STEP_TYPES, type StepType } from '../../types/step'
 import {
   newContentBlock,
+  newStructuredQuestion,
+  nextQuizOptionId,
   type ContentBlockDraft,
   type StepFormValues,
+  type StructuredQuizQuestionDraft,
 } from './stepFormUtils'
 
 interface StepFormProps {
@@ -33,8 +36,31 @@ function validate(values: StepFormValues): string | null {
       return t('programs.steps.validation.minutesInvalid')
     }
   }
-  if (values.step_type === 'quiz' && !values.content_questions.trim()) {
-    return t('programs.steps.validation.questionsRequired')
+  if (values.step_type === 'quiz') {
+    if (values.quiz_is_legacy && !values.quiz_convert) {
+      return null
+    }
+    if (values.quiz_questions.length < 1) {
+      return t('programs.steps.validation.questionsRequired')
+    }
+    for (const question of values.quiz_questions) {
+      if (!question.text.trim()) {
+        return t('programs.steps.validation.questionTextRequired')
+      }
+      if (question.options.length < 2) {
+        return t('programs.steps.validation.optionsMin')
+      }
+      if (question.options.some((option) => !option.text.trim())) {
+        return t('programs.steps.validation.optionTextRequired')
+      }
+      const correct = new Set(question.correct_option_ids)
+      if (question.type === 'single_choice' && correct.size !== 1) {
+        return t('programs.steps.validation.singleCorrect')
+      }
+      if (question.type === 'multiple_choice' && correct.size < 1) {
+        return t('programs.steps.validation.multipleCorrect')
+      }
+    }
   }
   return null
 }
@@ -129,12 +155,19 @@ export function StepForm({
           <Select
             id="step-type"
             value={values.step_type}
-            onChange={(e) =>
+            onChange={(e) => {
+              const stepType = e.target.value as StepType
               setValues({
                 ...values,
-                step_type: e.target.value as StepType,
+                step_type: stepType,
+                quiz_questions:
+                  stepType === 'quiz' && values.quiz_questions.length === 0
+                    ? [newStructuredQuestion(0)]
+                    : values.quiz_questions,
+                quiz_is_legacy: stepType === 'quiz' ? values.quiz_is_legacy : false,
+                quiz_convert: stepType === 'quiz' ? values.quiz_convert : false,
               })
-            }
+            }}
           >
             {STEP_TYPES.map((stepType) => (
               <option key={stepType} value={stepType}>
@@ -286,22 +319,10 @@ export function StepForm({
       ) : null}
 
       {values.step_type === 'quiz' ? (
-        <div>
-          <Label htmlFor="step-questions">{t('programs.steps.questions')}</Label>
-          <Textarea
-            id="step-questions"
-            rows={5}
-            value={values.content_questions}
-            onChange={(e) =>
-              setValues({ ...values, content_questions: e.target.value })
-            }
-            placeholder={t('programs.steps.questionsPlaceholder')}
-            required
-          />
-          <p className="mt-1 text-xs text-[var(--color-muted)]">
-            {t('programs.steps.questionsHint')}
-          </p>
-        </div>
+        <QuizEditor
+          values={values}
+          onChange={setValues}
+        />
       ) : null}
 
       {values.step_type === 'ack' ? (
@@ -332,5 +353,296 @@ export function StepForm({
         ) : null}
       </div>
     </form>
+  )
+}
+
+function moveItem<T>(items: T[], index: number, direction: -1 | 1): T[] {
+  const target = index + direction
+  if (target < 0 || target >= items.length) return items
+  const next = [...items]
+  const current = next[index]!
+  next[index] = next[target]!
+  next[target] = current
+  return next
+}
+
+function QuizEditor({
+  values,
+  onChange,
+}: {
+  values: StepFormValues
+  onChange: (values: StepFormValues) => void
+}) {
+  const showStructured = !values.quiz_is_legacy || values.quiz_convert
+
+  function updateQuestion(
+    index: number,
+    patch: Partial<StructuredQuizQuestionDraft>,
+  ) {
+    const quiz_questions = values.quiz_questions.map((question, i) => {
+      if (i !== index) return question
+      const next = { ...question, ...patch }
+      if (patch.type === 'single_choice' && next.correct_option_ids.length > 1) {
+        next.correct_option_ids = next.correct_option_ids.slice(0, 1)
+      }
+      return next
+    })
+    onChange({ ...values, quiz_questions })
+  }
+
+  function toggleCorrect(questionIndex: number, optionId: string) {
+    const question = values.quiz_questions[questionIndex]
+    if (!question) return
+    const selected = new Set(question.correct_option_ids)
+    if (question.type === 'single_choice') {
+      onChange({
+        ...values,
+        quiz_questions: values.quiz_questions.map((item, i) =>
+          i === questionIndex ? { ...item, correct_option_ids: [optionId] } : item,
+        ),
+      })
+      return
+    }
+    if (selected.has(optionId)) selected.delete(optionId)
+    else selected.add(optionId)
+    updateQuestion(questionIndex, { correct_option_ids: [...selected] })
+  }
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <Label>{t('programs.steps.questions')}</Label>
+        <p className="mt-1 text-xs text-[var(--color-muted)]">
+          {t('programs.steps.questionsHint')}
+        </p>
+      </div>
+
+      {values.quiz_is_legacy && !values.quiz_convert ? (
+        <div className="space-y-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-950">
+          <p>{t('programs.steps.legacyQuizNotice')}</p>
+          {values.content_questions ? (
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-white/80 p-2 text-xs">
+              {values.content_questions}
+            </pre>
+          ) : null}
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              onChange({
+                ...values,
+                quiz_convert: true,
+                quiz_questions:
+                  values.quiz_questions.length > 0
+                    ? values.quiz_questions
+                    : [newStructuredQuestion(0)],
+              })
+            }
+          >
+            {t('programs.steps.convertQuiz')}
+          </Button>
+        </div>
+      ) : null}
+
+      {showStructured ? (
+        <div className="space-y-3">
+          {values.quiz_questions.map((question, qIndex) => (
+            <div
+              key={question.id}
+              className="space-y-3 rounded-md border border-[var(--color-border)] p-3"
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-medium text-[var(--color-muted)]">
+                  {t('programs.steps.questionLabel', { n: qIndex + 1 })}
+                </span>
+                <div className="flex flex-wrap gap-1">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={qIndex === 0}
+                    onClick={() =>
+                      onChange({
+                        ...values,
+                        quiz_questions: moveItem(
+                          values.quiz_questions,
+                          qIndex,
+                          -1,
+                        ),
+                      })
+                    }
+                  >
+                    {t('programs.steps.up')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    disabled={qIndex === values.quiz_questions.length - 1}
+                    onClick={() =>
+                      onChange({
+                        ...values,
+                        quiz_questions: moveItem(
+                          values.quiz_questions,
+                          qIndex,
+                          1,
+                        ),
+                      })
+                    }
+                  >
+                    {t('programs.steps.down')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="danger"
+                    onClick={() =>
+                      onChange({
+                        ...values,
+                        quiz_questions: values.quiz_questions.filter(
+                          (_, i) => i !== qIndex,
+                        ),
+                      })
+                    }
+                  >
+                    {t('common.delete')}
+                  </Button>
+                </div>
+              </div>
+              <div>
+                <Label htmlFor={`quiz-q-${question.id}`}>
+                  {t('programs.steps.questionText')}
+                </Label>
+                <Textarea
+                  id={`quiz-q-${question.id}`}
+                  rows={2}
+                  value={question.text}
+                  onChange={(e) =>
+                    updateQuestion(qIndex, { text: e.target.value })
+                  }
+                />
+              </div>
+              <div>
+                <Label htmlFor={`quiz-type-${question.id}`}>
+                  {t('programs.steps.questionType')}
+                </Label>
+                <Select
+                  id={`quiz-type-${question.id}`}
+                  value={question.type}
+                  onChange={(e) =>
+                    updateQuestion(qIndex, {
+                      type: e.target.value as StructuredQuizQuestionDraft['type'],
+                    })
+                  }
+                >
+                  <option value="single_choice">
+                    {t('programs.steps.singleChoice')}
+                  </option>
+                  <option value="multiple_choice">
+                    {t('programs.steps.multipleChoice')}
+                  </option>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label>{t('programs.steps.options')}</Label>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      updateQuestion(qIndex, {
+                        options: [
+                          ...question.options,
+                          { id: nextQuizOptionId(question.options), text: '' },
+                        ],
+                      })
+                    }
+                  >
+                    {t('programs.steps.addOption')}
+                  </Button>
+                </div>
+                {question.options.map((option, oIndex) => (
+                  <div key={option.id} className="flex items-start gap-2">
+                    <label className="mt-2 flex items-center gap-2 text-sm">
+                      <input
+                        type={
+                          question.type === 'single_choice'
+                            ? 'radio'
+                            : 'checkbox'
+                        }
+                        name={`correct-${question.id}`}
+                        checked={question.correct_option_ids.includes(option.id)}
+                        onChange={() => toggleCorrect(qIndex, option.id)}
+                      />
+                      <span className="sr-only">
+                        {t('programs.steps.markCorrect')}
+                      </span>
+                    </label>
+                    <Input
+                      value={option.text}
+                      onChange={(e) => {
+                        const options = question.options.map((item, i) =>
+                          i === oIndex ? { ...item, text: e.target.value } : item,
+                        )
+                        updateQuestion(qIndex, { options })
+                      }}
+                      placeholder={t('programs.steps.optionPlaceholder', {
+                        n: oIndex + 1,
+                      })}
+                    />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      disabled={question.options.length <= 2}
+                      onClick={() => {
+                        const options = question.options.filter(
+                          (_, i) => i !== oIndex,
+                        )
+                        updateQuestion(qIndex, {
+                          options,
+                          correct_option_ids: question.correct_option_ids.filter(
+                            (id) => id !== option.id,
+                          ),
+                        })
+                      }}
+                    >
+                      {t('common.delete')}
+                    </Button>
+                  </div>
+                ))}
+                <p className="text-xs text-[var(--color-muted)]">
+                  {t('programs.steps.markCorrectHint')}
+                </p>
+              </div>
+              <div>
+                <Label htmlFor={`quiz-expl-${question.id}`}>
+                  {t('programs.steps.explanation')}
+                </Label>
+                <Input
+                  id={`quiz-expl-${question.id}`}
+                  value={question.explanation}
+                  onChange={(e) =>
+                    updateQuestion(qIndex, { explanation: e.target.value })
+                  }
+                  placeholder={t('common.optional')}
+                />
+              </div>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() =>
+              onChange({
+                ...values,
+                quiz_questions: [
+                  ...values.quiz_questions,
+                  newStructuredQuestion(values.quiz_questions.length),
+                ],
+              })
+            }
+          >
+            {t('programs.steps.addQuestion')}
+          </Button>
+        </div>
+      ) : null}
+    </div>
   )
 }

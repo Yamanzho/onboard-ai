@@ -21,6 +21,7 @@ import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { labelProgressStatus, labelStepType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import { isAssignmentOverdue } from '../../lib/progressUtils'
+import { parseQuizAttemptSummary, quizScoreLabel } from '../../lib/quizUtils'
 
 function formatDate(value: string | null | undefined) {
   if (!value) return t('common.emDash')
@@ -29,16 +30,6 @@ function formatDate(value: string | null | undefined) {
   } catch {
     return value
   }
-}
-
-function quizScoreLabel(payload: Record<string, unknown> | undefined): string | null {
-  const score = payload?.quiz_score
-  if (!score || typeof score !== 'object') return null
-  const rec = score as Record<string, unknown>
-  if (typeof rec.correct_count === 'number' && typeof rec.total === 'number') {
-    return `${rec.correct_count}/${rec.total}`
-  }
-  return null
 }
 
 function progressTone(status: string) {
@@ -222,7 +213,6 @@ export function AssignmentDetailPage() {
               <tbody className="divide-y divide-[var(--color-border)]">
                 {items.map((item, index) => {
                   const step = item.step
-                  const payloadEntries = Object.entries(item.payload ?? {})
                   return (
                     <tr key={item.id}>
                       <td className="px-4 py-3 text-[var(--color-muted)]">
@@ -247,17 +237,44 @@ export function AssignmentDetailPage() {
                         {formatDate(item.completed_at)}
                       </td>
                       <td className="max-w-xs px-4 py-3 text-xs text-[var(--color-muted)]">
-                        {quizScoreLabel(item.payload) ? (
-                          <span>
-                            {t('assignments.quizScore')}: {quizScoreLabel(item.payload)}
-                          </span>
-                        ) : payloadEntries.length === 0 ? (
-                          t('common.emDash')
-                        ) : (
-                          <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded bg-slate-50 p-2 font-mono">
-                            {JSON.stringify(item.payload, null, 2)}
-                          </pre>
-                        )}
+                        {(() => {
+                          const summary = parseQuizAttemptSummary(item.payload)
+                          const label = quizScoreLabel(item.payload)
+                          if (summary.attempt_count != null || label) {
+                            return (
+                              <div className="space-y-1">
+                                {label ? (
+                                  <div>
+                                    {t('assignments.quizScore')}: {label}
+                                  </div>
+                                ) : null}
+                                {summary.best_score != null ? (
+                                  <div>
+                                    {t('assignments.quizBestScore')}: {summary.best_score}%
+                                  </div>
+                                ) : null}
+                                {summary.last_score != null &&
+                                summary.last_score !== summary.best_score ? (
+                                  <div>
+                                    {t('assignments.quizLastScore')}: {summary.last_score}%
+                                  </div>
+                                ) : null}
+                                {summary.attempt_count != null ? (
+                                  <div>
+                                    {t('assignments.quizAttempts')}: {summary.attempt_count}
+                                  </div>
+                                ) : null}
+                                {summary.last_attempt_at ? (
+                                  <div>
+                                    {t('assignments.quizLastAttempt')}:{' '}
+                                    {formatDate(summary.last_attempt_at)}
+                                  </div>
+                                ) : null}
+                              </div>
+                            )
+                          }
+                          return t('common.emDash')
+                        })()}
                       </td>
                     </tr>
                   )

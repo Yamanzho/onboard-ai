@@ -18,12 +18,15 @@ import {
 } from './StepForm'
 import {
   buildStepContent,
+  newStructuredQuestion,
   parseContentBlocks,
+  parseStructuredQuizDraft,
   stepContentBody,
   stepContentQuestions,
   stepContentUrl,
   type StepFormValues,
 } from './stepFormUtils'
+import { isStructuredQuizContent } from '../../lib/quizUtils'
 
 const emptyForm: StepFormValues = {
   title: '',
@@ -33,6 +36,9 @@ const emptyForm: StepFormValues = {
   content_url: '',
   content_questions: '',
   content_blocks: [],
+  quiz_questions: [newStructuredQuestion(0)],
+  quiz_is_legacy: false,
+  quiz_convert: false,
   is_required: true,
   estimated_minutes: '',
 }
@@ -185,6 +191,13 @@ export function ProgramStepsEditor({
               content_url: stepContentUrl(editing.content),
               content_questions: stepContentQuestions(editing.content),
               content_blocks: parseContentBlocks(editing.content),
+              quiz_questions: isStructuredQuizContent(editing.content)
+                ? parseStructuredQuizDraft(editing.content)
+                : [newStructuredQuestion(0)],
+              quiz_is_legacy:
+                Boolean(editing.content?.questions) &&
+                !isStructuredQuizContent(editing.content),
+              quiz_convert: false,
               is_required: editing.is_required,
               estimated_minutes:
                 editing.estimated_minutes != null

@@ -22,6 +22,7 @@ from app.schemas.progress import (
     ProgressResponse,
     ProgressStepInfo,
 )
+from app.services.assessment import public_progress_payload
 from app.services.assignment import AssignmentService
 from app.services.course_snapshot import resolve_progress_step_fields
 from app.services.progress import ProgressService
@@ -323,8 +324,10 @@ async def get_assignment_progress(
             snapshot=snapshot,
         )
         content = fields["content"] if fields is not None else {}
+        item_payload = item.payload or {}
         if current_user.role == EmployeeRole.EMPLOYEE.value:
             content = public_step_content(content)
+            item_payload = public_progress_payload(item_payload)
         step_info = (
             ProgressStepInfo(
                 title=fields["title"],
@@ -344,7 +347,7 @@ async def get_assignment_progress(
                 assignment_id=item.assignment_id,
                 step_id=item.step_id,
                 status=item.status,
-                payload=item.payload or {},
+                payload=item_payload,
                 started_at=item.started_at,
                 completed_at=item.completed_at,
                 created_at=item.created_at,

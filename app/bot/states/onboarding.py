@@ -6,3 +6,4 @@ class OnboardingStates(StatesGroup):
 
     viewing_step = State()
     answering_quiz = State()
+    answering_structured_quiz = State()

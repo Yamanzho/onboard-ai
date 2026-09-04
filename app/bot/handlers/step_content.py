@@ -54,6 +54,7 @@ def render_step_content_body(content: dict[str, Any] | None) -> str:
     questions = parse_questions(content)
     if questions:
         consumed.add("questions")
+        consumed.add("passing_score")
         q_lines = ["Вопросы:"]
         for index, question in enumerate(questions, start=1):
             q_lines.append(f"{index}. {question['text']}")
@@ -81,6 +82,7 @@ def format_step_message(
     step_title: str | None,
     step_description: str | None,
     step_content: dict[str, Any] | None,
+    footer: str | None = None,
 ) -> str:
     """Build an HTML Telegram message for the current onboarding step."""
     lines: list[str] = [
@@ -102,6 +104,12 @@ def format_step_message(
     if body:
         lines.extend(["", escape(body)])
 
-    lines.extend(["", "Когда выполните шаг — нажмите кнопку ниже."])
+    hint = (
+        footer
+        if footer is not None
+        else "Когда выполните шаг — нажмите кнопку ниже."
+    )
+    if hint:
+        lines.extend(["", hint])
     text = "\n".join(lines)
     return truncate_telegram_html(text)
