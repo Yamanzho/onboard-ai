@@ -8,6 +8,11 @@ from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.db.enums import StepType
 from app.db.models.step import Step
 from app.db.uow import UnitOfWork
+from app.services.course_edit_policy import (
+    assert_program_structure_editable,
+    bump_program_revision,
+    step_update_touches_structure,
+)
 from app.services.step_content import validate_step_content
 from app.services.tenancy import ensure_same_company
 
@@ -83,6 +88,8 @@ class StepService:
             elif position < 0:
                 raise ValidationError("position must be >= 0")
 
+            await assert_program_structure_editable(uow, program_id)
+
             try:
                 step = await uow.steps.create(
                     Step(
@@ -97,6 +104,7 @@ class StepService:
                         estimated_minutes=estimated_minutes,
                     ),
                 )
+                await bump_program_revision(uow, program_id)
                 await uow.commit()
             except IntegrityError as exc:
                 await uow.rollback()
@@ -146,9 +154,13 @@ class StepService:
             next_content = values.get("content", step.content)
             content_dict = next_content if isinstance(next_content, dict) else {}
             validate_step_content(str(next_type), content_dict)
+            if step_update_touches_structure(values):
+                await assert_program_structure_editable(uow, step.program_id)
             updated = await uow.steps.update(step_id, **values)
             if updated is None:
                 raise NotFoundError(f"Step {step_id} not found")
+            if step_update_touches_structure(values):
+                await bump_program_revision(uow, step.program_id)
             await uow.commit()
             return updated
 
@@ -184,6 +196,12 @@ class StepService:
                     "step_ids must contain exactly all steps of the program"
                 )
 
+            current_order = [step.id for step in existing]
+            if list(step_ids) == current_order:
+                return existing
+
+            await assert_program_structure_editable(uow, program_id)
+
             # Two-phase update avoids unique (program_id, position) conflicts.
             # Temporary positions must stay >= 0 (ck_steps_position_non_negative).
             max_position = max((step.position for step in existing), default=-1)
@@ -197,6 +215,7 @@ class StepService:
                 assert updated is not None
                 ordered.append(updated)
 
+            await bump_program_revision(uow, program_id)
             await uow.commit()
             return ordered
 
@@ -222,6 +241,7 @@ class StepService:
             )
 
             program_id = step.program_id
+            await assert_program_structure_editable(uow, program_id)
             try:
                 deleted = await uow.steps.delete(step_id)
             except IntegrityError as exc:
@@ -245,4 +265,5 @@ class StepService:
             for index, remaining_step in enumerate(remaining):
                 await uow.steps.update(remaining_step.id, position=index)
 
+            await bump_program_revision(uow, program_id)
             await uow.commit()

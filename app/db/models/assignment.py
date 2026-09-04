@@ -4,8 +4,8 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.assignment_rules import is_assignment_overdue
@@ -31,6 +31,10 @@ class Assignment(Base, TimestampMixin):
             "priority IN ('normal', 'important', 'critical')",
             name="ck_assignments_priority",
         ),
+        CheckConstraint(
+            "program_revision >= 1",
+            name="ck_assignments_program_revision_positive",
+        ),
         Index("ix_assignments_company_id_status", "company_id", "status"),
         Index("ix_assignments_employee_id_status", "employee_id", "status"),
         Index(
@@ -46,6 +50,7 @@ class Assignment(Base, TimestampMixin):
             "due_at",
         ),
         Index("ix_assignments_source_batch_id", "source_batch_id"),
+        Index("ix_assignments_program_id_status", "program_id", "status"),
         Index(
             "uq_assignments_employee_program_active",
             "employee_id",
@@ -97,6 +102,16 @@ class Assignment(Base, TimestampMixin):
     )
     source_batch_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
+        nullable=True,
+    )
+    program_revision: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=text("1"),
+    )
+    structure_snapshot: Mapped[dict | None] = mapped_column(
+        JSONB,
         nullable=True,
     )
     assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

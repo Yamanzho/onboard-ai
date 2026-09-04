@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from uuid import UUID
 
 from sqlalchemy import Select, case, select
@@ -87,6 +88,38 @@ class AssignmentRepository(BaseRepository[Assignment]):
         )
         result = await self._session.scalars(stmt)
         return list(result.all())
+
+    async def has_active_for_program(self, program_id: UUID) -> bool:
+        """True when the program has pending or in_progress assignments."""
+        self._ensure_rls_context()
+        stmt = (
+            select(Assignment.id)
+            .where(
+                Assignment.program_id == program_id,
+                Assignment.status.in_(_ACTIVE_STATUSES),
+            )
+            .limit(1)
+        )
+        return (await self._session.scalar(stmt)) is not None
+
+    async def list_program_ids_with_active_assignments(
+        self,
+        program_ids: Sequence[UUID],
+    ) -> set[UUID]:
+        """Program IDs in ``program_ids`` that currently have active assignments."""
+        self._ensure_rls_context()
+        if not program_ids:
+            return set()
+        stmt = (
+            select(Assignment.program_id)
+            .where(
+                Assignment.program_id.in_(program_ids),
+                Assignment.status.in_(_ACTIVE_STATUSES),
+            )
+            .distinct()
+        )
+        result = await self._session.scalars(stmt)
+        return set(result.all())
 
     def _employee_list_statement(
         self,

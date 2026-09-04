@@ -7,6 +7,11 @@ import {
 } from '../../components/common/PageHeader'
 import { ProgramStatusBadge } from '../../components/onboarding/ProgramStatusBadge'
 import { ProgramStepsEditor } from '../../components/onboarding/ProgramStepsEditor'
+import {
+  ProgramLockBadge,
+  ProgramLockBanner,
+  ProgramRevisionBadge,
+} from '../../components/onboarding/ProgramRevisionBadge'
 import { Button } from '../../components/ui/Button'
 import {
   useProgram,
@@ -80,6 +85,7 @@ export function ProgramDetailPage() {
       label: t('common.description'),
       value: program.description ?? t('common.emDash'),
     },
+    { label: t('programs.revision'), value: `v${program.revision ?? 1}` },
     { label: t('common.created'), value: formatDate(program.created_at) },
     { label: t('common.updated'), value: formatDate(program.updated_at) },
     { label: t('programs.programId'), value: program.id },
@@ -124,6 +130,11 @@ export function ProgramDetailPage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm">
         <ProgramStatusBadge program={program} />
+        <ProgramRevisionBadge revision={program.revision} />
+        <ProgramLockBadge program={program} />
+      </div>
+      <div className="mb-4">
+        <ProgramLockBanner program={program} />
       </div>
 
       <div className="mb-6 overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">

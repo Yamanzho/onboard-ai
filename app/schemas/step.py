@@ -2,12 +2,13 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.schemas.limits import (
     MAX_STEP_CONTENT_JSON_BYTES,
     ensure_json_object_within_limit,
 )
+from app.services.step_content import content_blocks_as_dicts
 
 StepTypeLiteral = Literal["content", "task", "quiz", "ack"]
 
@@ -136,3 +137,13 @@ class StepResponse(BaseModel):
     estimated_minutes: int | None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field
+    @property
+    def content_blocks(self) -> list[dict[str, str]]:
+        return content_blocks_as_dicts(self.content)
+
+    @computed_field
+    @property
+    def block_count(self) -> int:
+        return len(self.content_blocks)

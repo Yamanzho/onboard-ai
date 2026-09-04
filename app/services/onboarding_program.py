@@ -72,7 +72,7 @@ class OnboardingProgramService:
                 summary=f"Created program {title!r}",
             )
             await uow.commit()
-            return program
+            return self._with_lock_state(program, locked=False)
 
     async def update_program(
         self,
@@ -81,7 +81,15 @@ class OnboardingProgramService:
         company_id: UUID,
         **values: Any,
     ) -> OnboardingProgram:
-        forbidden = {"id", "company_id", "created_at", "is_active"}
+        forbidden = {
+            "id",
+            "company_id",
+            "created_at",
+            "is_active",
+            "revision",
+            "structure_locked",
+            "can_edit_structure",
+        }
         extra = forbidden.intersection(values)
         if extra:
             raise ValidationError(f"Cannot update fields via update_program: {sorted(extra)}")
@@ -99,8 +107,9 @@ class OnboardingProgramService:
             updated = await uow.onboarding_programs.update(program_id, **values)
             if updated is None:
                 raise NotFoundError(f"Onboarding program {program_id} not found")
+            locked = await uow.assignments.has_active_for_program(program_id)
             await uow.commit()
-            return updated
+            return self._with_lock_state(updated, locked=locked)
 
     async def publish_program(
         self,
@@ -135,8 +144,9 @@ class OnboardingProgramService:
                 resource_id=program_id,
                 summary=f"Published program {program.title!r}",
             )
+            locked = await uow.assignments.has_active_for_program(program_id)
             await uow.commit()
-            return updated
+            return self._with_lock_state(updated, locked=locked)
 
     async def archive_program(
         self,
@@ -167,8 +177,9 @@ class OnboardingProgramService:
                 resource_id=program_id,
                 summary=f"Archived program {program.title!r}",
             )
+            locked = await uow.assignments.has_active_for_program(program_id)
             await uow.commit()
-            return updated
+            return self._with_lock_state(updated, locked=locked)
 
     async def list_programs(
         self,
@@ -189,12 +200,19 @@ class OnboardingProgramService:
             company = await uow.companies.get_by_id(company_id)
             if company is None:
                 raise NotFoundError(f"Company {company_id} not found")
-            return await uow.onboarding_programs.list_by_company_id(
+            programs = await uow.onboarding_programs.list_by_company_id(
                 company_id,
                 offset=offset,
                 limit=limit,
                 is_active=is_active,
             )
+            locked_ids = await uow.assignments.list_program_ids_with_active_assignments(
+                [program.id for program in programs],
+            )
+            return [
+                self._with_lock_state(program, locked=program.id in locked_ids)
+                for program in programs
+            ]
 
     async def get_program(
         self,
@@ -225,10 +243,12 @@ class OnboardingProgramService:
             )
 
             if actor_role in _PROGRAM_MANAGEMENT_ROLES:
-                return program
+                locked = await uow.assignments.has_active_for_program(program_id)
+                return self._with_lock_state(program, locked=locked)
 
             if program.is_active:
-                return program
+                locked = await uow.assignments.has_active_for_program(program_id)
+                return self._with_lock_state(program, locked=locked)
 
             # Unpublished/draft/archived: only the assigned employee may read.
             if actor_employee_id is None:
@@ -238,8 +258,15 @@ class OnboardingProgramService:
                 program_id=program_id,
                 employee_id=actor_employee_id,
             ):
-                return program
+                locked = await uow.assignments.has_active_for_program(program_id)
+                return self._with_lock_state(program, locked=locked)
             raise NotFoundError(not_found)
+
+    @staticmethod
+    def _with_lock_state(program: OnboardingProgram, *, locked: bool) -> OnboardingProgram:
+        program.structure_locked = locked
+        program.can_edit_structure = not locked
+        return program
 
     @staticmethod
     async def _employee_has_program_assignment(

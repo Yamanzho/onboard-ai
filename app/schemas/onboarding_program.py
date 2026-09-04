@@ -57,5 +57,20 @@ class ProgramResponse(BaseModel):
     title: str
     description: str | None
     is_active: bool = Field(description="True when published; False for draft/archived.")
+    revision: int = Field(
+        default=1,
+        description="Course structure/content generation. Starts at 1.",
+    )
+    structure_locked: bool = Field(
+        default=False,
+        description=(
+            "True when pending or in_progress assignments exist. "
+            "Structure and training content cannot be edited."
+        ),
+    )
+    can_edit_structure: bool = Field(
+        default=True,
+        description="False when structure_locked is true.",
+    )
     created_at: datetime
     updated_at: datetime

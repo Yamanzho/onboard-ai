@@ -16,7 +16,7 @@ import {
   useAssignmentProgress,
 } from '../../hooks/useAssignments'
 import { useEmployee } from '../../hooks/useEmployees'
-import { useProgram, useProgramSteps } from '../../hooks/usePrograms'
+import { useProgram } from '../../hooks/usePrograms'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { labelProgressStatus, labelStepType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
@@ -57,7 +57,6 @@ export function AssignmentDetailPage() {
   const { data: employee } = useEmployee(assignment?.employee_id)
   const { data: program } = useProgram(assignment?.program_id)
   const { data: assigner } = useEmployee(assignment?.assigned_by_id ?? undefined)
-  const { data: steps = [] } = useProgramSteps(assignment?.program_id)
   const { cancel } = useAssignmentMutations()
   const [actionError, setActionError] = useState<string | null>(null)
 
@@ -86,7 +85,6 @@ export function AssignmentDetailPage() {
     )
   }
 
-  const stepById = new Map(steps.map((s) => [s.id, s]))
   const items = progress?.items ?? []
   const canCancel =
     assignment.status === 'pending' || assignment.status === 'in_progress'
@@ -114,6 +112,10 @@ export function AssignmentDetailPage() {
           {program?.title ?? assignment.program_id}
         </Link>
       ),
+    },
+    {
+      label: t('assignments.programRevision'),
+      value: `v${assignment.program_revision ?? program?.revision ?? 1}`,
     },
     {
       label: t('assignments.progress'),
@@ -219,7 +221,7 @@ export function AssignmentDetailPage() {
               </thead>
               <tbody className="divide-y divide-[var(--color-border)]">
                 {items.map((item, index) => {
-                  const step = stepById.get(item.step_id)
+                  const step = item.step
                   const payloadEntries = Object.entries(item.payload ?? {})
                   return (
                     <tr key={item.id}>

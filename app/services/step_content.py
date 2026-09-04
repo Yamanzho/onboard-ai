@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from app.core.exceptions import ValidationError
@@ -13,6 +14,10 @@ _MAX_QUESTIONS = 20
 _ANSWER_MAX = 2000
 _URL_MAX = 2048
 _CORRECT_MAX = 500
+_MAX_CONTENT_BLOCKS = 100
+_BLOCK_TEXT_MAX = 20000
+_BLOCK_ID_MAX = 64
+_ALLOWED_BLOCK_TYPES = frozenset({"text"})
 
 
 def parse_questions(content: dict[str, Any] | None) -> list[dict[str, str]]:
@@ -136,9 +141,120 @@ def parse_url(content: dict[str, Any] | None) -> str | None:
     return None
 
 
+@dataclass(frozen=True, slots=True)
+class ContentBlock:
+    """Normalized ordered text block for a Step (inline training)."""
+
+    id: str
+    type: str
+    text: str
+
+
+def normalize_step_content(content: dict[str, Any] | None) -> list[ContentBlock]:
+    """Read-only compatibility: new ``blocks`` schema or legacy body/text.
+
+    Does not mutate the stored JSON. Unknown/invalid block items are skipped
+    on read so old programs keep rendering.
+    """
+    if not content or not isinstance(content, dict):
+        return []
+
+    raw_blocks = content.get("blocks")
+    if isinstance(raw_blocks, list) and raw_blocks:
+        blocks: list[ContentBlock] = []
+        for index, item in enumerate(raw_blocks):
+            if len(blocks) >= _MAX_CONTENT_BLOCKS:
+                break
+            parsed = _parse_block_item(item, index)
+            if parsed is not None:
+                blocks.append(parsed)
+        if blocks:
+            return blocks
+
+    for key in ("body", "text"):
+        value = content.get(key)
+        if isinstance(value, str) and value.strip():
+            return [
+                ContentBlock(id="legacy-body", type="text", text=value.strip()),
+            ]
+    return []
+
+
+def content_blocks_as_dicts(content: dict[str, Any] | None) -> list[dict[str, str]]:
+    return [
+        {"id": block.id, "type": block.type, "text": block.text}
+        for block in normalize_step_content(content)
+    ]
+
+
+def payload_block_index(payload: dict[str, Any] | None) -> int | None:
+    """Current content-block cursor from Progress.payload, if present."""
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("block_index")
+    if isinstance(raw, int) and raw >= 0:
+        return raw
+    if isinstance(raw, str) and raw.isdigit():
+        return int(raw)
+    return None
+
+
+def _parse_block_item(item: Any, index: int) -> ContentBlock | None:
+    if not isinstance(item, dict):
+        return None
+    block_type = item.get("type") or "text"
+    if not isinstance(block_type, str) or block_type not in _ALLOWED_BLOCK_TYPES:
+        return None
+    text_raw = item.get("text")
+    if text_raw is None:
+        text_raw = item.get("body")
+    if not isinstance(text_raw, str):
+        return None
+    id_raw = item.get("id")
+    block_id = (
+        str(id_raw).strip()[:_BLOCK_ID_MAX]
+        if id_raw is not None and str(id_raw).strip()
+        else f"block-{index + 1}"
+    )
+    return ContentBlock(id=block_id, type="text", text=text_raw[:_BLOCK_TEXT_MAX])
+
+
+def _validate_content_blocks(payload: dict[str, Any]) -> None:
+    if "blocks" not in payload:
+        return
+    raw = payload["blocks"]
+    if not isinstance(raw, list):
+        raise ValidationError("content.blocks must be a list")
+    if len(raw) > _MAX_CONTENT_BLOCKS:
+        raise ValidationError(
+            f"content.blocks cannot contain more than {_MAX_CONTENT_BLOCKS} items"
+        )
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            raise ValidationError(f"content.blocks[{index}] must be an object")
+        block_type = item.get("type", "text")
+        if not isinstance(block_type, str) or block_type not in _ALLOWED_BLOCK_TYPES:
+            raise ValidationError(
+                f"content.blocks[{index}].type must be one of {sorted(_ALLOWED_BLOCK_TYPES)}"
+            )
+        text_raw = item.get("text")
+        if text_raw is None:
+            text_raw = item.get("body")
+        if not isinstance(text_raw, str):
+            raise ValidationError(f"content.blocks[{index}].text must be a string")
+        if len(text_raw) > _BLOCK_TEXT_MAX:
+            raise ValidationError(
+                f"content.blocks[{index}].text exceeds {_BLOCK_TEXT_MAX} characters"
+            )
+        id_raw = item.get("id")
+        if id_raw is not None and not isinstance(id_raw, str):
+            raise ValidationError(f"content.blocks[{index}].id must be a string when set")
+
+
 def validate_step_content(step_type: str, content: dict[str, Any] | None) -> None:
     """Reject type-specific content that cannot be completed by an employee."""
     payload = content if isinstance(content, dict) else {}
+    _validate_content_blocks(payload)
     if step_type == StepType.QUIZ.value:
         if not parse_questions(payload):
             raise ValidationError(

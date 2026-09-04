@@ -1,5 +1,11 @@
 export type StepType = 'content' | 'task' | 'quiz' | 'ack'
 
+export interface ContentBlock {
+  id: string
+  type: string
+  text: string
+}
+
 export interface Step {
   id: string
   program_id: string
@@ -8,6 +14,8 @@ export interface Step {
   step_type: StepType | string
   position: number
   content: Record<string, unknown>
+  content_blocks?: ContentBlock[]
+  block_count?: number
   is_required: boolean
   estimated_minutes: number | null
   created_at: string

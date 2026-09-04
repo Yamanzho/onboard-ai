@@ -8,6 +8,10 @@ import {
   PageHeader,
 } from '../../components/common/PageHeader'
 import { ProgramStatusBadge } from '../../components/onboarding/ProgramStatusBadge'
+import {
+  ProgramLockBadge,
+  ProgramRevisionBadge,
+} from '../../components/onboarding/ProgramRevisionBadge'
 import { Button } from '../../components/ui/Button'
 import { Input, Select } from '../../components/ui/Field'
 import {
@@ -254,7 +258,13 @@ export function ProgramListPage() {
                         ) : null}
                       </td>
                       <td className="px-4 py-3">
-                        <ProgramStatusBadge program={program} />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <ProgramStatusBadge program={program} />
+                          <ProgramRevisionBadge revision={program.revision} />
+                          {program.structure_locked ? (
+                            <ProgramLockBadge program={program} />
+                          ) : null}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-[var(--color-muted)]">
                         {stepsLoading

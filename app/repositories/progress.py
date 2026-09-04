@@ -1,10 +1,10 @@
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.progress import Progress
-from app.repositories.base import BaseRepository, _MAX_LIST_LIMIT
+from app.repositories.base import _MAX_LIST_LIMIT, BaseRepository
 
 
 class ProgressRepository(BaseRepository[Progress]):
@@ -26,6 +26,14 @@ class ProgressRepository(BaseRepository[Progress]):
         )
         result = await self._session.scalars(stmt)
         return list(result.all())
+
+    async def delete_by_assignment_id(self, assignment_id: UUID) -> int:
+        """Discard learning rows for a cancelled assignment. Tenant RLS applies."""
+        self._ensure_rls_context()
+        result = await self._session.execute(
+            delete(Progress).where(Progress.assignment_id == assignment_id)
+        )
+        return int(result.rowcount or 0)
 
     async def get_by_assignment_and_step(
         self,

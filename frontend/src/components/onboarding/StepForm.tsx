@@ -3,7 +3,11 @@ import { labelStepType, t } from '../../i18n'
 import { Button } from '../ui/Button'
 import { Input, Label, Select, Textarea } from '../ui/Field'
 import { STEP_TYPES, type StepType } from '../../types/step'
-import type { StepFormValues } from './stepFormUtils'
+import {
+  newContentBlock,
+  type ContentBlockDraft,
+  type StepFormValues,
+} from './stepFormUtils'
 
 interface StepFormProps {
   initial: StepFormValues
@@ -35,6 +39,20 @@ function validate(values: StepFormValues): string | null {
   return null
 }
 
+function moveBlock(
+  blocks: ContentBlockDraft[],
+  index: number,
+  direction: -1 | 1,
+): ContentBlockDraft[] {
+  const target = index + direction
+  if (target < 0 || target >= blocks.length) return blocks
+  const next = [...blocks]
+  const current = next[index]!
+  next[index] = next[target]!
+  next[target] = current
+  return next
+}
+
 export function StepForm({
   initial,
   submitLabel,
@@ -64,6 +82,13 @@ export function StepForm({
     } catch (err) {
       setError(err instanceof Error ? err.message : t('common.saveFailed'))
     }
+  }
+
+  function updateBlock(index: number, text: string) {
+    const next = values.content_blocks.map((block, i) =>
+      i === index ? { ...block, text } : block,
+    )
+    setValues({ ...values, content_blocks: next })
   }
 
   return (
@@ -132,18 +157,118 @@ export function StepForm({
         </div>
       </div>
 
-      <div>
-        <Label htmlFor="step-content">{t('programs.steps.contentBody')}</Label>
-        <Textarea
-          id="step-content"
-          rows={4}
-          value={values.content_body}
-          onChange={(e) =>
-            setValues({ ...values, content_body: e.target.value })
-          }
-          placeholder={t('programs.steps.contentPlaceholder')}
-        />
-      </div>
+      {values.step_type === 'content' ? (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <Label>{t('programs.steps.contentBlocks')}</Label>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() =>
+                setValues({
+                  ...values,
+                  content_blocks: [
+                    ...values.content_blocks,
+                    newContentBlock('', values.content_blocks.length),
+                  ],
+                })
+              }
+            >
+              {t('programs.steps.addBlock')}
+            </Button>
+          </div>
+          {values.content_blocks.length === 0 ? (
+            <p className="text-xs text-[var(--color-muted)]">
+              {t('programs.steps.blocksEmpty')}
+            </p>
+          ) : (
+            <ol className="space-y-3">
+              {values.content_blocks.map((block, index) => (
+                <li
+                  key={block.id}
+                  className="rounded-md border border-[var(--color-border)] p-3"
+                >
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-medium text-[var(--color-muted)]">
+                      {t('programs.steps.blockLabel', { n: index + 1 })}
+                    </span>
+                    <div className="flex flex-wrap gap-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={index === 0}
+                        onClick={() =>
+                          setValues({
+                            ...values,
+                            content_blocks: moveBlock(
+                              values.content_blocks,
+                              index,
+                              -1,
+                            ),
+                          })
+                        }
+                      >
+                        {t('programs.steps.up')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={index === values.content_blocks.length - 1}
+                        onClick={() =>
+                          setValues({
+                            ...values,
+                            content_blocks: moveBlock(
+                              values.content_blocks,
+                              index,
+                              1,
+                            ),
+                          })
+                        }
+                      >
+                        {t('programs.steps.down')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="danger"
+                        onClick={() =>
+                          setValues({
+                            ...values,
+                            content_blocks: values.content_blocks.filter(
+                              (_, i) => i !== index,
+                            ),
+                          })
+                        }
+                      >
+                        {t('common.delete')}
+                      </Button>
+                    </div>
+                  </div>
+                  <Textarea
+                    id={`step-block-${block.id}`}
+                    rows={3}
+                    value={block.text}
+                    onChange={(e) => updateBlock(index, e.target.value)}
+                    placeholder={t('programs.steps.contentPlaceholder')}
+                  />
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+      ) : (
+        <div>
+          <Label htmlFor="step-content">{t('programs.steps.contentBody')}</Label>
+          <Textarea
+            id="step-content"
+            rows={4}
+            value={values.content_body}
+            onChange={(e) =>
+              setValues({ ...values, content_body: e.target.value })
+            }
+            placeholder={t('programs.steps.contentPlaceholder')}
+          />
+        </div>
+      )}
 
       {values.step_type === 'task' ? (
         <div>

@@ -1,4 +1,5 @@
 from collections.abc import Callable, Sequence
+from copy import deepcopy
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -17,6 +18,7 @@ from app.db.models.employee import Employee
 from app.db.models.progress import Progress
 from app.db.uow import UnitOfWork
 from app.services.company_audit import record_company_audit
+from app.services.course_snapshot import build_structure_snapshot
 from app.services.tenancy import ensure_same_company
 
 _VALID_PRIORITIES = {item.value for item in AssignmentPriority}
@@ -93,6 +95,9 @@ class AssignmentService:
             steps = await uow.steps.list_by_program_id(program_id)
             now = datetime.now(UTC)
             source_batch_id = uuid4() if stamp_batch else None
+            program = await uow.onboarding_programs.get_by_id(program_id)
+            program_revision = program.revision if program is not None else 1
+            structure_snapshot = build_structure_snapshot(program_revision, steps)
 
             created: list[Assignment] = []
             try:
@@ -111,6 +116,8 @@ class AssignmentService:
                             status=AssignmentStatus.PENDING.value,
                             priority=priority,
                             source_batch_id=source_batch_id,
+                            program_revision=program_revision,
+                            structure_snapshot=deepcopy(structure_snapshot),
                             assigned_at=now,
                             due_at=effective_due,
                         ),
@@ -136,6 +143,7 @@ class AssignmentService:
                             "employee_id": str(employee.id),
                             "program_id": str(program_id),
                             "priority": priority,
+                            "program_revision": program_revision,
                             "source_batch_id": (
                                 str(source_batch_id) if source_batch_id else None
                             ),
@@ -301,6 +309,7 @@ class AssignmentService:
             if assignment.status == AssignmentStatus.COMPLETED.value:
                 raise ValidationError("Completed assignment cannot be cancelled")
 
+            discarded = await uow.progress.delete_by_assignment_id(assignment_id)
             updated = await uow.assignments.update(
                 assignment_id,
                 status=AssignmentStatus.CANCELLED.value,
@@ -314,7 +323,11 @@ class AssignmentService:
                 resource_type="assignment",
                 resource_id=assignment_id,
                 summary="Cancelled assignment",
-                details={"status": AssignmentStatus.CANCELLED.value},
+                details={
+                    "status": AssignmentStatus.CANCELLED.value,
+                    "progress_discarded": True,
+                    "progress_rows_removed": discarded,
+                },
             )
             await uow.commit()
             return updated

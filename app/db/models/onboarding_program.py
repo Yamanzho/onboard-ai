@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, ForeignKey, Index, Text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Index, Integer, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 class OnboardingProgram(Base, TimestampMixin):
     __tablename__ = "onboarding_programs"
     __table_args__ = (
+        CheckConstraint("revision >= 1", name="ck_onboarding_programs_revision_positive"),
         Index("ix_onboarding_programs_company_id_is_active", "company_id", "is_active"),
     )
 
@@ -36,6 +37,12 @@ class OnboardingProgram(Base, TimestampMixin):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    revision: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=1,
+        server_default=text("1"),
+    )
 
     company: Mapped[Company] = relationship(back_populates="onboarding_programs")
     steps: Mapped[list[Step]] = relationship(

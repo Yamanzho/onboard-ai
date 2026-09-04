@@ -37,6 +37,20 @@ def test_render_step_content_body_known_and_empty() -> None:
     assert "Quiz intro" in quiz
     assert "1. What?" in quiz
 
+    blocks = render_step_content_body(
+        {
+            "blocks": [
+                {"id": "b1", "type": "text", "text": "Block one"},
+                {"id": "b2", "type": "text", "text": "Block two"},
+            ],
+            "body": "should not appear",
+        }
+    )
+    assert "Block one" in blocks
+    assert "Block two" in blocks
+    assert "should not appear" not in blocks
+    assert render_step_content_body({"text": "legacy text"}) == "legacy text"
+
 
 def test_format_step_message_includes_title_description_content() -> None:
     msg = format_step_message(

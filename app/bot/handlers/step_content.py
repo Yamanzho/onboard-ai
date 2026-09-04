@@ -5,7 +5,7 @@ from __future__ import annotations
 from html import escape
 from typing import Any
 
-from app.services.step_content import parse_questions
+from app.services.step_content import normalize_step_content, parse_questions
 from app.services.telegram_format import (
     TELEGRAM_MAX_MESSAGE_LENGTH as TELEGRAM_MAX_MESSAGE_LENGTH,
 )
@@ -25,11 +25,25 @@ def render_step_content_body(content: dict[str, Any] | None) -> str:
     parts: list[str] = []
     consumed: set[str] = set()
 
-    for key in ("body", "text"):
-        value = content.get(key)
-        if isinstance(value, str) and value.strip():
-            parts.append(value.strip())
-            consumed.add(key)
+    used_blocks = False
+    raw_blocks = content.get("blocks")
+    if isinstance(raw_blocks, list) and raw_blocks:
+        block_texts = [
+            block.text.strip()
+            for block in normalize_step_content(content)
+            if block.text.strip()
+        ]
+        if block_texts:
+            parts.extend(block_texts)
+            used_blocks = True
+            consumed.update({"blocks", "body", "text"})
+
+    if not used_blocks:
+        for key in ("body", "text"):
+            value = content.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+                consumed.add(key)
 
     for key in ("url", "link"):
         value = content.get(key)
@@ -50,7 +64,7 @@ def render_step_content_body(content: dict[str, Any] | None) -> str:
             continue
         if isinstance(value, bool):
             parts.append(f"{key}: {'yes' if value else 'no'}")
-        elif isinstance(value, (str, int, float)) and str(value).strip():
+        elif isinstance(value, str | int | float) and str(value).strip():
             parts.append(f"{key}: {value}")
         # Nested objects / lists are intentionally skipped (unknown structure).
 

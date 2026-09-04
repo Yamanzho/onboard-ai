@@ -23,6 +23,18 @@ const DONE = new Set(['completed', 'skipped'])
 function stepBody(item: ProgressItem): string {
   const content = item.step?.content
   if (!content) return ''
+  const blocks = content.blocks
+  if (Array.isArray(blocks) && blocks.length > 0) {
+    const texts = blocks
+      .map((block) => {
+        if (!block || typeof block !== 'object') return ''
+        const rec = block as Record<string, unknown>
+        const text = rec.text ?? rec.body
+        return typeof text === 'string' ? text.trim() : ''
+      })
+      .filter(Boolean)
+    if (texts.length > 0) return texts.join('\n\n')
+  }
   const body = content.body ?? content.text
   return typeof body === 'string' ? body : ''
 }

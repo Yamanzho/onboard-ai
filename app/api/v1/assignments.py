@@ -23,6 +23,7 @@ from app.schemas.progress import (
     ProgressStepInfo,
 )
 from app.services.assignment import AssignmentService
+from app.services.course_snapshot import resolve_progress_step_fields
 from app.services.progress import ProgressService
 from app.services.step_content import public_step_content
 
@@ -313,20 +314,26 @@ async def get_assignment_progress(
         company_id=current_user.company_id,
     )
     responses: list[ProgressResponse] = []
+    snapshot = assignment.structure_snapshot
     for item in items:
-        step = step_by_id.get(item.step_id)
-        content = step.content or {} if step is not None else {}
+        live_step = step_by_id.get(item.step_id)
+        fields = resolve_progress_step_fields(
+            item.step_id,
+            live_step=live_step,
+            snapshot=snapshot,
+        )
+        content = fields["content"] if fields is not None else {}
         if current_user.role == EmployeeRole.EMPLOYEE.value:
             content = public_step_content(content)
         step_info = (
             ProgressStepInfo(
-                title=step.title,
-                description=step.description,
-                step_type=step.step_type,
+                title=fields["title"],
+                description=fields["description"],
+                step_type=fields["step_type"],
                 content=content,
-                position=step.position,
+                position=fields["position"],
             )
-            if step is not None
+            if fields is not None
             else None
         )
         # Build explicitly — Progress ORM also has a ``step`` relationship that

@@ -1,5 +1,10 @@
 import type { StepType } from '../../types/step'
 
+export interface ContentBlockDraft {
+  id: string
+  text: string
+}
+
 export interface StepFormValues {
   title: string
   description: string
@@ -7,6 +12,7 @@ export interface StepFormValues {
   content_body: string
   content_url: string
   content_questions: string
+  content_blocks: ContentBlockDraft[]
   is_required: boolean
   estimated_minutes: string
 }
@@ -17,10 +23,52 @@ export interface QuizQuestion {
   correct?: string
 }
 
+export function newContentBlock(
+  text = '',
+  index?: number,
+): ContentBlockDraft {
+  const suffix =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${index ?? 0}`
+  return { id: `block-${suffix}`, text }
+}
+
+export function parseContentBlocks(
+  content: Record<string, unknown> | undefined,
+): ContentBlockDraft[] {
+  if (!content) return []
+  const raw = content.blocks
+  if (Array.isArray(raw) && raw.length > 0) {
+    const blocks: ContentBlockDraft[] = []
+    raw.forEach((item, index) => {
+      if (!item || typeof item !== 'object') return
+      const record = item as Record<string, unknown>
+      const textRaw = record.text ?? record.body
+      if (typeof textRaw !== 'string') return
+      const id =
+        typeof record.id === 'string' && record.id.trim()
+          ? record.id.trim()
+          : `block-${index + 1}`
+      blocks.push({ id, text: textRaw })
+    })
+    if (blocks.length > 0) return blocks
+  }
+  const legacy = stepContentBody(content) || stepContentText(content)
+  if (legacy) return [{ id: 'legacy-body', text: legacy }]
+  return []
+}
+
 export function stepContentBody(content: Record<string, unknown> | undefined) {
   if (!content) return ''
   const body = content.body
   return typeof body === 'string' ? body : ''
+}
+
+export function stepContentText(content: Record<string, unknown> | undefined) {
+  if (!content) return ''
+  const text = content.text
+  return typeof text === 'string' ? text : ''
 }
 
 export function stepContentUrl(content: Record<string, unknown> | undefined) {
@@ -87,13 +135,48 @@ export function questionsFromText(text: string): QuizQuestion[] {
 }
 
 export function buildStepContent(
-  values: Pick<StepFormValues, 'content_body' | 'content_url' | 'content_questions' | 'step_type'>,
+  values: Pick<
+    StepFormValues,
+    | 'content_body'
+    | 'content_url'
+    | 'content_questions'
+    | 'content_blocks'
+    | 'step_type'
+  >,
   existing?: Record<string, unknown>,
 ): Record<string, unknown> {
   const next = { ...(existing ?? {}) }
-  const trimmed = values.content_body.trim()
-  if (trimmed) next.body = trimmed
-  else delete next.body
+
+  if (values.step_type === 'content') {
+    const blocks = values.content_blocks
+      .map((block, index) => ({
+        id: block.id.trim() || `block-${index + 1}`,
+        type: 'text' as const,
+        text: block.text,
+      }))
+      .filter((block) => block.text.trim().length > 0)
+    if (blocks.length > 0) {
+      next.blocks = blocks
+      delete next.body
+      delete next.text
+    } else {
+      const trimmed = values.content_body.trim()
+      if (trimmed) {
+        next.blocks = [{ id: 'block-1', type: 'text', text: trimmed }]
+        delete next.body
+        delete next.text
+      } else {
+        delete next.blocks
+        delete next.body
+        delete next.text
+      }
+    }
+  } else {
+    const trimmed = values.content_body.trim()
+    if (trimmed) next.body = trimmed
+    else delete next.body
+    delete next.blocks
+  }
 
   const url = values.content_url.trim()
   if (values.step_type === 'task' && url) {

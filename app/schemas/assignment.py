@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Literal, Self
+from typing import Any, Literal, Self
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
@@ -99,6 +99,15 @@ class AssignmentResponse(BaseModel):
     status: str
     priority: str = AssignmentPriority.NORMAL.value
     source_batch_id: UUID | None = None
+    program_revision: int = Field(
+        default=1,
+        description="Course revision captured at assignment creation.",
+    )
+    structure_snapshot: dict[str, Any] | None = Field(
+        default=None,
+        exclude=True,
+        description="Internal assignment-time course snapshot; not serialized.",
+    )
     assigned_at: datetime
     due_at: datetime | None
     started_at: datetime | None
@@ -110,6 +119,12 @@ class AssignmentResponse(BaseModel):
     @property
     def overdue(self) -> bool:
         return is_assignment_overdue(self.due_at, self.status)
+
+    @computed_field
+    @property
+    def has_structure_snapshot(self) -> bool:
+        snapshot = self.structure_snapshot
+        return isinstance(snapshot, dict) and bool(snapshot.get("steps"))
 
 
 class AssignmentBulkCreateResponse(BaseModel):

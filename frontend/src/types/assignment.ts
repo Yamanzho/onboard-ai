@@ -16,6 +16,9 @@ export interface Assignment {
   priority?: AssignmentPriority | string
   source_batch_id?: string | null
   overdue?: boolean
+  /** Course revision captured when this assignment was created. */
+  program_revision?: number
+  has_structure_snapshot?: boolean
   assigned_at: string
   due_at: string | null
   started_at: string | null
@@ -55,6 +58,7 @@ export interface ProgressItem {
   step_id: string
   status: string
   payload: Record<string, unknown>
+  block_index?: number | null
   started_at: string | null
   completed_at: string | null
   created_at: string
@@ -64,6 +68,8 @@ export interface ProgressItem {
     description?: string | null
     step_type?: string
     content?: Record<string, unknown>
+    content_blocks?: { id: string; type: string; text: string }[]
+    block_count?: number
     position?: number
   } | null
 }

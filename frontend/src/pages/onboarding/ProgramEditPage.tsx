@@ -11,6 +11,11 @@ import {
 } from '../../components/onboarding/ProgramForm'
 import { ProgramStatusBadge } from '../../components/onboarding/ProgramStatusBadge'
 import { ProgramStepsEditor } from '../../components/onboarding/ProgramStepsEditor'
+import {
+  ProgramLockBadge,
+  ProgramLockBanner,
+  ProgramRevisionBadge,
+} from '../../components/onboarding/ProgramRevisionBadge'
 import { Button } from '../../components/ui/Button'
 import {
   useProgram,
@@ -103,6 +108,8 @@ export function ProgramEditPage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm">
         <ProgramStatusBadge program={program} />
+        <ProgramRevisionBadge revision={program.revision} />
+        <ProgramLockBadge program={program} />
         <span className="text-[var(--color-muted)]">
           {t('common.id')}: {program.id}
         </span>
@@ -127,6 +134,10 @@ export function ProgramEditPage() {
         </div>
       </div>
 
+      <div className="mb-4">
+        <ProgramLockBanner program={program} />
+      </div>
+
       <div className="mb-6 rounded-lg border border-[var(--color-border)] bg-white p-5">
         <ProgramForm
           key={`${program.id}-${program.updated_at}`}
@@ -140,7 +151,10 @@ export function ProgramEditPage() {
         />
       </div>
 
-      <ProgramStepsEditor programId={programId} />
+      <ProgramStepsEditor
+        programId={programId}
+        structureLocked={program.structure_locked === true}
+      />
     </div>
   )
 }

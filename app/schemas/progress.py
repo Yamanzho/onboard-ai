@@ -2,12 +2,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.schemas.limits import (
     MAX_PROGRESS_PAYLOAD_JSON_BYTES,
     ensure_json_object_within_limit,
 )
+from app.services.step_content import content_blocks_as_dicts, payload_block_index
 
 
 class ProgressCompleteRequest(BaseModel):
@@ -51,6 +52,16 @@ class ProgressStepInfo(BaseModel):
     content: dict[str, Any] = Field(default_factory=dict)
     position: int
 
+    @computed_field
+    @property
+    def content_blocks(self) -> list[dict[str, str]]:
+        return content_blocks_as_dicts(self.content)
+
+    @computed_field
+    @property
+    def block_count(self) -> int:
+        return len(self.content_blocks)
+
 
 class ProgressResponse(BaseModel):
     """Progress resource for a single assignment step."""
@@ -67,6 +78,12 @@ class ProgressResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     step: ProgressStepInfo | None = None
+
+    @computed_field
+    @property
+    def block_index(self) -> int | None:
+        """Current content-block cursor from payload, if the client stored one."""
+        return payload_block_index(self.payload)
 
 
 class AssignmentProgressResponse(BaseModel):

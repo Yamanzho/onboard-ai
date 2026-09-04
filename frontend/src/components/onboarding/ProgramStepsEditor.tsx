@@ -18,6 +18,7 @@ import {
 } from './StepForm'
 import {
   buildStepContent,
+  parseContentBlocks,
   stepContentBody,
   stepContentQuestions,
   stepContentUrl,
@@ -31,6 +32,7 @@ const emptyForm: StepFormValues = {
   content_body: '',
   content_url: '',
   content_questions: '',
+  content_blocks: [],
   is_required: true,
   estimated_minutes: '',
 }
@@ -51,11 +53,13 @@ function toPayload(values: StepFormValues, existingContent?: Record<string, unkn
 interface ProgramStepsEditorProps {
   programId: string
   readOnly?: boolean
+  structureLocked?: boolean
 }
 
 export function ProgramStepsEditor({
   programId,
   readOnly = false,
+  structureLocked = false,
 }: ProgramStepsEditorProps) {
   const { data, isLoading, error } = useProgramSteps(programId)
   const { create, update, remove, reorder } = useStepMutations(programId)
@@ -64,6 +68,7 @@ export function ProgramStepsEditor({
   const [editing, setEditing] = useState<Step | null>(null)
 
   const steps = data ?? []
+  const locked = readOnly || structureLocked
 
   async function onCreate(values: StepFormValues) {
     setActionError(null)
@@ -139,7 +144,7 @@ export function ProgramStepsEditor({
             {t('programs.steps.countHint', { count: steps.length })}
           </p>
         </div>
-        {!readOnly ? (
+        {!locked ? (
           <Button
             variant="secondary"
             onClick={() => {
@@ -154,7 +159,7 @@ export function ProgramStepsEditor({
 
       {actionError ? <ErrorAlert message={actionError} /> : null}
 
-      {showCreate && !readOnly ? (
+      {showCreate && !locked ? (
         <div className="rounded-lg border border-[var(--color-border)] bg-white p-4">
           <h3 className="mb-3 text-sm font-semibold">{t('programs.steps.new')}</h3>
           <StepForm
@@ -167,7 +172,7 @@ export function ProgramStepsEditor({
         </div>
       ) : null}
 
-      {editing && !readOnly ? (
+      {editing && !locked ? (
         <div className="rounded-lg border border-[var(--color-border)] bg-white p-4">
           <h3 className="mb-3 text-sm font-semibold">{t('programs.steps.edit')}</h3>
           <StepForm
@@ -179,6 +184,7 @@ export function ProgramStepsEditor({
               content_body: stepContentBody(editing.content),
               content_url: stepContentUrl(editing.content),
               content_questions: stepContentQuestions(editing.content),
+              content_blocks: parseContentBlocks(editing.content),
               is_required: editing.is_required,
               estimated_minutes:
                 editing.estimated_minutes != null
@@ -197,7 +203,7 @@ export function ProgramStepsEditor({
         <EmptyState
           title={t('programs.steps.emptyTitle')}
           description={
-            readOnly
+            readOnly || structureLocked
               ? t('programs.steps.emptyDescription')
               : t('programs.steps.emptyHint')
           }
@@ -212,7 +218,7 @@ export function ProgramStepsEditor({
                 <th className="px-4 py-3">{t('programs.steps.colType')}</th>
                 <th className="px-4 py-3">{t('programs.steps.colRequired')}</th>
                 <th className="px-4 py-3">{t('programs.steps.colMinutes')}</th>
-                {!readOnly ? <th className="px-4 py-3" /> : null}
+                {!locked ? <th className="px-4 py-3" /> : null}
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--color-border)]">
@@ -226,12 +232,14 @@ export function ProgramStepsEditor({
                     <Badge>{labelStepType(step.step_type)}</Badge>
                   </td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">
-                    {step.is_required ? t('common.yes') : t('common.no')}
+                    {step.is_required
+                      ? t('programs.steps.required')
+                      : t('programs.steps.optional')}
                   </td>
                   <td className="px-4 py-3 text-[var(--color-muted)]">
                     {step.estimated_minutes ?? t('common.emDash')}
                   </td>
-                  {!readOnly ? (
+                  {!locked ? (
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap justify-end gap-2">
                         <Button
