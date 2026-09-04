@@ -24,6 +24,10 @@ def test_postgres_backup_runbook_covers_pilot_ops() -> None:
     assert "more than 36 hours" in text
     assert "7 hours" not in text
     assert "26 hours" not in text
+    assert "REMOTE BACKUP: DEFERRED — NOT A PILOT BLOCKER" in text
+    assert "BACKUP/DR: DEFERRED — ACCEPTED PILOT RISK" in text
+    assert "must have verified off-host backup before deploy" not in text.lower()
+    assert "ONBOARDAI_BACKUP_ENFORCEMENT" in text
 
 
 def test_golden_path_runbook_covers_pilot_flow() -> None:
@@ -43,8 +47,11 @@ def test_golden_path_runbook_covers_pilot_flow() -> None:
         "SEED_DEMO",
         "BOT_COMPANY_ID",
         "/invite#",
+        "NOT A PILOT BLOCKER",
+        "no PITR",
     ):
         assert needle in text, f"missing {needle!r}"
+    assert "must have verified off-host backup" not in text.lower()
 
 
 def test_deployment_links_backup_and_golden_path() -> None:
@@ -55,3 +62,7 @@ def test_deployment_links_backup_and_golden_path() -> None:
     assert "/ready" in text
     assert "/health" in text
     assert "safe-deployment.md" in text
+    assert "DEFERRED — NOT A PILOT BLOCKER" in text
+    assert "currently deferred for this pilot" in text
+    assert "must have verified off-host backup before deploy" not in text.lower()
+    assert "docker-compose.prod.local.yml" in text

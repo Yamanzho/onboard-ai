@@ -1,21 +1,46 @@
 # Runbook: automated PostgreSQL backup and recovery
 
-This is an operator runbook for the single-VPS production pilot. Backup and
+This is an operator runbook for the single-VPS production host. Backup and
 restore jobs run on the host, not in the API or bot. Repository templates do
 not install timers, upload a backup, or touch production automatically.
 
-Production PostgreSQL is `pgvector/pgvector:pg16`, service `db`, database
-`onboard_ai`, with data in external volume `onboard-ai_postgres_data`.
-A copy on that VPS is not disaster recovery; every valid production backup is
-stored off the VPS.
+## Current pilot status
 
-## Recovery objectives
+`REMOTE BACKUP: DEFERRED — NOT A PILOT BLOCKER`
+
+`BACKUP/DR: DEFERRED — ACCEPTED PILOT RISK`
+
+Off-host/S3 backup is recommended for later production hardening and is
+currently deferred by operator decision. Pilot activation and
+`scripts/deploy_production.sh` must not require AWS CLI, `/etc/onboard-ai/backup.env`,
+backup timers, or a restore-verification marker.
+
+Do **not** claim RPO 6h active or RTO 4h validated while this status holds.
+
+Accepted residual risk while remote backup remains deferred:
+
+- single VPS;
+- no off-host backup;
+- no WAL archive / PITR;
+- VPS or disk loss can result in unrecoverable production data loss.
+
+Phase 8A scripts, systemd units, and S3 support remain in the repository for
+future enablement. Follow the rest of this runbook only when an operator
+chooses to turn remote backup on.
+
+Production PostgreSQL is `pgvector/pgvector:pg16`, service `db`, database
+`onboard_ai`. The live data volume is selected by Compose (include
+`docker-compose.prod.local.yml` when it exists). A copy on that VPS is not
+disaster recovery; a valid off-host backup is stored off the VPS.
+
+## Recovery objectives (when remote backup is enabled)
 
 - Target RPO: **6 hours**, once all four daily backup timer runs complete and
   upload successfully. There is no WAL archive/PITR in Phase 8A.
 - Target RTO: **4 hours** assuming a replacement VPS, Docker, repository,
   application secrets, and backup credentials are available.
-- The RTO is a pilot target, not a guarantee. Record production-sized drills.
+- The RTO is a target after enablement, not a current guarantee. Record
+  production-sized drills.
 - Restore verification runs daily against the newest remotely stored artifact.
 
 A backup is valid only after an isolated PostgreSQL instance restores it and
@@ -58,7 +83,11 @@ database/application password as an encryption key.
 
 ## Prerequisites
 
-On the VPS:
+AWS CLI, a private bucket, and `/etc/onboard-ai/backup.env` are required only
+when enabling Phase 8A. They are **not** current pilot activation
+prerequisites.
+
+On the VPS, when you choose to enable remote backup:
 
 1. Docker Engine and Compose plugin (already required by deployment).
 2. Python 3.
@@ -192,7 +221,11 @@ Success markers (mode 0600):
 /var/lib/onboard-ai-backup/last-restore-verification.json
 ```
 
-Phase 8B monitoring can alert on:
+Phase 8B monitoring can alert on the following **only after**
+`ONBOARDAI_BACKUP_ENFORCEMENT=1` is set (after S3 config, a successful remote
+backup, restore verification, and timers). While enforcement is `0` or unset,
+these backup/restore alerts stay silent so an intentionally deferred backup
+does not page the pilot:
 
 - non-zero systemd service result;
 - no successful remote backup marker for more than 8 hours

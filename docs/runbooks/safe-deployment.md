@@ -104,17 +104,28 @@ Do not start a second API replica that also migrates.
 
 ## Safe deploy sequence
 
-Prefer `scripts/deploy_production.sh` on the VPS after a backup exists.
+Prefer `scripts/deploy_production.sh` on the VPS. Off-host backup is
+recommended for production hardening and is currently deferred for this
+pilot by operator decision. Missing S3 config, AWS CLI, `backup.env`, backup
+timers, or restore-verification markers must not block deploy.
 
-1. Preflight: `docker compose -f docker-compose.yml -f docker-compose.prod.yml config`
-2. Confirm a recent successful backup marker (Phase 8A)
+1. Preflight: `scripts/deploy_production.sh` uses
+   `docker-compose.yml` + `docker-compose.prod.yml` and, when present,
+   `docker-compose.prod.local.yml`. It fail-closes if the resolved
+   `postgres_data` volume is not external or does not match the live
+   `onboard-ai-db` mount. Do not omit a host-local override that selects
+   the live volume. This volume check is mandatory.
+2. Remote backup marker is optional for this pilot (`BACKUP/DR: DEFERRED —
+   ACCEPTED PILOT RISK`). If a marker exists, note it; do not fail closed
+   when it is absent.
 3. Build images
 4. `docker compose ... run --rm migrate`
 5. Recreate API only (`--no-deps --force-recreate api`)
 6. Wait for `/health` and `/ready`
 7. Recreate bot
 8. Smoke: frontend `/`, auth endpoint basic response, `alembic current`
-9. Confirm monitoring still scrapes API metrics and public probes
+9. Confirm monitoring still scrapes API metrics and public probes when the
+   monitoring overlay is running
 10. If `/ready` never returns 200, the deploy is **not** successful
 
 ## Failed deploy / rollback

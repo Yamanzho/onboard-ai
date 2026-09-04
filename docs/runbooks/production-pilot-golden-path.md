@@ -20,7 +20,7 @@ Telegram Bot API): `tests/e2e/test_golden_path.py`. Cross-tenant isolation:
 
 | Check | Expected |
 |-------|----------|
-| Compose | `docker compose -f docker-compose.yml -f docker-compose.prod.yml` |
+| Compose | `docker compose -f docker-compose.yml -f docker-compose.prod.yml` (+ `-f docker-compose.prod.local.yml` when that host file exists) |
 | Env | `APP_ENV=production`, `DEBUG=false`, `SEED_DEMO=false` |
 | Secrets | Unique `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, `POSTGRES_PASSWORD`, `ONBOARD_OWNER_PASSWORD`, `ONBOARD_APP_PASSWORD`, `REDIS_PASSWORD`, `BOT_SERVICE_TOKEN` |
 | AI | `AI_EMBEDDING_PROVIDER=openai`, `AI_LLM_PROVIDER=openai`, hosted API key; both `AI_ALLOW_FAKE_*_IN_PRODUCTION` flags false |
@@ -28,6 +28,8 @@ Telegram Bot API): `tests/e2e/test_golden_path.py`. Cross-tenant isolation:
 | TLS | Host nginx HTTPS site (`deploy/nginx/onboardai.aoe.kz.https.conf`) |
 | SMTP | `SMTP_*` set **or** operator ready to copy `invite_url` manually |
 | Bot | `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, matching `BOT_SERVICE_TOKEN`. Leave `BOT_COMPANY_ID` empty |
+| Backup/DR | `REMOTE BACKUP: DEFERRED — NOT A PILOT BLOCKER`. Phase 8A tooling remains available. Residual accepted risk: single VPS, no off-host backup, no PITR; VPS/disk loss can destroy production data. |
+| Monitoring | Optional overlay. Alertmanager destination is required only if alert delivery is in scope. External uptime probe is a manual follow-up. |
 
 The API can start without `BOT_COMPANY_ID`. Create the company after Super
 Admin login. Never set `BOT_COMPANY_ID` to the demo seed UUID
@@ -257,3 +259,6 @@ limits → 400. Super Admin platform APIs are not blocked by tenant entitlement.
 - `BOT_COMPANY_ID` set to the demo seed UUID (leave it empty in production)
 - Invite emails claiming `email_sent` when SMTP failed
 - Raw invite tokens in `docker compose logs`
+
+Missing off-host backup, AWS CLI, or `backup.env` is **not** an abort
+condition for this pilot.

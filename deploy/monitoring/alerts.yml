@@ -41,9 +41,12 @@ groups:
 
       - alert: BackupOverdue
         expr: |
-          onboardai_backup_marker_valid == 0
-          or (time() - onboardai_backup_last_success_timestamp_seconds > 28800)
-          or onboardai_backup_remote_uploaded == 0
+          onboardai_backup_enforcement == 1
+          and (
+            onboardai_backup_marker_valid == 0
+            or (time() - onboardai_backup_last_success_timestamp_seconds > 28800)
+            or onboardai_backup_remote_uploaded == 0
+          )
         for: 10m
         labels:
           severity: critical
@@ -53,8 +56,11 @@ groups:
 
       - alert: RestoreVerificationOverdue
         expr: |
-          onboardai_restore_verification_marker_valid == 0
-          or (time() - onboardai_restore_verification_last_success_timestamp_seconds > 129600)
+          onboardai_backup_enforcement == 1
+          and (
+            onboardai_restore_verification_marker_valid == 0
+            or (time() - onboardai_restore_verification_last_success_timestamp_seconds > 129600)
+          )
         for: 10m
         labels:
           severity: critical
@@ -63,7 +69,9 @@ groups:
           action: Inspect the verification timer and journal; preserve the source backup.
 
       - alert: RestoreVerificationFailed
-        expr: onboardai_restore_verification_success == 0
+        expr: |
+          onboardai_backup_enforcement == 1
+          and onboardai_restore_verification_success == 0
         for: 5m
         labels:
           severity: critical
@@ -270,7 +278,9 @@ groups:
           action: Inspect API/bot completion failures and allow normal reclaim semantics.
 
       - alert: BackupRetentionWarning
-        expr: onboardai_backup_retention_warning == 1
+        expr: |
+          onboardai_backup_enforcement == 1
+          and onboardai_backup_retention_warning == 1
         for: 30m
         labels:
           severity: warning

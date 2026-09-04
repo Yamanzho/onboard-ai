@@ -43,8 +43,10 @@ def test_required_alerts_and_safe_webhook_configuration_exist() -> None:
         assert f"alert: {name}" in alerts
     assert "for:" in alerts
     assert "[10m]" in alerts
-    # Phase 8A schedule: backups every 6h, restore verify daily.
-    # Alert after 8h / 36h so one missed run is visible without timer-jitter noise.
+    # Phase 8A schedule remains encoded for future enablement (8h / 36h).
+    # Alerts stay silent unless onboardai_backup_enforcement == 1 (pilot default).
+    assert "onboardai_backup_enforcement == 1" in alerts
+    assert alerts.count("onboardai_backup_enforcement == 1") >= 4
     assert "onboardai_backup_last_success_timestamp_seconds > 28800" in alerts
     assert (
         "onboardai_restore_verification_last_success_timestamp_seconds > 129600"

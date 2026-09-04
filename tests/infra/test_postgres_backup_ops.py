@@ -53,6 +53,7 @@ def test_backup_environment_examples_are_placeholder_only() -> None:
         "BACKUP_RETENTION_DAYS=30",
         "BACKUP_STATUS_FILE",
         "BACKUP_VERIFY_STATUS_FILE",
+        "ONBOARDAI_BACKUP_ENFORCEMENT=0",
     ):
         assert needle in dedicated
         assert needle in application
@@ -82,6 +83,8 @@ def test_runbook_defines_recovery_security_and_failure_contracts() -> None:
         "WAL archiving",
         "last-backup.json",
         "last-restore-verification.json",
+        "DEFERRED — NOT A PILOT BLOCKER",
+        "ONBOARDAI_BACKUP_ENFORCEMENT",
     ):
         assert needle in text
     assert "Do not start API/bot writers before database restoration" in text

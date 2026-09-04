@@ -38,6 +38,7 @@ def test_marker_export_includes_freshness_duration_size_and_result(tmp_path: Pat
         },
     )
     output = render_metrics(backup, restore)
+    assert "onboardai_backup_enforcement 0" in output
     assert "onboardai_backup_marker_valid 1" in output
     assert "onboardai_backup_remote_uploaded 1" in output
     assert "onboardai_backup_size_bytes 4096" in output
@@ -59,6 +60,7 @@ def test_missing_or_failed_markers_fail_closed_without_leaking_content(
         },
     )
     output = render_metrics(backup, restore)
+    assert "onboardai_backup_enforcement 0" in output
     assert "onboardai_backup_marker_valid 0" in output
     assert "onboardai_backup_last_success_timestamp_seconds 0.000" in output
     assert "onboardai_restore_verification_marker_valid 0" in output
@@ -80,3 +82,13 @@ def test_main_writes_atomic_prometheus_textfile(tmp_path: Path) -> None:
     assert output.exists()
     assert output.stat().st_mode & 0o777 == 0o644
     assert output.read_text().endswith("\n")
+
+
+def test_backup_enforcement_metric_is_opt_in(tmp_path: Path, monkeypatch) -> None:
+    backup = tmp_path / "backup.json"
+    restore = tmp_path / "restore.json"
+    monkeypatch.setenv("ONBOARDAI_BACKUP_ENFORCEMENT", "1")
+    output = render_metrics(backup, restore)
+    assert "onboardai_backup_enforcement 1" in output
+    monkeypatch.setenv("ONBOARDAI_BACKUP_ENFORCEMENT", "0")
+    assert "onboardai_backup_enforcement 0" in render_metrics(backup, restore)

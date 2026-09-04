@@ -383,6 +383,12 @@ docker compose ps
 docker compose logs -f api
 ```
 
+If `docker-compose.prod.local.yml` exists on the host, include it after
+`docker-compose.prod.yml` for every Compose command. That override selects the
+live Postgres volume; omitting it can resolve a different empty volume.
+`scripts/deploy_production.sh` includes it when present and fail-closes on a
+volume mismatch. Do not delete or switch Postgres volumes.
+
 ### 5.2.1 Production verification sequence
 
 Walk this list on a new VPS after cloning the repo. Automated CI covers compose
@@ -392,18 +398,18 @@ It does not contact live DNS, Telegram, production PostgreSQL, or remote backup
 storage.
 
 1. **Configure `.env`** — `cp .env.example .env`, then generate unique secrets (see §2 Production secrets). Set `INVITE_BASE_URL=https://<pilot-host>`. Do not copy placeholders. `SEED_DEMO=false`. Set `AI_EMBEDDING_PROVIDER=openai`, `AI_LLM_PROVIDER=openai`, and the hosted API key. Leave both `AI_ALLOW_FAKE_*_IN_PRODUCTION` flags false.
-2. **Validate secrets** — production Compose interpolates required variables (`:?`). `BOT_COMPANY_ID` is optional (`:-`). API Settings **fail-fast** on weak/default `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, Redis password, Postgres passwords, `BOT_SERVICE_TOKEN`, and on fake embeddings/LLM without an explicit emergency override. If `BOT_COMPANY_ID` is set, it must not be the demo seed UUID. `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` must succeed.
-3. **Start production compose** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`. Confirm API/DB/Redis have **no** public host ports; frontend is `127.0.0.1:3000`. The `migrate` service runs once before API starts.
-4. **Run migrations exactly once** — do not let API replicas race Alembic. Official path: `docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm migrate` (also used by `scripts/deploy_production.sh`). Optional check: `docker compose exec api alembic current` (expect a single head).
+2. **Validate secrets** — production Compose interpolates required variables (`:?`). `BOT_COMPANY_ID` is optional (`:-`). API Settings **fail-fast** on weak/default `SECRET_KEY`, `SUPER_ADMIN_PASSWORD`, Redis password, Postgres passwords, `BOT_SERVICE_TOKEN`, and on fake embeddings/LLM without an explicit emergency override. If `BOT_COMPANY_ID` is set, it must not be the demo seed UUID. `docker compose -f docker-compose.yml -f docker-compose.prod.yml` (plus `-f docker-compose.prod.local.yml` when that file exists) `config` must succeed.
+3. **Start production compose** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml` (plus local override when present) `up -d --build`. Confirm API/DB/Redis have **no** public host ports; frontend is `127.0.0.1:3000`. The `migrate` service runs once before API starts.
+4. **Run migrations exactly once** — do not let API replicas race Alembic. Official path: `scripts/deploy_production.sh` or `docker compose -f docker-compose.yml -f docker-compose.prod.yml` (plus local override when present) `run --rm migrate`. Optional check: `docker compose exec api alembic current` (expect a single head).
 5. **Verify health (liveness)** — `curl -fsS http://127.0.0.1:3000/health` → `{"status":"ok"}`. This only means the API process is up.
 6. **Verify readiness** — `curl -fsS http://127.0.0.1:3000/ready` → `{"status":"ready"}`. HTTP 503 means PostgreSQL (always) or Redis (production) is not accepting traffic. The body must not contain URLs or passwords.
 7. **Configure nginx** — copy `deploy/nginx/onboardai.aoe.kz.conf` (HTTP / ACME bootstrap). See [deploy/nginx/README.md](deploy/nginx/README.md).
 8. **Configure HTTPS** — certbot, then replace with `deploy/nginx/onboardai.aoe.kz.https.conf` (HTTPS-only + HSTS). `curl -fsS https://<pilot-host>/ready`.
 9. **Verify application** — Super Admin login at `/platform/login`, then the pilot checklist: [production-pilot-golden-path.md](docs/runbooks/production-pilot-golden-path.md). Automated coverage: `tests/e2e/test_golden_path.py`.
 10. **Verify Telegram** — set `BOT_TOKEN`, `TELEGRAM_BOT_USERNAME`, matching `BOT_SERVICE_TOKEN`. Identity is `telegram_user_id` → Employee → `employee.company_id`. `BOT_COMPANY_ID` is optional ops metadata. Confirm bot logs (polling or webhook). Live Bot API cannot be asserted in CI.
-11. **Configure automated backup** — follow [postgres-backup.md](docs/runbooks/postgres-backup.md): install the host systemd templates, private S3-compatible credentials, six-hour `pg_dump` schedule, and daily isolated restore verification. Backup jobs remain outside API/bot containers.
-12. **Start monitoring overlay** — `docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.monitoring.yml up -d`. Configure the Alertmanager webhook secret file (`/etc/onboard-ai/alertmanager-webhook-url` by default). Enable the host marker exporter timer. Confirm Prometheus/Alertmanager bind to `127.0.0.1` only.
-13. **External uptime/TLS probe** — keep one operator-owned probe **outside this VPS** against `https://<pilot-host>/health`. Internal Prometheus cannot see total host loss.
+11. **Off-host backup (optional / deferred)** — Phase 8A tooling remains in the repo. It is recommended for later production hardening and is currently deferred for this pilot by operator decision (`BACKUP/DR: DEFERRED — ACCEPTED PILOT RISK`). AWS CLI, `backup.env`, S3, backup timers, and restore verification are **not** activation prerequisites. Do not block deploy because remote backup is inactive. Follow [postgres-backup.md](docs/runbooks/postgres-backup.md) only when enabling it later.
+12. **Monitoring overlay (optional)** — if alert delivery is in scope: `docker compose -f docker-compose.yml -f docker-compose.prod.yml -f docker-compose.prod.local.yml -f docker-compose.monitoring.yml up -d` (omit the local file when it does not exist). Configure `/etc/onboard-ai/alertmanager-webhook-url`. Backup/restore alerts stay silent unless `ONBOARDAI_BACKUP_ENFORCEMENT=1`. Confirm Prometheus/Alertmanager bind to `127.0.0.1` only.
+13. **External uptime/TLS probe (manual follow-up)** — optional operator-owned probe **outside this VPS** against `https://<pilot-host>/health`. Internal Prometheus cannot see total host loss. Absence does not block this pilot.
 
 ```bash
 # After compose is up (frontend bound to 127.0.0.1:3000):
@@ -573,8 +579,9 @@ cd frontend && npm install && npm run dev
 - [ ] Production uses `docker-compose.prod.yml` (immutable images; no `.:/app`; no `--reload`; secrets required; non-root API/bot)
 - [ ] TLS 1.2+ (prefer 1.3) for Admin UI and bot webhook; HTTP→HTTPS on edge; HSTS after HTTPS-only confirmed ([host nginx](deploy/nginx/README.md))
 - [ ] `TRUST_PROXY_HEADERS=true` only with trusted overwrite proxy and unpublished API
-- [ ] PostgreSQL backups: [postgres-backup.md](docs/runbooks/postgres-backup.md) (six-hour off-host dump, SSE, 30-day retention, daily isolated restore verification, RPO/RTO). Enable host timers only after private remote storage is configured.
-- [ ] Monitoring overlay (`docker-compose.monitoring.yml`), Alertmanager destination, marker exporter timer, and an **external** uptime/TLS probe outside the VPS
+- [ ] PostgreSQL backups: [postgres-backup.md](docs/runbooks/postgres-backup.md) — recommended for later hardening; **currently deferred for this pilot** (`REMOTE BACKUP: DEFERRED — NOT A PILOT BLOCKER`). AWS CLI / `backup.env` / S3 / timers are not activation requirements. Residual accepted risk: single VPS, no off-host backup, no PITR; VPS/disk loss can destroy production data.
+- [ ] Monitoring overlay (`docker-compose.monitoring.yml`) if alert delivery is in scope; Alertmanager destination only then. Backup/restore alerts remain gated behind `ONBOARDAI_BACKUP_ENFORCEMENT=1`.
+- [ ] External uptime/TLS probe outside the VPS: optional manual follow-up
 - [ ] Walk the pilot flow: [production-pilot-golden-path.md](docs/runbooks/production-pilot-golden-path.md)
 - [ ] `curl` `/health` (liveness) and `/ready` (Postgres + production Redis)
 - [ ] Follow [docs/runbooks/safe-deployment.md](docs/runbooks/safe-deployment.md) for restarts (single-instance downtime is expected)

@@ -57,7 +57,18 @@ def _read_marker(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def render_metrics(backup_path: Path, restore_path: Path) -> str:
+def _enforcement_enabled(value: bool | None = None) -> bool:
+    if value is not None:
+        return value
+    return os.environ.get("ONBOARDAI_BACKUP_ENFORCEMENT", "0").strip() == "1"
+
+
+def render_metrics(
+    backup_path: Path,
+    restore_path: Path,
+    *,
+    enforcement: bool | None = None,
+) -> str:
     """Render only fixed metric names and numeric values; marker strings stay private."""
     backup = _read_marker(backup_path)
     restore = _read_marker(restore_path)
@@ -66,6 +77,12 @@ def render_metrics(backup_path: Path, restore_path: Path) -> str:
     backup_valid = backup.get("status") == "success" and backup_timestamp > 0
     restore_valid = restore.get("status") == "success" and restore_timestamp > 0
     lines = [
+        (
+            "# HELP onboardai_backup_enforcement "
+            "Off-host backup alerts are enforced when 1."
+        ),
+        "# TYPE onboardai_backup_enforcement gauge",
+        f"onboardai_backup_enforcement {int(_enforcement_enabled(enforcement))}",
         "# HELP onboardai_backup_marker_valid Latest backup marker is valid.",
         "# TYPE onboardai_backup_marker_valid gauge",
         f"onboardai_backup_marker_valid {int(backup_valid)}",
