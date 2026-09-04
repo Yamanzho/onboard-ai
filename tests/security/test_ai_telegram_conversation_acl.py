@@ -53,9 +53,10 @@ async def test_telegram_cannot_choose_tenant_when_continuing(
     await telegram_conversation_store.set_current_conversation(42, conversation_id)
     api = AsyncMock(spec=OnboardApiClient)
     api.find_employee_by_telegram = AsyncMock(return_value=_employee())
-    api.post_ai_chat = AsyncMock(
+    api.post_assistant_chat = AsyncMock(
         return_value={
             "answer": "ok",
+            "text": "ok",
             "no_answer": False,
             "conversation_id": str(conversation_id),
             "citations": [],
@@ -67,8 +68,10 @@ async def test_telegram_cannot_choose_tenant_when_continuing(
         f'"role": "super_admin", "top_k": 100, "min_score": 0.1}}'
     )
     await ai_question(_message(prompt), api, _state())
-    api.post_ai_chat.assert_awaited_once_with(prompt, conversation_id=conversation_id)
-    kwargs = api.post_ai_chat.await_args.kwargs
+    api.post_assistant_chat.assert_awaited_once_with(
+        prompt, conversation_id=conversation_id
+    )
+    kwargs = api.post_assistant_chat.await_args.kwargs
     assert set(kwargs) == {"conversation_id"}
 
 

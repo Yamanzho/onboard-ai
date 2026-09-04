@@ -67,10 +67,13 @@ def _state(*, current: str | None = None) -> AsyncMock:
 async def test_authenticated_employee_receives_answer_and_titles() -> None:
     api = AsyncMock(spec=OnboardApiClient)
     api.find_employee_by_telegram = AsyncMock(return_value=_employee())
-    api.post_ai_chat = AsyncMock(
+    api.post_assistant_chat = AsyncMock(
         return_value={
             "answer": "Для VPN нужен клиент из IT-портала.",
+            "text": "Для VPN нужен клиент из IT-портала.",
             "no_answer": False,
+            "intent": "company_knowledge",
+            "action": "none",
             "citations": [
                 {
                     "source_id": "S1",
@@ -82,7 +85,7 @@ async def test_authenticated_employee_receives_answer_and_titles() -> None:
     )
     message = _message("Как получить доступ к VPN?")
     await ai_question(message, api, _state())
-    api.post_ai_chat.assert_awaited_once_with("Как получить доступ к VPN?")
+    api.post_assistant_chat.assert_awaited_once_with("Как получить доступ к VPN?")
     sent = message.answer.await_args.args[0]
     assert "Для VPN нужен клиент из IT-портала." in sent
     assert "Источники:" in sent
@@ -94,10 +97,10 @@ async def test_authenticated_employee_receives_answer_and_titles() -> None:
 async def test_unauthenticated_telegram_user_cannot_access_ai() -> None:
     api = AsyncMock(spec=OnboardApiClient)
     api.find_employee_by_telegram = AsyncMock(return_value=None)
-    api.post_ai_chat = AsyncMock()
+    api.post_assistant_chat = AsyncMock()
     message = _message("Как получить VPN?")
     await ai_question(message, api, _state())
-    api.post_ai_chat.assert_not_called()
+    api.post_assistant_chat.assert_not_called()
     message.answer.assert_awaited_once_with(MSG_UNAUTHENTICATED)
 
 
@@ -111,7 +114,7 @@ async def test_onboarding_fsm_state_is_not_consumed_by_ai() -> None:
         _state(current=OnboardingStates.answering_quiz.state),
     )
     api.find_employee_by_telegram.assert_not_called()
-    api.post_ai_chat.assert_not_called()
+    api.post_assistant_chat.assert_not_called()
     message.answer.assert_not_called()
 
 
@@ -120,7 +123,7 @@ async def test_start_command_is_not_handled_by_ai() -> None:
     api = AsyncMock(spec=OnboardApiClient)
     message = _message("/start")
     await ai_question(message, api, _state())
-    api.post_ai_chat.assert_not_called()
+    api.post_assistant_chat.assert_not_called()
     message.answer.assert_not_called()
 
 
@@ -131,7 +134,7 @@ async def test_cabinet_commands_are_not_handled_by_ai() -> None:
         message = _message(text)
         await ai_question(message, api, _state())
         message.answer.assert_not_called()
-    api.post_ai_chat.assert_not_called()
+    api.post_assistant_chat.assert_not_called()
 
 
 def test_handler_priority_is_start_onboarding_cabinet_ai() -> None:
@@ -217,16 +220,16 @@ async def test_timeout_is_a_short_user_message() -> None:
 async def test_empty_and_overlong_messages_do_not_call_api() -> None:
     api = AsyncMock(spec=OnboardApiClient)
     api.find_employee_by_telegram = AsyncMock(return_value=_employee())
-    api.post_ai_chat = AsyncMock()
+    api.post_assistant_chat = AsyncMock()
     empty = _message("   ")
     await ai_question(empty, api, _state())
     empty.answer.assert_awaited_once()
-    api.post_ai_chat.assert_not_called()
+    api.post_assistant_chat.assert_not_called()
 
     long_msg = _message("x" * (MAX_CHAT_QUESTION_CHARS + 1))
     await ai_question(long_msg, api, _state())
     assert long_msg.answer.await_args.args[0] == MSG_VALIDATION
-    api.post_ai_chat.assert_not_called()
+    api.post_assistant_chat.assert_not_called()
 
 
 def test_user_error_message_never_echoes_exception() -> None:

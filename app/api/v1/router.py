@@ -4,6 +4,7 @@ from app.api.v1.ai import router as ai_router
 from app.api.v1.ai_conversations import router as ai_conversations_router
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.assignments import router as assignments_router
+from app.api.v1.assistant import router as assistant_router
 from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
 from app.api.v1.companies import router as companies_router
@@ -36,3 +37,4 @@ router.include_router(analytics_router)
 router.include_router(audit_router)
 router.include_router(ai_router)
 router.include_router(ai_conversations_router)
+router.include_router(assistant_router)

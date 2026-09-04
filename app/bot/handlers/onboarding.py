@@ -432,6 +432,70 @@ async def my_onboarding(message: Message, api: OnboardApiClient, state: FSMConte
         await message.answer("Не удалось загрузить прогресс. Попробуйте позже.")
 
 
+async def present_assistant_learning(
+    message: Message,
+    api: OnboardApiClient,
+    state: FSMContext,
+    *,
+    assignment_ids: list[UUID],
+    titles: dict[UUID, str] | None = None,
+) -> None:
+    """Resume or choose an assignment using existing 9F / acknowledgement UI."""
+    labels = titles or {}
+    if not assignment_ids:
+        return
+    if len(assignment_ids) > 1:
+        buttons = [
+            (assignment_id, labels.get(assignment_id) or "Курс")
+            for assignment_id in assignment_ids
+        ]
+        await message.answer(
+            "У вас несколько активных курсов. Выберите, какой открыть:",
+            reply_markup=assignment_open_keyboard(buttons),
+        )
+        return
+    assignment_id = assignment_ids[0]
+    assignment = await api.get_assignment(assignment_id)
+    if assignment.assignment_type == "acknowledgement":
+        await show_acknowledgement_assignment(
+            message=message,
+            api=api,
+            state=state,
+            assignment_id=assignment_id,
+        )
+        return
+    program_id = assignment.program_id
+    if program_id is None:
+        await message.answer("Не удалось открыть курс.")
+        return
+    program = await api.get_program(program_id)
+    progress = await api.get_progress(assignment.id)
+    done = sum(1 for item in progress.items if item.status in _DONE_STATUSES)
+    total = len(progress.items)
+    remaining = max(0, total - done)
+    current = api.first_incomplete_step(progress)
+    step_title = (
+        current[1].step.title
+        if current and current[1].step is not None
+        else "—"
+    )
+    await message.answer(
+        f"📚 <b>Ваш онбординг</b>\n\n"
+        f"Программа: {escape(program.title)}\n"
+        f"Прогресс: {done} / {total}\n"
+        f"{progress.percentage:.0f}%\n"
+        f"Осталось: {remaining}\n\n"
+        f"Текущий шаг:\n{escape(step_title)}"
+    )
+    await _show_current_step(
+        message=message,
+        api=api,
+        state=state,
+        assignment_id=assignment.id,
+        program_id=program_id,
+    )
+
+
 @router.callback_query(F.data.startswith("progress:complete:"))
 async def complete_step_callback(
     callback: CallbackQuery,

@@ -107,6 +107,49 @@ async def ask_company_knowledge(
     return format_ai_reply(payload)
 
 
+async def ask_assistant(
+    api: OnboardApiClient,
+    message: str,
+    *,
+    telegram_user_id: int | None = None,
+    conversations: TelegramConversationStore | None = None,
+) -> dict[str, Any]:
+    """Call the orchestrated assistant and remember conversation_id if present."""
+    store = conversations
+    conversation_id: UUID | None = None
+    if telegram_user_id is not None:
+        store = store or get_telegram_conversation_store()
+        try:
+            conversation_id = await store.get_current_conversation(telegram_user_id)
+        except ServiceUnavailableError as exc:
+            return {"text": user_error_message(exc), "action": "none", "error": True}
+
+    try:
+        payload = await _post_assistant_chat(api, message, conversation_id)
+    except (
+        OnboardApiError,
+        httpx.TimeoutException,
+        httpx.HTTPError,
+        ServiceUnavailableError,
+    ) as exc:
+        logger.warning(
+            "telegram_assistant_failed error_type=%s status_code=%s request_id=%s",
+            type(exc).__name__,
+            getattr(exc, "status_code", None),
+            getattr(exc, "request_id", None) or "-",
+        )
+        return {"text": user_error_message(exc), "action": "none", "error": True}
+    except Exception:
+        logger.warning("telegram_assistant_failed error_type=Exception")
+        return {"text": MSG_INTERNAL, "action": "none", "error": True}
+
+    if not isinstance(payload, dict):
+        return {"text": MSG_INTERNAL, "action": "none", "error": True}
+    if store is not None and telegram_user_id is not None:
+        await _remember_conversation(store, telegram_user_id, payload)
+    return payload
+
+
 async def _post_ai_chat(
     api: OnboardApiClient,
     message: str,
@@ -115,6 +158,16 @@ async def _post_ai_chat(
     if conversation_id is None:
         return await api.post_ai_chat(message)
     return await api.post_ai_chat(message, conversation_id=conversation_id)
+
+
+async def _post_assistant_chat(
+    api: OnboardApiClient,
+    message: str,
+    conversation_id: UUID | None,
+) -> dict:
+    if conversation_id is None:
+        return await api.post_assistant_chat(message)
+    return await api.post_assistant_chat(message, conversation_id=conversation_id)
 
 
 async def _remember_conversation(

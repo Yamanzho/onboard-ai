@@ -181,3 +181,18 @@ class CompanyAuditAction(StrEnum):
     TOPIC_CREATED = "topic.created"
     TOPIC_UPDATED = "topic.updated"
     TOPIC_RESPONSIBILITY_CHANGED = "topic.responsibility.changed"
+
+
+class AssistantIntent(StrEnum):
+    """Small Phase 9I intent set. Keep this list intentionally short."""
+
+    GREETING = "greeting"
+    THANKS = "thanks"
+    HELP = "help"
+    COMPANY_KNOWLEDGE = "company_knowledge"
+    NEXT_TASK = "next_task"
+    ASSIGNMENT_STATUS = "assignment_status"
+    CONTINUE_LEARNING = "continue_learning"
+    TRAINING_HELP = "training_help"
+    RESPONSIBLE_TOPIC = "responsible_topic"
+    UNKNOWN = "unknown"

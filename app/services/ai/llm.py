@@ -12,9 +12,11 @@ from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 from app.core.ai_constants import (
+    INTENT_CLASSIFIER_MARKER,
     NO_ANSWER_TOKEN,
     OPENAI_LLM_MODEL,
     SUPPORTED_LLM_PROVIDERS,
+    TOPIC_CLASSIFIER_MARKER,
 )
 from app.core.config import Settings, get_settings
 from app.core.exceptions import ValidationError
@@ -79,6 +81,16 @@ class FakeLLMProvider:
     async def generate(self, *, system_prompt: str, user_prompt: str) -> LLMResult:
         _require_prompt(system_prompt, field="system_prompt")
         user = _require_prompt(user_prompt, field="user_prompt")
+        if INTENT_CLASSIFIER_MARKER in system_prompt:
+            return LLMResult(
+                text='{"intent":"unknown","confidence":0.3,"topic_hint":""}',
+                no_answer=False,
+            )
+        if TOPIC_CLASSIFIER_MARKER in system_prompt:
+            return LLMResult(
+                text='{"topic_slug":null,"confidence":0.0}',
+                no_answer=False,
+            )
         if self._force_no_answer:
             return LLMResult(text=NO_ANSWER_TOKEN, no_answer=True)
         source_ids = _source_ids_from_prompt(user)

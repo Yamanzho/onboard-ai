@@ -30,9 +30,10 @@ async def test_first_message_saves_returned_conversation_id(
     conversation_id = uuid4()
     api = AsyncMock(spec=OnboardApiClient)
     api.find_employee_by_telegram = AsyncMock(return_value=_employee())
-    api.post_ai_chat = AsyncMock(
+    api.post_assistant_chat = AsyncMock(
         return_value={
             "answer": "Для VPN нужен клиент из IT-портала.",
+            "text": "Для VPN нужен клиент из IT-портала.",
             "no_answer": False,
             "conversation_id": str(conversation_id),
             "citations": [{"source_id": "S1", "title": "VPN Access Policy"}],
@@ -40,7 +41,7 @@ async def test_first_message_saves_returned_conversation_id(
     )
     message = _message("Как получить доступ к VPN?")
     await ai_question(message, api, _state())
-    api.post_ai_chat.assert_awaited_once_with("Как получить доступ к VPN?")
+    api.post_assistant_chat.assert_awaited_once_with("Как получить доступ к VPN?")
     assert (
         await telegram_conversation_store.get_current_conversation(42) == conversation_id
     )
@@ -57,16 +58,17 @@ async def test_second_message_reuses_stored_conversation_id(
     await telegram_conversation_store.set_current_conversation(42, conversation_id)
     api = AsyncMock(spec=OnboardApiClient)
     api.find_employee_by_telegram = AsyncMock(return_value=_employee())
-    api.post_ai_chat = AsyncMock(
+    api.post_assistant_chat = AsyncMock(
         return_value={
             "answer": "Напишите в IT.",
+            "text": "Напишите в IT.",
             "no_answer": False,
             "conversation_id": str(conversation_id),
             "citations": [],
         }
     )
     await ai_question(_message("А кому написать?"), api, _state())
-    api.post_ai_chat.assert_awaited_once_with(
+    api.post_assistant_chat.assert_awaited_once_with(
         "А кому написать?", conversation_id=conversation_id
     )
 

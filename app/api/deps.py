@@ -5,6 +5,7 @@ from app.services.ai.conversations import ConversationService
 from app.services.ai.indexer import KnowledgeChunkIndexer
 from app.services.analytics import AnalyticsService
 from app.services.assignment import AssignmentService
+from app.services.assistant.orchestrator import AssistantOrchestrator
 from app.services.company import CompanyService
 from app.services.company_audit import CompanyAuditService
 from app.services.department import DepartmentService
@@ -98,6 +99,11 @@ def get_chunk_indexer() -> KnowledgeChunkIndexer:
 @lru_cache
 def get_ai_chat_service() -> AIChatService:
     return AIChatService()
+
+
+@lru_cache
+def get_assistant_orchestrator() -> AssistantOrchestrator:
+    return AssistantOrchestrator(chat_service=get_ai_chat_service())
 
 
 @lru_cache

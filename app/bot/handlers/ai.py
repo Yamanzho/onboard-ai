@@ -1,10 +1,12 @@
-"""Catch-all Telegram AI client for POST /api/v1/ai/chat.
+"""Catch-all Telegram assistant client for POST /api/v1/assistant/chat.
 
-Registered last: /start → onboarding FSM → cabinet → AI.
-Does not query vector tables, call the LLM provider, or select a tenant.
+Registered last: /start → onboarding / acknowledgement / cabinet → AI.
+Does not steal learning FSM, quiz replies, or acknowledgement callbacks.
 """
 
 from __future__ import annotations
+
+from uuid import UUID
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
@@ -15,6 +17,7 @@ from aiogram.types import Message
 
 from app.bot.api.client import OnboardApiClient, OnboardApiError
 from app.bot.api.schemas import EmployeeDTO
+from app.bot.handlers.onboarding import present_assistant_learning
 from app.bot.keyboards.menu import (
     MENU_ACTIVE,
     MENU_CALENDAR,
@@ -24,11 +27,13 @@ from app.bot.keyboards.menu import (
     MENU_PROFILE,
 )
 from app.bot.services.ai_client import (
+    MSG_INTERNAL,
     MSG_NEW_CHAT,
     MSG_UNAUTHENTICATED,
     MSG_UNAVAILABLE,
     MSG_VALIDATION,
-    ask_company_knowledge,
+    ask_assistant,
+    format_ai_reply,
 )
 from app.bot.services.ai_conversation import get_telegram_conversation_store
 from app.bot.services.outbound_delivery import TelegramOutboundExecutor
@@ -140,13 +145,52 @@ async def ai_question(
         return
 
     await _send_typing(message)
-    reply = await ask_company_knowledge(
+    payload = await ask_assistant(
         api,
         text,
         telegram_user_id=message.from_user.id,
     )
+    action = str(payload.get("action") or "none")
+    if action in {"resume_learning", "choose_assignment", "open_assignment"}:
+        raw_ids = payload.get("assignment_ids") or []
+        titles = {
+            item.get("id"): item.get("title") or "Курс"
+            for item in (payload.get("assignments") or [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        assignment_ids = []
+        for raw in raw_ids:
+            try:
+                assignment_ids.append(UUID(str(raw)))
+            except (TypeError, ValueError):
+                continue
+        title_map = {}
+        for raw_id, title in titles.items():
+            try:
+                title_map[UUID(str(raw_id))] = str(title)
+            except (TypeError, ValueError):
+                continue
+        try:
+            await present_assistant_learning(
+                message,
+                api,
+                state,
+                assignment_ids=assignment_ids,
+                titles=title_map,
+            )
+        except OnboardApiError:
+            await message.answer("Не удалось открыть обучение. Попробуйте позже.")
+        return
+
+    reply = format_ai_reply(
+        {
+            "answer": payload.get("text") or payload.get("answer") or MSG_INTERNAL,
+            "no_answer": payload.get("no_answer"),
+            "citations": payload.get("citations") or [],
+        }
+    )
     source_key = api.current_ai_outbound_source_key()
-    if isinstance(source_key, str):
+    if isinstance(source_key, str) and payload.get("used_retriever"):
         executor = TelegramOutboundExecutor(message.bot, api)
         if await executor.deliver_source(
             source_type="ai_chat",

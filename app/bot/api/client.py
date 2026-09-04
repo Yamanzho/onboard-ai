@@ -542,6 +542,33 @@ class OnboardApiClient:
         assert isinstance(payload, dict)
         return payload
 
+    async def post_assistant_chat(
+        self,
+        message: str,
+        conversation_id: UUID | str | None = None,
+    ) -> dict:
+        """POST /api/v1/assistant/chat using the bound employee JWT."""
+        body: dict[str, str] = {"message": message}
+        if conversation_id is not None:
+            body["conversation_id"] = str(conversation_id)
+        update_id = _telegram_update_id_var.get()
+        headers = (
+            {
+                "Idempotency-Key": f"telegram-update:{update_id}:ai-chat",
+                "X-Telegram-Delivery": "durable",
+                "X-Bot-Service-Token": self._service_token,
+            }
+            if update_id is not None
+            else None
+        )
+        payload = await self._post(
+            "/api/v1/assistant/chat",
+            json=body,
+            headers=headers,
+        )
+        assert isinstance(payload, dict)
+        return payload
+
     async def complete_progress(
         self,
         progress_id: UUID,
