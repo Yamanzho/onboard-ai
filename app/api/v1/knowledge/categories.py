@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import EmployeeUser, HRUser
+from app.api.auth_deps import EmployeeUser, KnowledgeManageUser
 from app.api.deps import get_category_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.knowledge.category import CategoryCreate, CategoryResponse, CategoryUpdate
@@ -45,7 +45,7 @@ _READ_AUTH_RESPONSES = {
 )
 async def create_category(
     payload: CategoryCreate,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: CategoryServiceDep,
 ) -> CategoryResponse:
     category = await service.create_category(
@@ -75,7 +75,7 @@ async def create_category(
     },
 )
 async def list_categories(
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: CategoryServiceDep,
     company_id: Annotated[UUID, Query(description="Company tenant ID")],
     parent_id: Annotated[UUID | None, Query()] = None,
@@ -141,7 +141,7 @@ async def get_category(
 async def update_category(
     category_id: UUID,
     payload: CategoryUpdate,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: CategoryServiceDep,
 ) -> CategoryResponse:
     category = await service.update_category(

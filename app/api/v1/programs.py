@@ -3,7 +3,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import EmployeeUser, HRUser
+from app.api.auth_deps import (
+    CoursesCreateUser,
+    CoursesEditUser,
+    CoursesViewUser,
+    EmployeeUser,
+)
 from app.api.deps import get_onboarding_program_service, get_step_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.onboarding_program import ProgramCreate, ProgramResponse, ProgramUpdate
@@ -48,7 +53,7 @@ _READ_AUTH_RESPONSES = {
 )
 async def create_program(
     payload: ProgramCreate,
-    current_user: HRUser,
+    current_user: CoursesCreateUser,
     service: ProgramServiceDep,
 ) -> ProgramResponse:
     program = await service.create_program(
@@ -78,7 +83,7 @@ async def create_program(
     },
 )
 async def list_programs(
-    current_user: HRUser,
+    current_user: CoursesViewUser,
     service: ProgramServiceDep,
     company_id: Annotated[UUID, Query(description="Company tenant ID")],
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -154,7 +159,7 @@ async def get_program(
 async def update_program(
     program_id: UUID,
     payload: ProgramUpdate,
-    current_user: HRUser,
+    current_user: CoursesEditUser,
     service: ProgramServiceDep,
 ) -> ProgramResponse:
     program = await service.update_program(
@@ -184,7 +189,7 @@ async def update_program(
 )
 async def publish_program(
     program_id: UUID,
-    current_user: HRUser,
+    current_user: CoursesEditUser,
     service: ProgramServiceDep,
 ) -> ProgramResponse:
     program = await service.publish_program(
@@ -213,7 +218,7 @@ async def publish_program(
 )
 async def archive_program(
     program_id: UUID,
-    current_user: HRUser,
+    current_user: CoursesEditUser,
     service: ProgramServiceDep,
 ) -> ProgramResponse:
     program = await service.archive_program(
@@ -243,7 +248,7 @@ async def archive_program(
 )
 async def list_steps(
     program_id: UUID,
-    current_user: HRUser,
+    current_user: CoursesViewUser,
     service: StepServiceDep,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=1000)] = 1000,
@@ -279,7 +284,7 @@ async def list_steps(
 async def create_step(
     program_id: UUID,
     payload: StepCreate,
-    current_user: HRUser,
+    current_user: CoursesEditUser,
     service: StepServiceDep,
 ) -> StepResponse:
     step = await service.create_step(
@@ -318,7 +323,7 @@ async def create_step(
 async def reorder_steps(
     program_id: UUID,
     payload: StepReorderRequest,
-    current_user: HRUser,
+    current_user: CoursesEditUser,
     service: StepServiceDep,
 ) -> list[StepResponse]:
     steps = await service.reorder_steps(

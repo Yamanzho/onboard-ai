@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import EmployeeUser, HRUser
+from app.api.auth_deps import EmployeeUser, KnowledgeManageUser
 from app.api.deps import get_article_service, get_chunk_indexer
 from app.api.v1.responses import ERROR_RESPONSES
 from app.core.exceptions import ValidationError
@@ -66,7 +66,7 @@ _READ_AUTH_RESPONSES = {
 )
 async def create_article(
     payload: ArticleCreate,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
 ) -> ArticleResponse:
     article = await service.create_article(
@@ -198,7 +198,7 @@ async def get_article(
 )
 async def list_article_versions(
     article_id: UUID,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
@@ -235,7 +235,7 @@ async def list_article_versions(
 async def get_article_version(
     article_id: UUID,
     version: int,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
 ) -> ArticleVersionResponse:
     row = await service.get_version(
@@ -270,7 +270,7 @@ async def get_article_version(
 async def restore_article_version(
     article_id: UUID,
     version: int,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
 ) -> ArticleResponse:
     article = await service.restore_version(
@@ -306,7 +306,7 @@ async def restore_article_version(
 async def update_article(
     article_id: UUID,
     payload: ArticleUpdate,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
 ) -> ArticleResponse:
     article = await service.update_article(
@@ -337,7 +337,7 @@ async def update_article(
 )
 async def publish_article(
     article_id: UUID,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
 ) -> ArticleResponse:
     article = await service.publish_article(
@@ -373,7 +373,7 @@ async def publish_article(
     },
 )
 async def reindex_published_corpus(
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     indexer: ChunkIndexerDep,
     company_id: Annotated[
         UUID | None,
@@ -437,7 +437,7 @@ async def reindex_published_corpus(
 )
 async def reindex_article(
     article_id: UUID,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
     indexer: ChunkIndexerDep,
     company_id: Annotated[
@@ -502,7 +502,7 @@ async def reindex_article(
 )
 async def archive_article(
     article_id: UUID,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: ArticleServiceDep,
 ) -> ArticleResponse:
     article = await service.archive_article(

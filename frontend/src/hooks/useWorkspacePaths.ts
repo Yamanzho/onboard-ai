@@ -47,6 +47,7 @@ export function useWorkspacePaths() {
     categories: path('/knowledge/categories'),
     tags: path('/knowledge/tags'),
     progress: path('/progress'),
+    analytics: path('/analytics'),
     audit: path('/audit'),
     settings: path('/settings'),
     profile: path('/profile'),

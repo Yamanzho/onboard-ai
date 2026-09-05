@@ -30,15 +30,16 @@ def _ai_src() -> str:
     return "\n".join(_read(path) for path in AI_FILES)
 
 
-def test_ai_route_and_navigation_exist() -> None:
+def test_ai_route_redirects_and_navigation_hidden() -> None:
     routes = _read(FRONTEND_SRC / "routes" / "AppRoutes.tsx")
     nav = _read(FRONTEND_SRC / "lib" / "navigation.ts")
     i18n = _read(FRONTEND_SRC / "i18n" / "ru.ts")
     assert 'path="ai"' in routes
-    assert "EmployeeAIPage" in routes
+    assert 'Navigate to="/employee" replace' in routes
+    assert "EmployeeAIPage" not in routes
     assert "RequireRole allowed={['employee']}" in routes
-    assert "workspacePath('employee', '/ai')" in nav
-    assert "nav.aiAssistant" in nav
+    assert "workspacePath('employee', '/ai')" not in nav
+    assert "nav.aiAssistant" not in nav
     assert "aiAssistant: 'AI Ассистент'" in i18n
     assert "emptyDescription: 'Задайте вопрос по внутренним материалам компании.'" in i18n
 
@@ -49,7 +50,9 @@ def test_ai_route_is_employee_workspace_only() -> None:
     employee_block = routes.split('workspace="employee"')[1].split(
         "workspace="
     )[0]
-    assert "EmployeeAIPage" in employee_block
+    assert 'path="ai"' in employee_block
+    assert 'Navigate to="/employee" replace' in employee_block
+    assert "EmployeeAIPage" not in employee_block
     company_nav = nav.split("export const COMPANY_NAV")[1].split(
         "export const HR_NAV"
     )[0]
@@ -59,9 +62,13 @@ def test_ai_route_is_employee_workspace_only() -> None:
     platform_nav = nav.split("export const PLATFORM_NAV")[1].split(
         "const NAV_BY_WORKSPACE"
     )[0]
+    employee_nav = nav.split("export const EMPLOYEE_NAV")[1].split(
+        "export const PLATFORM_NAV"
+    )[0]
     assert "/ai" not in company_nav
     assert "/ai" not in hr_nav
     assert "/ai" not in platform_nav
+    assert "/ai" not in employee_nav
 
 
 def test_first_request_omits_conversation_id() -> None:

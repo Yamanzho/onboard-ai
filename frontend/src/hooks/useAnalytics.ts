@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { getOnboardingAnalytics } from '../services/analyticsApi'
+import { getAssignmentAnalytics, getOnboardingAnalytics } from '../services/analyticsApi'
 import { listCompanyAuditLogs } from '../services/companyAuditApi'
 import { useAuth } from './useAuth'
 
@@ -9,6 +9,19 @@ export function useOnboardingAnalytics() {
   return useQuery({
     queryKey: ['onboarding-analytics', companyId],
     queryFn: () => getOnboardingAnalytics(companyId!),
+    enabled: Boolean(companyId),
+  })
+}
+
+export function useAssignmentAnalytics(filters: {
+  departmentId?: string
+  assignmentType?: string
+} = {}) {
+  const { user } = useAuth()
+  const companyId = user?.company_id
+  return useQuery({
+    queryKey: ['assignment-analytics', companyId, filters],
+    queryFn: () => getAssignmentAnalytics(companyId!, filters),
     enabled: Boolean(companyId),
   })
 }

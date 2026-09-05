@@ -12,10 +12,24 @@ import { useAuth } from '../../hooks/useAuth'
 import { useEmployeeAssignments } from '../../hooks/useEmployeeSelf'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
 import { t } from '../../i18n'
-import { assignmentTitle, compareAssignmentsByPriorityDeadline, isActiveAssignment } from '../../lib/progressUtils'
+import {
+  assignmentTitle,
+  compareAssignmentsByPriorityDeadline,
+  isActiveAssignment,
+  isAssignmentOverdue,
+} from '../../lib/progressUtils'
 import * as assignmentsApi from '../../services/assignmentsApi'
 import * as programsApi from '../../services/programsApi'
 import { isAcknowledgementAssignment } from '../../types/assignment'
+
+function formatDate(value: string | null | undefined) {
+  if (!value) return t('common.emDash')
+  try {
+    return new Date(value).toLocaleString()
+  } catch {
+    return value
+  }
+}
 
 export function EmployeeDashboardPage() {
   const { user } = useAuth()
@@ -27,13 +41,19 @@ export function EmployeeDashboardPage() {
     refetch,
   } = useEmployeeAssignments(user?.id, { activeOnly: true })
 
-  const active = useMemo(
-    () =>
-      assignments
-        .filter(isActiveAssignment)
-        .sort(compareAssignmentsByPriorityDeadline)[0] ?? null,
+  const activeList = useMemo(
+    () => assignments.filter(isActiveAssignment).sort(compareAssignmentsByPriorityDeadline),
     [assignments],
   )
+  const active = activeList[0] ?? null
+  const overdueCount = useMemo(
+    () => activeList.filter((a) => isAssignmentOverdue(a)).length,
+    [activeList],
+  )
+  const nextDeadline = useMemo(() => {
+    const dated = activeList.filter((a) => a.due_at)
+    return dated[0]?.due_at ?? null
+  }, [activeList])
 
   const isAck = active ? isAcknowledgementAssignment(active) : false
   const progressQuery = useQuery({
@@ -75,6 +95,43 @@ export function EmployeeDashboardPage() {
             : t('employeeDashboard.description')
         }
       />
+
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
+            {t('employeeDashboard.activeCount')}
+          </p>
+          <p className="mt-1 text-2xl font-semibold">{activeList.length}</p>
+        </div>
+        <div className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
+            {t('employeeDashboard.nextDeadline')}
+          </p>
+          <p className="mt-1 text-sm font-semibold">{formatDate(nextDeadline)}</p>
+        </div>
+        <div className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
+            {t('employeeDashboard.overdue')}
+          </p>
+          <p
+            className={`mt-1 text-2xl font-semibold ${
+              overdueCount > 0 ? 'text-[var(--color-danger)]' : ''
+            }`}
+          >
+            {overdueCount}
+          </p>
+        </div>
+        <div className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-4">
+          <p className="text-xs uppercase tracking-wide text-[var(--color-muted)]">
+            {t('employeeDashboard.currentProgress')}
+          </p>
+          <p className="mt-1 text-2xl font-semibold">
+            {isAck
+              ? `${active?.acknowledgement?.percentage ?? 0}%`
+              : `${progress?.percentage ?? 0}%`}
+          </p>
+        </div>
+      </div>
 
       {!active ? (
         <EmptyState
@@ -138,9 +195,6 @@ export function EmployeeDashboardPage() {
         </Link>
         <Link to={paths.path('/knowledge')}>
           <Button variant="secondary">{t('nav.knowledgeBase')}</Button>
-        </Link>
-        <Link to={paths.path('/ai')}>
-          <Button variant="secondary">{t('employeeDashboard.goAI')}</Button>
         </Link>
       </div>
     </div>

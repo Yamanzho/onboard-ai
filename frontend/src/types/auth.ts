@@ -25,6 +25,10 @@ export interface CurrentUser {
   company_name?: string | null
   company_description?: string | null
   hired_at?: string | null
+  department_id?: string | null
+  manager_id?: string | null
+  job_title?: string | null
+  capabilities?: string[]
   created_at: string
   updated_at: string
 }

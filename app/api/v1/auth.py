@@ -21,6 +21,7 @@ from app.core.auth_cookies import (
     read_refresh_cookie,
     set_auth_cookies,
 )
+from app.core.capabilities import sorted_capability_values
 from app.core.client_ip import client_ip
 from app.core.config import get_settings
 from app.core.exceptions import (
@@ -499,7 +500,7 @@ async def bot_telegram_login(
         access_token=tokens.access_token,
         refresh_token=tokens.refresh_token,
         token_type=tokens.token_type,
-        employee=CurrentUserResponse.model_validate(employee),
+        employee=_current_user_response(employee),
     )
 
 
@@ -596,7 +597,7 @@ async def bot_accept_invite(
         access_token=tokens.access_token,
         refresh_token=tokens.refresh_token,
         token_type=tokens.token_type,
-        employee=CurrentUserResponse.model_validate(employee),
+        employee=_current_user_response(employee),
     )
 
 
@@ -1033,6 +1034,7 @@ def _current_user_response(
             "company_name": company_name,
             "company_description": company_description,
             "hired_at": employee.hired_at,
+            "capabilities": sorted_capability_values(employee),
         }
     )
 
@@ -1269,7 +1271,7 @@ async def accept_invite(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
     except ValidationError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    return CurrentUserResponse.model_validate(employee)
+    return _current_user_response(employee)
 
 
 # Re-export for importers that expect guards alongside the router.

@@ -18,7 +18,9 @@ import {
   useProgramMutations,
   usePrograms,
 } from '../../hooks/usePrograms'
+import { useCapabilities } from '../../hooks/useCapabilities'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
+import { CAPABILITIES } from '../../lib/capabilities'
 import { t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as programsApi from '../../services/programsApi'
@@ -61,6 +63,8 @@ function formatDate(value: string) {
 
 export function ProgramListPage() {
   const paths = useWorkspacePaths()
+  const { can } = useCapabilities()
+  const canCreate = can(CAPABILITIES.COURSES_CREATE)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('created_at')
@@ -155,9 +159,11 @@ export function ProgramListPage() {
         title={t('programs.title')}
         description={t('programs.description')}
         action={
-          <Link to={paths.onboardingNew}>
-            <Button>{t('programs.new')}</Button>
-          </Link>
+          canCreate ? (
+            <Link to={paths.onboardingNew}>
+              <Button>{t('programs.new')}</Button>
+            </Link>
+          ) : undefined
         }
       />
 
@@ -199,7 +205,11 @@ export function ProgramListPage() {
               : t('programs.emptyDescriptionFilter')
           }
           actionLabel={(data?.length ?? 0) === 0 ? t('programs.create') : undefined}
-          actionTo={(data?.length ?? 0) === 0 ? paths.onboardingNew : undefined}
+          actionTo={
+            (data?.length ?? 0) === 0 && canCreate
+              ? paths.onboardingNew
+              : undefined
+          }
         />
       ) : (
         <>

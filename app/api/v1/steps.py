@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
 
-from app.api.auth_deps import HRUser
+from app.api.auth_deps import CoursesEditUser
 from app.api.deps import get_step_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.step import StepResponse, StepUpdate
@@ -40,7 +40,7 @@ _AUTH_RESPONSES = {
 async def update_step(
     step_id: UUID,
     payload: StepUpdate,
-    current_user: HRUser,
+    current_user: CoursesEditUser,
     service: StepServiceDep,
 ) -> StepResponse:
     step = await service.update_step(
@@ -70,7 +70,7 @@ async def update_step(
 )
 async def delete_step(
     step_id: UUID,
-    current_user: HRUser,
+    current_user: CoursesEditUser,
     service: StepServiceDep,
 ) -> Response:
     await service.delete_step(

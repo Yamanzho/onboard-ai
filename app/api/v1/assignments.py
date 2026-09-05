@@ -2,19 +2,31 @@ from collections.abc import Callable, Coroutine
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
 from app.api.auth_deps import (
+    AssignmentsManageUser,
+    AssignmentsReadUser,
     EmployeeUser,
-    HRUser,
     assert_can_complete_assignment_progress,
     assert_can_list_employee_assignments,
+    assert_can_manage_assignment,
     assert_can_mutate_own_assignment_reminders,
+    assert_can_view_assignment,
     assert_can_view_assignment_progress,
+    assert_targets_in_assignment_scope,
+    redact_progress_for_viewer,
+    resolve_list_department_id,
 )
-from app.api.deps import get_assignment_service, get_progress_service, get_reminder_service
+from app.api.deps import (
+    get_assignment_service,
+    get_employee_service,
+    get_progress_service,
+    get_reminder_service,
+)
 from app.api.v1.responses import ERROR_RESPONSES
-from app.db.enums import EmployeeRole
+from app.core import capabilities as capability_catalog
+from app.core.capabilities import Capability
 from app.schemas.assignment import (
     AcknowledgementActionResponse,
     AcknowledgementDocumentView,
@@ -41,6 +53,7 @@ from app.services.acknowledgement import (
 from app.services.assessment import public_progress_payload
 from app.services.assignment import AssignmentService
 from app.services.course_snapshot import order_records_by_snapshot, resolve_progress_step_fields
+from app.services.employee import EmployeeService
 from app.services.progress import ProgressService
 from app.services.reminder import ReminderService
 from app.services.step_content import public_step_content
@@ -50,6 +63,7 @@ router = APIRouter(tags=["Assignments"])
 AssignmentServiceDep = Annotated[AssignmentService, Depends(get_assignment_service)]
 ProgressServiceDep = Annotated[ProgressService, Depends(get_progress_service)]
 ReminderServiceDep = Annotated[ReminderService, Depends(get_reminder_service)]
+EmployeeServiceDep = Annotated[EmployeeService, Depends(get_employee_service)]
 
 _HR_AUTH_RESPONSES = {
     status.HTTP_401_UNAUTHORIZED: {"description": "Missing or invalid access token"},
@@ -124,12 +138,36 @@ _ASSIGNMENT_LIST_AUTH_RESPONSES = {
 )
 async def create_assignment(
     payload: AssignmentCreate,
-    current_user: HRUser,
+    current_user: AssignmentsManageUser,
     service: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
 ) -> AssignmentResponse | AssignmentBulkCreateResponse:
     employee_ids = list(payload.employee_ids)
     if payload.employee_id is not None:
         employee_ids.append(payload.employee_id)
+    is_program = (
+        payload.assignment_type == "program" or payload.program_id is not None
+    )
+    if is_program and not capability_catalog.has_capability(
+        current_user, Capability.COURSES_ASSIGN
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+    if payload.due_at is not None and not capability_catalog.has_capability(
+        current_user, Capability.DEADLINES_MANAGE
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions",
+        )
+    await assert_targets_in_assignment_scope(
+        current_user,
+        employee_ids=employee_ids,
+        department_ids=list(payload.department_ids),
+        employees=employees,
+    )
     if (
         payload.is_legacy_single
         and payload.assignment_type == "program"
@@ -193,8 +231,9 @@ async def create_assignment(
     },
 )
 async def list_assignments(
-    current_user: HRUser,
+    current_user: AssignmentsReadUser,
     service: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
     company_id: Annotated[UUID, Query(description="Company tenant ID")],
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
@@ -209,7 +248,24 @@ async def list_assignments(
         UUID | None,
         Query(description="Optional filter by employee"),
     ] = None,
+    department_id: Annotated[
+        UUID | None,
+        Query(description="Optional department filter (all-scope callers only)"),
+    ] = None,
 ) -> list[AssignmentResponse]:
+    scoped_department_id = resolve_list_department_id(
+        current_user, department_id, family="assignment"
+    )
+    if (
+        capability_catalog.assignment_visibility_scope(current_user)
+        is capability_catalog.VisibilityScope.DEPARTMENT
+        and scoped_department_id is None
+    ):
+        return []
+    if employee_id is not None:
+        await assert_can_list_employee_assignments(
+            current_user, employee_id, employees
+        )
     assignments = await service.list_assignments(
         company_id,
         actor_company_id=current_user.company_id,
@@ -217,6 +273,7 @@ async def list_assignments(
         limit=limit,
         status=status_filter,
         employee_id=employee_id,
+        department_id=scoped_department_id,
     )
     return await _responses_with_summaries(
         assignments, service, current_user.company_id
@@ -243,12 +300,13 @@ async def get_assignment(
     assignment_id: UUID,
     current_user: EmployeeUser,
     service: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
 ) -> AssignmentResponse:
     assignment = await service.get_assignment(
         assignment_id,
         company_id=current_user.company_id,
     )
-    assert_can_view_assignment_progress(current_user, assignment)
+    await assert_can_view_assignment(current_user, assignment, employees)
     summaries = await service.acknowledgement_summaries(
         [assignment], company_id=current_user.company_id
     )
@@ -280,6 +338,7 @@ async def list_employee_assignments(
     employee_id: UUID,
     current_user: EmployeeUser,
     service: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=1000)] = 100,
     status_filter: Annotated[
@@ -290,7 +349,9 @@ async def list_employee_assignments(
         ),
     ] = None,
 ) -> list[AssignmentResponse]:
-    assert_can_list_employee_assignments(current_user, employee_id)
+    await assert_can_list_employee_assignments(
+        current_user, employee_id, employees
+    )
     assignments = await service.get_employee_assignments(
         employee_id,
         company_id=current_user.company_id,
@@ -322,9 +383,15 @@ async def list_employee_assignments(
 )
 async def cancel_assignment(
     assignment_id: UUID,
-    current_user: HRUser,
+    current_user: AssignmentsManageUser,
     service: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
 ) -> Response:
+    assignment = await service.get_assignment(
+        assignment_id,
+        company_id=current_user.company_id,
+    )
+    await assert_can_manage_assignment(current_user, assignment, employees)
     await service.cancel_assignment(
         assignment_id,
         company_id=current_user.company_id,
@@ -346,6 +413,7 @@ async def list_acknowledgement_items(
     assignment_id: UUID,
     current_user: EmployeeUser,
     service: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
 ) -> AcknowledgementItemListResponse:
     assignment, items = await service.list_acknowledgement_items(
         assignment_id,
@@ -353,7 +421,7 @@ async def list_acknowledgement_items(
         actor_employee_id=current_user.id,
         mark_opened=True,
     )
-    assert_can_view_assignment_progress(current_user, assignment)
+    await assert_can_view_assignment_progress(current_user, assignment, employees)
     summary = acknowledgement_summary(items)
     return AcknowledgementItemListResponse(
         items=[acknowledgement_item_response(item) for item in items],
@@ -377,6 +445,7 @@ async def get_acknowledgement_document(
     item_id: UUID,
     current_user: EmployeeUser,
     service: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
 ) -> AcknowledgementDocumentView:
     assignment, item, version = await service.get_acknowledgement_document(
         assignment_id,
@@ -385,7 +454,7 @@ async def get_acknowledgement_document(
         actor_employee_id=current_user.id,
         mark_opened=True,
     )
-    assert_can_view_assignment_progress(current_user, assignment)
+    await assert_can_view_assignment_progress(current_user, assignment, employees)
     item.article_version = version
     return AcknowledgementDocumentView(
         item=acknowledgement_item_response(item),
@@ -445,12 +514,13 @@ async def get_assignment_progress(
     current_user: EmployeeUser,
     assignments: AssignmentServiceDep,
     service: ProgressServiceDep,
+    employees: EmployeeServiceDep,
 ) -> AssignmentProgressResponse:
     assignment = await assignments.get_assignment(
         assignment_id,
         company_id=current_user.company_id,
     )
-    assert_can_view_assignment_progress(current_user, assignment)
+    await assert_can_view_assignment_progress(current_user, assignment, employees)
 
     items = await service.get_progress(
         assignment_id,
@@ -476,7 +546,7 @@ async def get_assignment_progress(
         )
         content = fields["content"] if fields is not None else {}
         item_payload = item.payload or {}
-        if current_user.role == EmployeeRole.EMPLOYEE.value:
+        if redact_progress_for_viewer(current_user):
             content = public_step_content(content)
             item_payload = public_progress_payload(item_payload)
         step_info = (
@@ -558,12 +628,13 @@ async def get_assignment_notifications(
     current_user: EmployeeUser,
     assignments: AssignmentServiceDep,
     reminders: ReminderServiceDep,
+    employees: EmployeeServiceDep,
 ) -> AssignmentNotificationsResponse:
     assignment = await assignments.get_assignment(
         assignment_id,
         company_id=current_user.company_id,
     )
-    assert_can_view_assignment_progress(current_user, assignment)
+    await assert_can_view_assignment_progress(current_user, assignment, employees)
     payload = await reminders.get_assignment_notifications(
         assignment_id,
         company_id=current_user.company_id,
@@ -587,9 +658,16 @@ async def get_assignment_notifications(
 )
 async def remind_now(
     assignment_id: UUID,
-    current_user: HRUser,
+    current_user: AssignmentsManageUser,
     reminders: ReminderServiceDep,
+    assignments: AssignmentServiceDep,
+    employees: EmployeeServiceDep,
 ) -> RemindNowResponse:
+    assignment = await assignments.get_assignment(
+        assignment_id,
+        company_id=current_user.company_id,
+    )
+    await assert_can_manage_assignment(current_user, assignment, employees)
     result = await reminders.remind_now(
         assignment_id,
         company_id=current_user.company_id,

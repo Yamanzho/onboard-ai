@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from app.api.auth_deps import HRUser
+from app.api.auth_deps import EmployeesManageUser, EmployeesViewUser
 from app.api.deps import get_employee_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.auth import PasswordResetInitiateResponse
@@ -53,7 +53,7 @@ _AUTH_RESPONSES = {
 )
 async def create_employee(
     payload: EmployeeCreate,
-    current_user: HRUser,
+    current_user: EmployeesManageUser,
     service: ServiceDep,
 ) -> EmployeeResponse:
     employee, delivery = await service.create_employee(
@@ -105,7 +105,7 @@ async def create_employee(
     },
 )
 async def list_employees(
-    current_user: HRUser,
+    current_user: EmployeesViewUser,
     service: ServiceDep,
     company_id: Annotated[UUID, Query(description="Company tenant ID")],
     offset: Annotated[int, Query(ge=0)] = 0,
@@ -147,7 +147,7 @@ async def list_employees(
 )
 async def get_employee(
     employee_id: UUID,
-    current_user: HRUser,
+    current_user: EmployeesViewUser,
     service: ServiceDep,
 ) -> EmployeeResponse:
     employee = await service.get_employee(
@@ -176,7 +176,7 @@ async def get_employee(
 )
 async def list_employee_invites(
     employee_id: UUID,
-    current_user: HRUser,
+    current_user: EmployeesManageUser,
     service: ServiceDep,
 ) -> EmployeeInviteHistoryResponse:
     items = await service.list_invites(
@@ -207,7 +207,7 @@ async def list_employee_invites(
 async def update_employee(
     employee_id: UUID,
     payload: EmployeeUpdate,
-    current_user: HRUser,
+    current_user: EmployeesManageUser,
     service: ServiceDep,
 ) -> EmployeeResponse:
     employee = await service.update_employee(
@@ -241,7 +241,7 @@ async def update_employee(
 )
 async def initiate_password_reset(
     employee_id: UUID,
-    current_user: HRUser,
+    current_user: EmployeesManageUser,
     service: ServiceDep,
 ) -> PasswordResetInitiateResponse:
     delivery = await service.initiate_password_reset(
@@ -273,7 +273,7 @@ async def initiate_password_reset(
 )
 async def resend_employee_invite(
     employee_id: UUID,
-    current_user: HRUser,
+    current_user: EmployeesManageUser,
     service: ServiceDep,
 ) -> EmployeeResponse:
     delivery = await service.resend_invite(
@@ -319,7 +319,7 @@ async def resend_employee_invite(
 )
 async def delete_employee(
     employee_id: UUID,
-    current_user: HRUser,
+    current_user: EmployeesManageUser,
     service: ServiceDep,
 ) -> Response:
     await service.delete_employee(

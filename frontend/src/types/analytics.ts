@@ -11,6 +11,23 @@ export interface CompletionOverTimePoint {
   count: number
 }
 
+export interface AssignmentAnalyticsSlice {
+  active: number
+  overdue: number
+  completed: number
+  completion_rate: number | null
+  employees_with_active: number
+  employees_with_overdue: number
+}
+
+export interface AssignmentAnalytics extends AssignmentAnalyticsSlice {
+  scope: 'all' | 'department' | string
+  department_id: string | null
+  assignment_type: string | null
+  by_type: Record<string, AssignmentAnalyticsSlice>
+  by_priority: Record<string, number>
+}
+
 export interface OnboardingAnalytics {
   total_employees: number
   active_onboarding: number
@@ -23,6 +40,8 @@ export interface OnboardingAnalytics {
   employees_completed: number
   by_program: CompletionByProgram[]
   completed_over_time: CompletionOverTimePoint[]
+  overdue_count?: number
+  by_priority?: Record<string, number>
 }
 
 export interface CompanyAuditLog {

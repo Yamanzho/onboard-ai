@@ -17,8 +17,10 @@ import {
 } from '../../hooks/useAssignments'
 import { useEmployees } from '../../hooks/useEmployees'
 import { usePrograms } from '../../hooks/usePrograms'
+import { useCapabilities } from '../../hooks/useCapabilities'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
-import { labelAssignmentStatus, t } from '../../i18n'
+import { CAPABILITIES } from '../../lib/capabilities'
+import { labelAssignmentStatus, labelAssignmentType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import * as assignmentsApi from '../../services/assignmentsApi'
 import { assignmentTitle, compareAssignmentsByPriorityDeadline, isAssignmentOverdue } from '../../lib/progressUtils'
@@ -51,6 +53,8 @@ function formatDate(value: string | null | undefined) {
 
 export function AssignmentListPage() {
   const paths = useWorkspacePaths()
+  const { can } = useCapabilities()
+  const canManage = can(CAPABILITIES.ASSIGNMENTS_MANAGE)
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
   const [sortKey, setSortKey] = useState<SortKey>('priority')
@@ -177,9 +181,11 @@ export function AssignmentListPage() {
         title={t('assignments.title')}
         description={t('assignments.description')}
         action={
-          <Link to={paths.assignmentNew}>
-            <Button>{t('assignments.new')}</Button>
-          </Link>
+          canManage ? (
+            <Link to={paths.assignmentNew}>
+              <Button>{t('assignments.new')}</Button>
+            </Link>
+          ) : undefined
         }
       />
 
@@ -224,9 +230,15 @@ export function AssignmentListPage() {
               : t('assignments.emptyDescriptionFilter')
           }
           actionLabel={
-            (data?.length ?? 0) === 0 ? t('assignments.create') : undefined
+            (data?.length ?? 0) === 0 && canManage
+              ? t('assignments.create')
+              : undefined
           }
-          actionTo={(data?.length ?? 0) === 0 ? paths.assignmentNew : undefined}
+          actionTo={
+            (data?.length ?? 0) === 0 && canManage
+              ? paths.assignmentNew
+              : undefined
+          }
         />
       ) : (
         <>
@@ -238,6 +250,21 @@ export function AssignmentListPage() {
                     [
                       ['employee', t('assignments.colEmployee')],
                       ['program', t('assignments.colProgram')],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <th key={key} className="px-4 py-3">
+                      <button
+                        type="button"
+                        className="font-medium uppercase hover:text-[var(--color-text)]"
+                        onClick={() => toggleSort(key)}
+                      >
+                        {sortLabel(key, label)}
+                      </button>
+                    </th>
+                  ))}
+                  <th className="px-4 py-3">{t('assignments.assignmentType')}</th>
+                  {(
+                    [
                       ['status', t('common.status')],
                       ['priority', t('assignments.colPriority')],
                     ] as const
@@ -281,8 +308,9 @@ export function AssignmentListPage() {
                       ? assignment.acknowledgement?.percentage
                       : progress?.data?.percentage
                   const canCancel =
-                    assignment.status === 'pending' ||
-                    assignment.status === 'in_progress'
+                    canManage &&
+                    (assignment.status === 'pending' ||
+                      assignment.status === 'in_progress')
                   const overdue = isAssignmentOverdue(assignment)
                   return (
                     <tr key={assignment.id} className={overdue ? 'bg-red-50/40' : undefined}>
@@ -305,6 +333,9 @@ export function AssignmentListPage() {
                         ) : (
                           assignmentTitle(assignment, programTitle)
                         )}
+                      </td>
+                      <td className="px-4 py-3 text-[var(--color-muted)]">
+                        {labelAssignmentType(assignment.assignment_type ?? 'program')}
                       </td>
                       <td className="px-4 py-3">
                         <AssignmentStatusBadge status={assignment.status} />

@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import AdminUser, CurrentUser
+from app.api.auth_deps import CompanySettingsUser, CurrentUser
 from app.api.deps import get_company_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.company import CompanyResponse, CompanyUpdate
@@ -37,7 +37,7 @@ _AUTH_RESPONSES = {
     },
 )
 async def list_companies(
-    current_user: AdminUser,
+    current_user: CompanySettingsUser,
     service: ServiceDep,
     offset: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[
@@ -71,7 +71,7 @@ async def list_companies(
 )
 async def get_company(
     company_id: UUID,
-    current_user: AdminUser,
+    current_user: CompanySettingsUser,
     service: ServiceDep,
 ) -> CompanyResponse:
     company = await service.get_company(
@@ -120,7 +120,7 @@ async def create_company(_: CurrentUser, service: ServiceDep) -> None:
 async def update_company(
     company_id: UUID,
     payload: CompanyUpdate,
-    current_user: AdminUser,
+    current_user: CompanySettingsUser,
     service: ServiceDep,
 ) -> CompanyResponse:
     values = payload.model_dump(exclude_unset=True)

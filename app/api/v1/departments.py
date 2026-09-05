@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import HRUser
+from app.api.auth_deps import DepartmentsManageUser, DepartmentsViewUser
 from app.api.deps import get_department_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.department import DepartmentCreate, DepartmentResponse, DepartmentUpdate
@@ -38,7 +38,7 @@ _AUTH_RESPONSES = {
 )
 async def create_department(
     payload: DepartmentCreate,
-    current_user: HRUser,
+    current_user: DepartmentsManageUser,
     service: DepartmentServiceDep,
 ) -> DepartmentResponse:
     department = await service.create_department(
@@ -69,7 +69,7 @@ async def create_department(
     },
 )
 async def list_departments(
-    current_user: HRUser,
+    current_user: DepartmentsViewUser,
     service: DepartmentServiceDep,
     company_id: Annotated[UUID, Query(description="Company tenant ID")],
     is_active: Annotated[bool | None, Query()] = None,
@@ -103,7 +103,7 @@ async def list_departments(
 )
 async def get_department(
     department_id: UUID,
-    current_user: HRUser,
+    current_user: DepartmentsViewUser,
     service: DepartmentServiceDep,
 ) -> DepartmentResponse:
     department = await service.get_department(
@@ -133,7 +133,7 @@ async def get_department(
 async def update_department(
     department_id: UUID,
     payload: DepartmentUpdate,
-    current_user: HRUser,
+    current_user: DepartmentsManageUser,
     service: DepartmentServiceDep,
 ) -> DepartmentResponse:
     department = await service.update_department(

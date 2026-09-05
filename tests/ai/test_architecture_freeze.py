@@ -563,10 +563,13 @@ def test_ai12a_employee_frontend_chat() -> None:
         encoding="utf-8"
     )
 
+    # Phase 9K: employee web AI is not a primary channel. The route stays as a
+    # safe redirect; Telegram remains the employee AI/learning surface.
     assert 'path="ai"' in routes
-    assert "EmployeeAIPage" in routes
-    assert "nav.aiAssistant" in nav
-    assert "workspacePath('employee', '/ai')" in nav
+    assert 'Navigate to="/employee" replace' in routes
+    assert "EmployeeAIPage" not in routes
+    assert "workspacePath('employee', '/ai')" not in nav
+    assert "nav.aiAssistant" not in nav
     assert "postAIChat" in api
     assert "/api/v1/ai/chat" in api
     assert "conversation_id" in api

@@ -15,6 +15,8 @@ export interface NavItem {
   /** Roles that may see this item (defense in depth; workspace is primary). */
   allowedRoles: readonly AppRole[]
   workspace: WorkspaceId
+  /** If set, show when the user has any of these server-resolved capabilities. */
+  capabilities?: readonly string[]
 }
 
 /** Company Admin workspace navigation. */
@@ -32,6 +34,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
       icon: 'employees',
       allowedRoles: ['admin'],
       workspace: 'company',
+      capabilities: ['employees.view'],
     },
     {
       path: workspacePath('company', '/departments'),
@@ -39,6 +42,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
       icon: 'employees',
       allowedRoles: ['admin'],
       workspace: 'company',
+      capabilities: ['departments.view'],
     },
     {
       path: workspacePath('company', '/topics'),
@@ -46,6 +50,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
       icon: 'knowledge',
       allowedRoles: ['admin'],
       workspace: 'company',
+      capabilities: ['responsibilities.view'],
     },
   {
     path: workspacePath('company', '/hr'),
@@ -53,6 +58,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
     icon: 'hr',
     allowedRoles: ['admin'],
     workspace: 'company',
+    capabilities: ['employees.manage'],
   },
   {
     path: workspacePath('company', '/onboarding'),
@@ -60,6 +66,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
     icon: 'programs',
     allowedRoles: ['admin'],
     workspace: 'company',
+    capabilities: ['courses.view'],
   },
   {
     path: workspacePath('company', '/assignments'),
@@ -67,6 +74,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
     icon: 'assignments',
     allowedRoles: ['admin'],
     workspace: 'company',
+    capabilities: ['assignments.view_all', 'assignments.view_department'],
   },
   {
     path: workspacePath('company', '/knowledge'),
@@ -74,6 +82,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
     icon: 'knowledge',
     allowedRoles: ['admin'],
     workspace: 'company',
+    capabilities: ['knowledge.manage', 'knowledge.view'],
   },
     {
       path: workspacePath('company', '/progress'),
@@ -81,6 +90,15 @@ export const COMPANY_NAV: readonly NavItem[] = [
       icon: 'progress',
       allowedRoles: ['admin'],
       workspace: 'company',
+      capabilities: ['progress.view_all', 'progress.view_department'],
+    },
+    {
+      path: workspacePath('company', '/analytics'),
+      labelKey: 'nav.analytics',
+      icon: 'progress',
+      allowedRoles: ['admin'],
+      workspace: 'company',
+      capabilities: ['analytics.view'],
     },
     {
       path: workspacePath('company', '/audit'),
@@ -95,6 +113,7 @@ export const COMPANY_NAV: readonly NavItem[] = [
     icon: 'company-settings',
     allowedRoles: ['admin'],
     workspace: 'company',
+    capabilities: ['company.settings.manage'],
   },
   {
     path: workspacePath('company', '/profile'),
@@ -127,6 +146,7 @@ export const HR_NAV: readonly NavItem[] = [
       icon: 'employees',
       allowedRoles: ['hr'],
       workspace: 'hr',
+      capabilities: ['employees.view'],
     },
     {
       path: workspacePath('hr', '/departments'),
@@ -134,6 +154,7 @@ export const HR_NAV: readonly NavItem[] = [
       icon: 'employees',
       allowedRoles: ['hr'],
       workspace: 'hr',
+      capabilities: ['departments.view'],
     },
     {
       path: workspacePath('hr', '/topics'),
@@ -141,6 +162,7 @@ export const HR_NAV: readonly NavItem[] = [
       icon: 'knowledge',
       allowedRoles: ['hr'],
       workspace: 'hr',
+      capabilities: ['responsibilities.view'],
     },
   {
     path: workspacePath('hr', '/onboarding'),
@@ -148,6 +170,7 @@ export const HR_NAV: readonly NavItem[] = [
     icon: 'programs',
     allowedRoles: ['hr'],
     workspace: 'hr',
+    capabilities: ['courses.view'],
   },
   {
     path: workspacePath('hr', '/assignments'),
@@ -155,6 +178,7 @@ export const HR_NAV: readonly NavItem[] = [
     icon: 'assignments',
     allowedRoles: ['hr'],
     workspace: 'hr',
+    capabilities: ['assignments.view_all', 'assignments.view_department'],
   },
   {
     path: workspacePath('hr', '/knowledge'),
@@ -162,6 +186,7 @@ export const HR_NAV: readonly NavItem[] = [
     icon: 'knowledge',
     allowedRoles: ['hr'],
     workspace: 'hr',
+    capabilities: ['knowledge.manage', 'knowledge.view'],
   },
     {
       path: workspacePath('hr', '/progress'),
@@ -169,6 +194,15 @@ export const HR_NAV: readonly NavItem[] = [
       icon: 'progress',
       allowedRoles: ['hr'],
       workspace: 'hr',
+      capabilities: ['progress.view_all', 'progress.view_department'],
+    },
+    {
+      path: workspacePath('hr', '/analytics'),
+      labelKey: 'nav.analytics',
+      icon: 'progress',
+      allowedRoles: ['hr'],
+      workspace: 'hr',
+      capabilities: ['analytics.view'],
     },
     {
       path: workspacePath('hr', '/audit'),
@@ -243,13 +277,7 @@ export const EMPLOYEE_NAV: readonly NavItem[] = [
     icon: 'knowledge',
     allowedRoles: ['employee'],
     workspace: 'employee',
-  },
-  {
-    path: workspacePath('employee', '/ai'),
-    labelKey: 'nav.aiAssistant',
-    icon: 'ai',
-    allowedRoles: ['employee'],
-    workspace: 'employee',
+    capabilities: ['knowledge.view'],
   },
   {
     path: workspacePath('employee', '/profile'),
@@ -334,12 +362,33 @@ export function navForWorkspace(workspace: WorkspaceId): NavItem[] {
   return [...NAV_BY_WORKSPACE[workspace]]
 }
 
-export function navForRole(role: AppRole | string | null | undefined): NavItem[] {
+export function navVisible(
+  item: NavItem,
+  capabilities: readonly string[] | undefined,
+): boolean {
+  if (!item.capabilities || item.capabilities.length === 0) return true
+  const caps = new Set(capabilities ?? [])
+  return item.capabilities.some((capability) => caps.has(capability))
+}
+
+export function navForCapabilities(
+  workspace: WorkspaceId,
+  capabilities: readonly string[] | undefined,
+): NavItem[] {
+  return navForWorkspace(workspace).filter((item) => navVisible(item, capabilities))
+}
+
+export function navForRole(
+  role: AppRole | string | null | undefined,
+  capabilities?: readonly string[],
+): NavItem[] {
   if (!role) return []
   const workspace = ROLE_WORKSPACE[role as AppRole]
   if (!workspace) return []
-  return navForWorkspace(workspace).filter((item) =>
-    item.allowedRoles.includes(role as AppRole),
+  return navForWorkspace(workspace).filter(
+    (item) =>
+      item.allowedRoles.includes(role as AppRole) &&
+      navVisible(item, capabilities),
   )
 }
 

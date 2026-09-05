@@ -70,6 +70,10 @@ class CurrentUserResponse(BaseModel):
     department_id: UUID | None = None
     manager_id: UUID | None = None
     job_title: str | None = None
+    capabilities: list[str] = Field(
+        default_factory=list,
+        description="Effective capabilities resolved server-side from the role.",
+    )
     created_at: datetime
     updated_at: datetime
 

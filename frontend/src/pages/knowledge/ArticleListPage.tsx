@@ -10,7 +10,9 @@ import { StatusBadge } from '../../components/knowledge/StatusBadge'
 import { Button } from '../../components/ui/Button'
 import { Input, Select } from '../../components/ui/Field'
 import { useArticleMutations, useArticles } from '../../hooks/useArticles'
+import { useCapabilities } from '../../hooks/useCapabilities'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
+import { CAPABILITIES } from '../../lib/capabilities'
 import { useCategories } from '../../hooks/useCategories'
 import { useTags } from '../../hooks/useTags'
 import { labelArticleStatus, t } from '../../i18n'
@@ -19,6 +21,8 @@ import { ApiError } from '../../services/apiClient'
 const ARTICLE_STATUSES = ['draft', 'published', 'archived'] as const
 
 export function ArticleListPage() {
+  const { can } = useCapabilities()
+  const canManage = can(CAPABILITIES.KNOWLEDGE_MANAGE)
   const paths = useWorkspacePaths()
   const [status, setStatus] = useState('')
   const [categoryId, setCategoryId] = useState('')
@@ -76,9 +80,11 @@ export function ArticleListPage() {
         title={t('knowledge.articles.title')}
         description={t('knowledge.articles.description')}
         action={
-          <Link to={paths.knowledgeNew}>
-            <Button>{t('knowledge.articles.new')}</Button>
-          </Link>
+          canManage ? (
+            <Link to={paths.knowledgeNew}>
+              <Button>{t('knowledge.articles.new')}</Button>
+            </Link>
+          ) : undefined
         }
       />
 
@@ -138,7 +144,9 @@ export function ArticleListPage() {
               : t('knowledge.articles.emptyDescription')
           }
           actionLabel={search.trim() ? undefined : t('knowledge.articles.create')}
-          actionTo={search.trim() ? undefined : paths.knowledgeNew}
+          actionTo={
+            search.trim() || !canManage ? undefined : paths.knowledgeNew
+          }
         />
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-white">

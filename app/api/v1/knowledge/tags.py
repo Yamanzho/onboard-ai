@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import EmployeeUser, HRUser
+from app.api.auth_deps import EmployeeUser, KnowledgeManageUser
 from app.api.deps import get_tag_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.knowledge.tag import TagCreate, TagResponse, TagUpdate
@@ -45,7 +45,7 @@ _READ_AUTH_RESPONSES = {
 )
 async def create_tag(
     payload: TagCreate,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: TagServiceDep,
 ) -> TagResponse:
     tag = await service.create_tag(
@@ -73,7 +73,7 @@ async def create_tag(
     },
 )
 async def list_tags(
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: TagServiceDep,
     company_id: Annotated[UUID, Query(description="Company tenant ID")],
     prefix: Annotated[
@@ -140,7 +140,7 @@ async def get_tag(
 async def update_tag(
     tag_id: UUID,
     payload: TagUpdate,
-    current_user: HRUser,
+    current_user: KnowledgeManageUser,
     service: TagServiceDep,
 ) -> TagResponse:
     tag = await service.update_tag(

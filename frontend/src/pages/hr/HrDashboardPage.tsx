@@ -8,7 +8,7 @@ import {
 } from '../../components/common/PageHeader'
 import { AssignmentStatusBadge } from '../../components/assignments/AssignmentStatusBadge'
 import { EmployeeStatusBadge } from '../../components/employees/EmployeeBadges'
-import { useOnboardingAnalytics } from '../../hooks/useAnalytics'
+import { useAssignmentAnalytics, useOnboardingAnalytics } from '../../hooks/useAnalytics'
 import { useAssignments } from '../../hooks/useAssignments'
 import { useAuth } from '../../hooks/useAuth'
 import { useEmployees } from '../../hooks/useEmployees'
@@ -36,6 +36,7 @@ export function HrDashboardPage() {
     isLoading: analyticsLoading,
     error: analyticsError,
   } = useOnboardingAnalytics()
+  const { data: assignmentAnalytics } = useAssignmentAnalytics()
   const {
     data: employees = [],
     isLoading: employeesLoading,
@@ -139,15 +140,23 @@ export function HrDashboardPage() {
               value={String(analytics?.active_onboarding ?? stats.activeOnboarding)}
             />
             <StatCard
+              label={t('analytics.overdue')}
+              value={String(assignmentAnalytics?.overdue ?? analytics?.overdue_count ?? 0)}
+            />
+            <StatCard
               label={t('hrDashboard.completedOnboarding')}
-              value={String(analytics?.completed_onboarding ?? 0)}
+              value={String(
+                assignmentAnalytics?.completed ?? analytics?.completed_onboarding ?? 0,
+              )}
             />
             <StatCard
               label={t('hrDashboard.completion')}
               value={
-                analytics?.completion_rate == null
-                  ? t('common.emDash')
-                  : `${Math.round(analytics.completion_rate * 100)}%`
+                assignmentAnalytics?.completion_rate != null
+                  ? `${assignmentAnalytics.completion_rate}%`
+                  : analytics?.completion_rate == null
+                    ? t('common.emDash')
+                    : `${Math.round(analytics.completion_rate * 100)}%`
               }
             />
             <StatCard

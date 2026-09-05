@@ -17,7 +17,9 @@ import {
   useEmployeeMutations,
   useEmployees,
 } from '../../hooks/useEmployees'
+import { useCapabilities } from '../../hooks/useCapabilities'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
+import { CAPABILITIES } from '../../lib/capabilities'
 import {
   labelEmployeeRole,
   labelEmployeeStatus,
@@ -83,6 +85,8 @@ export function EmployeeListPage({
   detailBase = 'employees',
 }: EmployeeListPageProps = {}) {
   const paths = useWorkspacePaths()
+  const { can } = useCapabilities()
+  const canManage = can(CAPABILITIES.EMPLOYEES_MANAGE)
   const isHrList = detailBase === 'hr'
   const [search, setSearch] = useState('')
   const [role, setRole] = useState(isHrList ? 'hr' : '')
@@ -165,9 +169,11 @@ export function EmployeeListPage({
         title={title ?? t('employees.title')}
         description={description ?? t('employees.description')}
         action={
-          <Link to={newPath}>
-            <Button>{createLabel ?? t('employees.new')}</Button>
-          </Link>
+          canManage ? (
+            <Link to={newPath}>
+              <Button>{createLabel ?? t('employees.new')}</Button>
+            </Link>
+          ) : undefined
         }
       />
 

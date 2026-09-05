@@ -1,12 +1,12 @@
 import { useAuth } from '../hooks/useAuth'
 import { t } from '../i18n'
-import { navForWorkspace } from '../lib/navigation'
+import { navForCapabilities } from '../lib/navigation'
 import { displayRoleLabelKey } from '../lib/workspace'
 import { AppShell } from './AppShell'
 
 export function HrLayout() {
   const { user, logout } = useAuth()
-  const nav = navForWorkspace('hr')
+  const nav = navForCapabilities('hr', user?.capabilities)
 
   return (
     <AppShell

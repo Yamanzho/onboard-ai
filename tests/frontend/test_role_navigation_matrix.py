@@ -29,6 +29,7 @@ COMPANY_NAV = [
     "/company/assignments",
     "/company/knowledge",
     "/company/progress",
+    "/company/analytics",
     "/company/settings",
     "/company/profile",
     "/company/security",
@@ -43,6 +44,7 @@ HR_NAV = [
     "/hr/assignments",
     "/hr/knowledge",
     "/hr/progress",
+    "/hr/analytics",
     "/hr/profile",
     "/hr/security",
 ]
@@ -55,7 +57,6 @@ EMPLOYEE_NAV = [
     "/employee/calendar",
     "/employee/company",
     "/employee/knowledge",
-    "/employee/ai",
     "/employee/profile",
     "/employee/security",
 ]
@@ -147,9 +148,9 @@ def test_employee_workspace_allowed() -> None:
     assert "/employee" in paths
     assert "/employee/onboarding" in paths
     assert "/employee/active" in paths
-    assert "/employee/ai" in paths
+    assert "/employee/ai" not in paths
     assert workspace_allows("employee", "/employee")
-    assert workspace_allows("employee", "/employee/ai")
+    assert workspace_allows("employee", "/employee/onboarding")
     assert not workspace_allows("employee", "/company")
     assert not workspace_allows("employee", "/hr")
     assert not workspace_allows("employee", "/platform")

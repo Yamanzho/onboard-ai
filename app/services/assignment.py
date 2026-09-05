@@ -541,6 +541,7 @@ class AssignmentService:
         limit: int = 100,
         status: str | None = None,
         employee_id: UUID | None = None,
+        department_id: UUID | None = None,
     ) -> list[Assignment]:
         if status is not None and status not in {item.value for item in AssignmentStatus}:
             raise ValidationError(f"Invalid assignment status {status!r}")
@@ -570,6 +571,7 @@ class AssignmentService:
                 limit=limit,
                 status=status,
                 employee_id=employee_id,
+                department_id=department_id,
             )
 
     async def acknowledgement_summaries(

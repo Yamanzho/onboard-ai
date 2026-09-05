@@ -3,7 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.api.auth_deps import HRUser
+from app.api.auth_deps import ResponsibilitiesManageUser, ResponsibilitiesViewUser
 from app.api.deps import get_question_topic_service
 from app.api.v1.responses import ERROR_RESPONSES
 from app.schemas.question_topic import (
@@ -46,7 +46,7 @@ _AUTH_RESPONSES = {
 )
 async def create_topic(
     payload: QuestionTopicCreate,
-    current_user: HRUser,
+    current_user: ResponsibilitiesManageUser,
     service: QuestionTopicServiceDep,
 ) -> QuestionTopicResponse:
     topic = await service.create_topic(
@@ -79,7 +79,7 @@ async def create_topic(
     },
 )
 async def list_topics(
-    current_user: HRUser,
+    current_user: ResponsibilitiesViewUser,
     service: QuestionTopicServiceDep,
     company_id: Annotated[UUID, Query(description="Company tenant ID")],
     is_active: Annotated[bool | None, Query()] = None,
@@ -113,7 +113,7 @@ async def list_topics(
 )
 async def get_topic(
     topic_id: UUID,
-    current_user: HRUser,
+    current_user: ResponsibilitiesViewUser,
     service: QuestionTopicServiceDep,
 ) -> QuestionTopicResponse:
     topic = await service.get_topic(topic_id, company_id=current_user.company_id)
@@ -140,7 +140,7 @@ async def get_topic(
 async def update_topic(
     topic_id: UUID,
     payload: QuestionTopicUpdate,
-    current_user: HRUser,
+    current_user: ResponsibilitiesManageUser,
     service: QuestionTopicServiceDep,
 ) -> QuestionTopicResponse:
     topic = await service.update_topic(
@@ -172,7 +172,7 @@ async def update_topic(
 async def set_topic_responsibility(
     topic_id: UUID,
     payload: TopicResponsibilityPayload,
-    current_user: HRUser,
+    current_user: ResponsibilitiesManageUser,
     service: QuestionTopicServiceDep,
 ) -> QuestionTopicResponse:
     topic = await service.set_responsibility(

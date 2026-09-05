@@ -62,6 +62,7 @@ class AssignmentRepository(BaseRepository[Assignment]):
         limit: int = 100,
         status: str | None = None,
         employee_id: UUID | None = None,
+        department_id: UUID | None = None,
     ) -> list[Assignment]:
         self._ensure_rls_context()
         stmt = self._company_list_statement(
@@ -70,6 +71,7 @@ class AssignmentRepository(BaseRepository[Assignment]):
             limit=limit,
             status=status,
             employee_id=employee_id,
+            department_id=department_id,
         )
         result = await self._session.scalars(stmt)
         return list(result.all())
@@ -177,6 +179,7 @@ class AssignmentRepository(BaseRepository[Assignment]):
         limit: int,
         status: str | None,
         employee_id: UUID | None,
+        department_id: UUID | None = None,
     ) -> Select[tuple[Assignment]]:
         if offset < 0:
             raise ValueError("offset must be >= 0")
@@ -190,6 +193,10 @@ class AssignmentRepository(BaseRepository[Assignment]):
             stmt = stmt.where(Assignment.status == status)
         if employee_id is not None:
             stmt = stmt.where(Assignment.employee_id == employee_id)
+        if department_id is not None:
+            stmt = stmt.join(Employee, Employee.id == Assignment.employee_id).where(
+                Employee.department_id == department_id,
+            )
         return stmt.order_by(*self._order_by(status)).offset(offset).limit(limit)
 
     def _order_by(self, status: str | None):

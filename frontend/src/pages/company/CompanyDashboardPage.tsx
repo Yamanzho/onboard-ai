@@ -8,6 +8,7 @@ import {
 } from '../../components/common/PageHeader'
 import { AssignmentStatusBadge } from '../../components/assignments/AssignmentStatusBadge'
 import { EmployeeStatusBadge } from '../../components/employees/EmployeeBadges'
+import { useAssignmentAnalytics } from '../../hooks/useAnalytics'
 import { useAssignments } from '../../hooks/useAssignments'
 import { useAuth } from '../../hooks/useAuth'
 import { useEmployees } from '../../hooks/useEmployees'
@@ -31,6 +32,11 @@ export function CompanyDashboardPage() {
   const { user } = useAuth()
   const paths = useWorkspacePaths()
   const {
+    data: analytics,
+    isLoading: analyticsLoading,
+    error: analyticsError,
+  } = useAssignmentAnalytics()
+  const {
     data: employees = [],
     isLoading: employeesLoading,
     error: employeesError,
@@ -48,22 +54,23 @@ export function CompanyDashboardPage() {
 
   const stats = useMemo(() => {
     const staff = employees.filter((e) => e.role === 'employee')
-    const hr = employees.filter((e) => e.role === 'hr')
     const active = assignments.filter(isActiveAssignment)
     const completed = assignments.filter((a) => a.status === 'completed')
     const countable = assignments.filter((a) => a.status !== 'cancelled')
     const completionRate =
-      countable.length === 0
+      analytics?.completion_rate ??
+      (countable.length === 0
         ? null
-        : Math.round((completed.length / countable.length) * 100)
+        : Math.round((completed.length / countable.length) * 100))
     return {
       employees: staff.length,
-      hr: hr.length,
-      activeOnboarding: active.length,
+      activeOnboarding: analytics?.active ?? active.length,
+      overdue: analytics?.overdue ?? 0,
+      completed: analytics?.completed ?? completed.length,
       completionRate,
-      incomplete: new Set(active.map((a) => a.employee_id)).size,
+      incomplete: analytics?.employees_with_active ?? new Set(active.map((a) => a.employee_id)).size,
     }
-  }, [employees, assignments])
+  }, [employees, assignments, analytics])
 
   const recentEmployees = useMemo(
     () =>
@@ -100,11 +107,13 @@ export function CompanyDashboardPage() {
   const titleOf = (assignment: (typeof assignments)[number]) =>
     assignmentTitle(assignment, programTitle)
 
-  const loading = employeesLoading || programsLoading || assignmentsLoading
+  const loading =
+    employeesLoading || programsLoading || assignmentsLoading || analyticsLoading
   const errorMessage =
     (employeesError instanceof Error && employeesError.message) ||
     (programsError instanceof Error && programsError.message) ||
     (assignmentsError instanceof Error && assignmentsError.message) ||
+    (analyticsError instanceof Error && analyticsError.message) ||
     null
 
   return (
@@ -124,21 +133,28 @@ export function CompanyDashboardPage() {
         <LoadingBlock />
       ) : (
         <>
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <StatCard
-              label={t('companyDashboard.employees')}
-              value={String(stats.employees)}
-            />
-            <StatCard label={t('companyDashboard.hr')} value={String(stats.hr)} />
-            <StatCard
-              label={t('companyDashboard.activeOnboarding')}
+              label={t('analytics.active')}
               value={String(stats.activeOnboarding)}
             />
             <StatCard
-              label={t('companyDashboard.completionRate')}
+              label={t('analytics.overdue')}
+              value={String(stats.overdue)}
+            />
+            <StatCard
+              label={t('analytics.completed')}
+              value={String(stats.completed)}
+            />
+            <StatCard
+              label={t('analytics.completionRate')}
               value={
                 stats.completionRate == null ? t('common.emDash') : `${stats.completionRate}%`
               }
+            />
+            <StatCard
+              label={t('companyDashboard.employees')}
+              value={String(stats.employees)}
             />
             <StatCard
               label={t('companyDashboard.incomplete')}

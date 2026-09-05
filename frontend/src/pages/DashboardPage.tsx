@@ -16,6 +16,8 @@ import {
   useAssignments,
 } from '../hooks/useAssignments'
 import { useAuth } from '../hooks/useAuth'
+import { useCapabilities } from '../hooks/useCapabilities'
+import { CAPABILITIES } from '../lib/capabilities'
 import { useEmployees } from '../hooks/useEmployees'
 import { usePrograms } from '../hooks/usePrograms'
 import { useWorkspacePaths } from '../hooks/useWorkspacePaths'
@@ -62,6 +64,8 @@ function formatDate(value: string | null | undefined) {
 
 export function DashboardPage() {
   const { user } = useAuth()
+  const { can } = useCapabilities()
+  const canManage = can(CAPABILITIES.ASSIGNMENTS_MANAGE)
   const paths = useWorkspacePaths()
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
@@ -290,9 +294,11 @@ export function DashboardPage() {
           name: user?.full_name ?? t('dashboard.defaultUser'),
         })}
         action={
-          <Link to={paths.assignmentNew}>
-            <Button>{t('dashboard.newAssignment')}</Button>
-          </Link>
+          canManage ? (
+            <Link to={paths.assignmentNew}>
+              <Button>{t('dashboard.newAssignment')}</Button>
+            </Link>
+          ) : undefined
         }
       />
 
@@ -393,7 +399,11 @@ export function DashboardPage() {
               actionLabel={
                 assignments.length === 0 ? t('dashboard.createAssignment') : undefined
               }
-              actionTo={assignments.length === 0 ? paths.assignmentNew : undefined}
+              actionTo={
+                assignments.length === 0 && canManage
+                  ? paths.assignmentNew
+                  : undefined
+              }
             />
           ) : (
             <>
@@ -471,7 +481,7 @@ export function DashboardPage() {
                         ? assignment.acknowledgement?.percentage
                         : progress?.percentage
                       const overdue = isAssignmentOverdue(assignment)
-                      const canCancel = isActiveAssignment(assignment)
+                      const canCancel = canManage && isActiveAssignment(assignment)
                       return (
                         <tr
                           key={assignment.id}

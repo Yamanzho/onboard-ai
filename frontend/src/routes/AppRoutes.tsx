@@ -41,7 +41,7 @@ import { MyCalendarPage } from '../pages/employee/MyCalendarPage'
 import { MyCompanyPage } from '../pages/employee/MyCompanyPage'
 import { EmployeeKnowledgeListPage } from '../pages/employee/EmployeeKnowledgeListPage'
 import { EmployeeArticlePage } from '../pages/employee/EmployeeArticlePage'
-import { EmployeeAIPage } from '../pages/employee/EmployeeAIPage'
+import { AssignmentAnalyticsPage } from '../pages/analytics/AssignmentAnalyticsPage'
 import { CompanyAuditLogPage } from '../pages/audit/CompanyAuditLogPage'
 import { SuperAdminCompanyCreatePage } from '../pages/super-admin/SuperAdminCompanyCreatePage'
 import { SuperAdminCompanyDetailPage } from '../pages/super-admin/SuperAdminCompanyDetailPage'
@@ -112,6 +112,7 @@ function managementRoutes(opts: {
       <Route path="knowledge/:articleId" element={<ArticleEditPage />} />
 
       <Route path="progress" element={<DashboardPage />} />
+      <Route path="analytics" element={<AssignmentAnalyticsPage />} />
       <Route path="audit" element={<CompanyAuditLogPage />} />
 
       <Route path="profile" element={<SettingsPage section="profile" />} />
@@ -234,7 +235,10 @@ export function AppRoutes() {
                   path="knowledge/:articleId"
                   element={<EmployeeArticlePage />}
                 />
-                <Route path="ai" element={<EmployeeAIPage />} />
+                <Route
+                  path="ai"
+                  element={<Navigate to="/employee" replace />}
+                />
                 <Route
                   path="profile"
                   element={<SettingsPage section="profile" />}

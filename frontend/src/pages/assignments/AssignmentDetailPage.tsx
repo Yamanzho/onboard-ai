@@ -19,7 +19,9 @@ import {
 } from '../../hooks/useAssignments'
 import { useEmployee } from '../../hooks/useEmployees'
 import { useProgram } from '../../hooks/usePrograms'
+import { useCapabilities } from '../../hooks/useCapabilities'
 import { useWorkspacePaths } from '../../hooks/useWorkspacePaths'
+import { CAPABILITIES } from '../../lib/capabilities'
 import { labelAssignmentType, labelProgressStatus, labelReminderMode, labelNotificationKind, labelOutboundStatus, labelStepType, t } from '../../i18n'
 import { ApiError } from '../../services/apiClient'
 import { assignmentTitle, isAssignmentOverdue } from '../../lib/progressUtils'
@@ -45,6 +47,8 @@ function progressTone(status: string) {
 export function AssignmentDetailPage() {
   const { assignmentId } = useParams<{ assignmentId: string }>()
   const paths = useWorkspacePaths()
+  const { can } = useCapabilities()
+  const canManage = can(CAPABILITIES.ASSIGNMENTS_MANAGE)
   const { data: assignment, isLoading, error } = useAssignment(assignmentId)
   const isAck = assignment ? isAcknowledgementAssignment(assignment) : false
   const { data: progress, isLoading: progressLoading } =
@@ -102,7 +106,8 @@ export function AssignmentDetailPage() {
 
   const items = progress?.items ?? []
   const canCancel =
-    assignment.status === 'pending' || assignment.status === 'in_progress'
+    canManage &&
+    (assignment.status === 'pending' || assignment.status === 'in_progress')
   const remindersDisabled = notifications?.preference.mode === 'disabled'
   const overdue = isAssignmentOverdue(assignment)
 
